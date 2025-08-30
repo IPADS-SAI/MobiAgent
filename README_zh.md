@@ -5,7 +5,7 @@
 </div>
 
 <h3 align="center">
-MobiAgent: Towards Universally Customizable Mobile Agents
+MobiAgent: A Systematic Framework for Customizable Mobile Agents
 </h3>
 
 <p align="center">
@@ -20,7 +20,7 @@ MobiAgent: Towards Universally Customizable Mobile Agents
 
 ## 简介
 
-**MobiAgent**是一个强大的移动端智能体系统，包含：
+**MobiAgent**是一个强大的、可定制的移动端智能体系统，包含：
 
 * **智能体模型家族：** MobiMind
 * **智能体加速框架：** AgentRR

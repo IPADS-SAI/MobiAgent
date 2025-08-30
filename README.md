@@ -5,7 +5,7 @@
 </div>
 
 <h3 align="center">
-MobiAgent: Towards Universally Customizable Mobile Agents
+MobiAgent: A Systematic Framework for Customizable Mobile Agents
 </h3>
 
 <p align="center">
@@ -20,7 +20,7 @@ MobiAgent: Towards Universally Customizable Mobile Agents
 
 ## About
 
-**MobiAgent** is a powerful mobile agent system including:
+**MobiAgent** is a powerful and customizable mobile agent system including:
 
 * **An agent model family**: MobiMind
 * **An agent acceleration framework**: AgentRR

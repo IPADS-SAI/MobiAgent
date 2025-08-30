@@ -1,0 +1,46 @@
+task_id: wechat_send_message
+app_id: com.tencent.mm
+task_type: communication
+description: 在微信中给指定联系人或群聊发送消息
+nodes:
+- id: find_contact_entry
+  name: 查找联系人或群聊
+  condition:
+    type: escalate
+    params:
+      icons:
+        all: ["icon_001_通讯录","icon_002_微信","icon_000_我"]
+      ocr:
+        all: ["微信", "通讯录","发现","我"]
+      llm:
+        prompt: 当前页面是否为微信主界面、通讯录或搜索页面，表明用户正准备查找联系人或群聊？
+        expected_true: true
+  next: [send_message_success]
+
+# - id: enter_chat_window
+#   name: 进入聊天窗口
+#   condition:
+#     type: juxtaposition
+#     params:
+#       ocr:
+#         any: ["发送", "按住 说话", "切换为键盘", "视频通话", "语音输入", "+"]
+#       llm:
+#         prompt: 当前页面是否为与任务指令中指定联系人或群聊的聊天窗口？请检查页面顶部的名称是否与任务目标一致，并且底部有文字输入框。
+#         expected_true: true
+#   next: [send_message_success]
+
+- id: send_message_success
+  name: 成功发送消息
+  condition:
+    type: juxtaposition
+    params:
+      icons:
+        any: ["icon_001_回车","icon_002_发送"]
+      ocr:
+        all: ["发送"]
+      llm:
+        prompt: 当前页面是否为与任务指令中指定联系人或群聊的聊天窗口？请检查页面顶部的对象名称是否与任务目标一致，文字输入框中内容是否与任务要求一致。
+        expected_true: true
+        
+success:
+  any_of: [send_message_success]

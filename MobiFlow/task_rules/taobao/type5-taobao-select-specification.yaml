@@ -1,0 +1,105 @@
+task_id: type5-taobao-select-specification
+app_id: com.taobao.taobao
+task_type: type5
+description: 将<选择条件><参数规格>的<商品描述>加入购物车
+
+nodes:
+ # 当前省略之前的主页检查、激活搜索框检查和输入关键词检查
+
+ 
+  - id: results_page
+    name: 显示搜索结果列表
+    condition:
+      type: escalate
+      params:
+        ocr:
+          all: ["销量", "天猫", "店铺"]
+        llm:
+          prompt: "该步是否呈现了完整、正确的搜索结果列表？"
+          expected_true: true
+
+  - id: apply_filter_condition
+    deps: [results_page]
+    name: 按照任务要求应用筛选条件
+    condition:
+      type: escalate
+      params:
+        # dynamic_match:
+        #   extract_from: task_description
+        #   condition_patterns:
+        #     price_lowest:
+        #       trigger_keywords: ["价格最低", "最便宜", "价格从低到高"]
+        #       verify_keywords: ["价格", "低到高", "便宜", "最低"]
+        #       llm_prompt: "该步骤是否执行了按价格从低到高排序的操作？"
+        #     price_highest:
+        #       trigger_keywords: ["价格最高", "最贵", "价格从高到低"]
+        #       verify_keywords: ["价格", "高到低", "贵", "最高"]
+        #       llm_prompt: "该步骤是否执行了按价格从高到低排序的操作？"
+        #     sales_highest:
+        #       trigger_keywords: ["销量最高", "销量最多", "销量"]
+        #       verify_keywords: ["销量", "最高", "最多"]
+        #       llm_prompt: "该步骤是否执行了按销量从高到低排序的操作？"
+        #     sales_lowest:
+        #       trigger_keywords: ["销量最低", "销量最少"]
+        #       verify_keywords: ["销量", "最低", "最少"]
+        #       llm_prompt: "该步骤是否执行了按销量从低到高排序的操作？"
+        #   verification_fields: ["reasoning", "text"]
+        #   fallback_llm: true
+        # ocr:
+        #   all: ["价格"]
+        #   pattern: "(高|低)"
+        llm:
+          prompt: "该步是否按照任务task_description要求正确执行了相应的筛选或排序操作（如按价格、销量、评价、店铺等）？请结合任务task_description描述和当前实际操作判断。"
+          expected_true: true
+
+  - id: item_detail
+    deps: [apply_filter_condition]
+    name: 进入商品详情页
+    condition:
+      type: escalate
+      params:
+        ocr:
+          all: ["收藏", "店铺", "客服"]
+          # all: ["收藏", "店铺", "客服", "购物车", "购买"]
+          
+        llm:
+          prompt: "当前是否已进入淘宝商品详情页？"
+          expected_true: true
+
+  # 与select_spec存在冗余，可能使用相同帧。可针对默认参数已经等于期望值，或者没有指定值的情况，考虑合并
+  # - id: open_spec_panel
+  #   deps: [item_detail]
+  #   name: 打开规格选择面板
+  #   condition:
+  #     type: escalate
+  #     params:
+  #       ocr:
+  #         any: ["规格", "颜色", "尺码", "型号"]
+  #       llm:
+  #         prompt: "该步是否打开了规格选择面板或展开了规格区域？"
+  #         expected_true: true
+
+  - id: select_spec
+    deps: [item_detail]
+    name: 选择规格项
+    condition:
+      type: escalate
+      params:
+        llm:
+          prompt: "该步是否正确选择了任务task_description要求的商品的各项参数规格？（如颜色/尺码/型号等）**未正确选择**或者**该商品无任务要求的参数规格**均视为错误。"
+          expected_true: true
+
+  - id: add_to_cart
+    deps: [select_spec]
+    name: 加入购物车
+    condition:
+      type: escalate
+      params:
+        ocr:
+          all: ["购物车", "购买", "加购成功"]
+        llm:
+          prompt: "该步是否将任务task_description要求物品加入购物车？"
+          expected_true: true
+
+success:
+  any_of: [add_to_cart]

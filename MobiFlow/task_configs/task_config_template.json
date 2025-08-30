@@ -1,0 +1,61 @@
+{
+  "task_name": "示例任务配置",
+  "description": "任务配置模板，用于定义测试参数",
+  
+  "rules_base_dir": "task_rules/taobao",
+  "data_base_dir": "data/taobao",
+  
+  "task_types": {
+    "type1": {
+      "name": "搜索任务",
+      "rule_file": "type1-taobao-search.yaml",
+      "data_traces": [1, 2, 3, 4, 5],
+      "description": "基本搜索功能测试 - 明确指定trace编号列表"
+    },
+    "type2": {
+      "name": "搜索+详情任务", 
+      "rule_file": "type2-taobao-search-open-add_cart.yaml",
+      "data_traces": "type2",
+      "description": "搜索并查看商品详情 - 指定type目录"
+    },
+    "type3": {
+      "name": "加购物车任务",
+      "rule_file": "type3-taobao_add_cart-new.yaml", 
+      "data_traces": [150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196],
+      "description": "添加商品到购物车 - 明确指定trace编号列表"
+    },
+    "type4": {
+      "name": "排序/筛选任务",
+      "rule_file": "type4-taobao_add_cart.yaml",
+      "data_traces": [],
+      "description": "商品排序和筛选功能 - 空配置，自动发现traces"
+    },
+    "type5": {
+      "name": "自动发现任务",
+      "rule_file": "type5-auto-discover.yaml",
+      "description": "自动发现功能演示 - 不配置data_traces字段，完全自动发现"
+    }
+  },
+
+  "test_options": {
+    "enable_ocr": true,
+    "enable_llm": true,
+    "force_llm": false,
+    "ocr_frame_exclusive": true,
+    "llm_frame_exclusive": true,
+    "prevent_frame_backtrack": true
+  },
+
+  "logging": {
+    "level": "DEBUG",
+    "use_colors": true,
+    "show_time": true,
+    "show_module": true,
+    "output_file": "test-{task_name}-{timestamp}.log"
+  },
+
+  "output": {
+    "summary_file": "test-{task_name}-summary-{timestamp}.txt",
+    "detailed_results_file": "test-{task_name}-detailed-{timestamp}.json"
+  }
+}

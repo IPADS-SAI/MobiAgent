@@ -1,0 +1,13 @@
+opencv-python>=4.8.0
+numpy>=1.24.0
+pillow>=10.0.0
+pytesseract>=0.3.10
+scikit-image>=0.22.0
+rapidfuzz>=3.9.1
+pyyaml>=6.0.0
+# Optional, for better OCR
+paddleocr>=2.7.0.3
+# Optional, for open-vocabulary icon detection (OWL-ViT)
+transformers>=4.41.0
+# torch is environment-specific; prefer installing separately (CPU):
+# torch>=2.2.0 ; extra-index-url https://download.pytorch.org/whl/cpu

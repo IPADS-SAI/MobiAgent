@@ -1,0 +1,62 @@
+task_id: bilibili_search_and_play_video
+app_id: tv.danmaku.bili
+task_type: video_playback
+description: 该任务验证在Bilibili应用中，根据指定的UP主和视频/系列名称搜索并成功播放视频的流程。
+nodes:
+- id: enter_search_page
+  name: 进入搜索页面
+  score: 20
+  condition:
+    type: escalate
+    params:
+      ocr:
+        all: ["搜索", "搜索历史", "热搜"]
+      llm:
+        prompt: 请判断当前界面是否为B站的搜索输入界面，或者用户是否已点击了首页的搜索图标？
+        expected_true: true
+  next: [view_search_results]
+
+- id: view_search_results
+  name: 查看搜索结果
+  score: 20
+  condition:
+    type: juxtaposition
+    params:
+      ocr:
+        all: ["综合", "番剧", "直播", "用户"]
+      llm:
+        prompt: 请判断当前界面是否成功展示了与任务描述`{task_description}`高度相关的视频、用户或内容列表？
+        expected_true: true
+  next: [search_video_by_creator]
+
+
+# 可以考虑增加UP主个人主页的检查
+
+- id: search_video_by_creator
+  name: 搜索指定UP主的视频
+  score: 20
+  condition:
+    type: escalate
+    params:
+      ocr:
+        all: ["搜索", "的视频", "动态"]
+      llm:
+        prompt: 请判断用户是否在搜索框中输入了与任务描述`{task_description}`相关的视频标题，并执行了搜索操作？
+        expected_true: true
+  next: [play_video]
+
+# 如果要测试最终状态，可以直接注释前面的路径节点
+- id: play_video
+  name: 播放目标视频
+  score: 20
+  condition:
+    type: juxtaposition
+    params:
+      ocr:
+        all: ["简介", "评论", "弹幕", "关注"]
+      llm:
+        prompt: 请判断当前界面是否正在播放视频？要求与任务描述`{task_description}`相关的视频。
+        expected_true: true
+
+success:
+  any_of: [play_video]

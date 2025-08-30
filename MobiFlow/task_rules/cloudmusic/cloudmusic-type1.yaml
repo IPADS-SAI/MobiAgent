@@ -1,0 +1,30 @@
+task_id: general_search_validation
+app_id: any
+task_type: search
+description: 通用搜索任务验证配置，适用于在应用内或浏览器中执行搜索操作并验证搜索结果是否正确展示。
+nodes:
+- id: initiate_search
+  name: 进入搜索或输入关键词
+  condition:
+    type: escalate
+    params:
+      ocr:
+        all: ["歌手", "搜索历史", "猜你喜欢", "热搜"]
+      llm:
+        prompt: 该步是否进入了搜索界面或激活了搜索框以准备输入关键词？
+        expected_true: true
+  next: [view_search_results]
+
+- id: view_search_results
+  name: 查看搜索结果
+  condition:
+    type: juxtaposition
+    params:
+      ocr:
+        all: ["综合", "单曲","歌单","专辑"]
+      llm:
+        prompt: 该步是否成功展示了与任务描述中实体（如歌曲、歌手、短语等）相关的搜索结果列表？
+        expected_true: true
+        
+success:
+  any_of: [view_search_results]

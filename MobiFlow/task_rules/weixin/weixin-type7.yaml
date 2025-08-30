@@ -1,0 +1,45 @@
+task_id: open_wechat_miniprogram
+app_id: com.tencent.mm
+task_type: miniprogram_launch
+description: 验证在微信应用内成功打开指定的小程序。此配置通过检查微信的初始状态和目标小程序成功加载后的最终状态来确认任务完成。
+nodes:
+- id: start_in_wechat
+  name: 任务起始于微信
+  score: 30
+  condition:
+    type: escalate
+    params:
+      ocr:
+        all: ["微信", "通讯录", "我"]
+      llm:
+        prompt: 当前屏幕是否为微信应用的主界面、搜索页或小程序列表页？
+        expected_true: true
+  next: [search]
+
+- id: search
+  name: 顶部小程序搜索框
+  score: 30
+  condition:
+    type: escalate
+    params:
+      ocr:
+        all: ["发现小程序", "搜索"]
+      llm:
+        prompt: 当前屏幕是否为微信应用搜索页或小程序列表页？
+        expected_true: true
+  next: [miniprogram_opened]
+
+
+- id: miniprogram_opened
+  name: 目标小程序已打开
+  score: 40
+  condition:
+    type: juxtaposition
+    params:
+      ocr:
+        all:: ["搜索", "q", "w", "e"]
+      llm:
+        prompt: 请仔细核对任务描述`task_description`。当前节点是否已经成功展示或打开用户指定的小程序？列表中展示该小程序的名称或其标志性的主界面。
+        expected_true: true
+success:
+  any_of: [miniprogram_opened]

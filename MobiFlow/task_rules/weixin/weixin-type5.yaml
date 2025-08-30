@@ -1,0 +1,43 @@
+task_id: wechat_search_chat_history
+app_id: com.tencent.mm
+task_type: search
+description: 在微信中查找指定联系人、群聊中指定关键词的聊天记录。
+nodes:
+- id: launch_wechat
+  name: 启动微信并进入联系人界面
+  condition:
+    type: escalate
+    params:
+      ocr:
+        all: ["聊天信息", "查找聊天记录"]
+      llm:
+        prompt: 该步是否成功进入了与任务指定联系人的聊天信息界面，展示有查找聊天记录的入口？
+        expected_true: true
+  next: [enter_search_page]
+
+- id: enter_search_page
+  name: 进入搜索页面
+  condition:
+    type: escalate
+    params:
+      ocr:
+        all: ["取消", "搜索指定内容", "日期", "图片与视频", "文件"]
+      llm:
+        prompt: 该步是否成功进入了全局搜索页面？
+        expected_true: true
+  next: [view_search_results]
+
+- id: view_search_results
+  name: 输入关键词并查看搜索结果
+  condition:
+    type: escalate
+    params:
+      # ocr:
+      #   any: ["联系人", "群聊", "聊天记录", "最常使用", "Contacts", "Group Chats", "Chat History"]
+      llm:
+        prompt: 该步是否在搜索框中输入了关键词，并且下方展示了搜索结果列表？
+        expected_true: true
+
+
+success:
+  any_of: [enter_search_page, view_search_results]

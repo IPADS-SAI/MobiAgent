@@ -1,0 +1,123 @@
+task_id: taobao_generic_search
+app_id: com.taobao.taobao
+task_type: type4
+description: 在淘宝App中将<参数规格>的<商品描述>加入购物车
+
+nodes:
+
+  - id: activate_search
+    name: 激活搜索输入
+    condition:
+      type: escalate
+      params:
+        ocr:
+          all: ["搜索", "猜你想搜", "历史搜索"]
+        llm:
+          prompt: "该节点是否在激活搜索输入框？"
+          expected_true: true
+
+  - id: input_keyword
+    deps: [activate_search]
+    name: 输入搜索关键词
+    condition:
+      type: escalate
+      params:
+        # action:
+        #   type: action_match
+        #   params:
+        #     type: input
+        # ocr:
+        #   any: ["取消"]
+        # 在每一次llm调用中，都会将当前的task_description传入
+        llm:
+          prompt: "该节点是否向搜索框输入任务task_description要求的查询物品关键词？"
+          expected_true: true
+
+
+  - id: results_page
+    deps: [input_keyword]
+    name: 显示搜索结果列表
+    condition:
+      type: escalate
+      params:
+        ocr:
+          all: ["销量", "天猫", "店铺"]
+          # all: ["销量", "天猫", "店铺", "上新"]
+        llm:
+          prompt: "该节点是否呈现了任务task_description要求的搜索结果列表？"
+          expected_true: true
+
+  - id: select_item
+    deps: [results_page]
+    name: 选择某个结果项
+    condition:
+      type: escalate
+      params:
+        # action:
+        #   type: action_match
+        #   params:
+        #     type: click
+        # ocr:
+        #   any: ["天猫", "销量"]
+        llm:
+          prompt: "是否选择了一个符合任务task_description要求的搜索结果详情？"
+          expected_true: true
+
+  # 可能检查的内容和上一步重叠，导致使用了相同的frame
+  # - id: item_detail
+  #   deps: [select_item]
+  #   name: 进入详情页
+  #   condition:
+  #     type: escalate
+  #     params:
+  #       ocr:
+  #         all: ["收藏", "店铺", "客服"]
+  #       llm:
+  #         prompt: "是否已进入某个结果的详情页？"
+  #         expected_true: true
+
+  - id: select_parameters
+    deps: [select_item]
+    name: 选择商品参数
+    condition:
+      type: escalate
+      params:
+        # ocr:
+        #   any: ["颜色", "尺寸", "尺码", "规格", "型号"]
+        llm:
+          prompt: "该节点是否正确选择了任务task_description要求的商品的各项参数规格？（如颜色/尺码/型号等）**未正确选择**或者**该商品无任务要求的参数规格**均视为错误。"
+          expected_true: true
+
+  # - id: add_to_cart
+  #   deps: [select_parameters]
+  #   name: 加入购物车
+  #   condition:
+  #     type: escalate
+  #     params:
+  #       ocr:
+  #         all: ["购物车", "购买", "加购成功"]
+  #       llm:
+  #         prompt: "该步是否将任务task_description要求的物品加入购物车？"
+  #         expected_true: true
+
+  - id: confirm_add_to_cart
+    deps: [select_parameters]
+    name: 确认加入购物车
+    condition:
+      type: escalate
+      params:
+        # 仅ocr判断
+        ocr:
+          all: ["购物车", "购买", "加购成功"]
+
+  - id: add_to_cart
+    deps: [select_parameters]
+    name: 加入购物车
+    condition:
+      type: escalate
+      params:
+        llm:
+          prompt: "该节点是否将任务task_description要求的物品加入购物车？"
+          expected_true: true
+success:
+  any_of: [add_to_cart, confirm_add_to_cart]

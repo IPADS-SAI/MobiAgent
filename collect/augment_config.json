@@ -1,0 +1,15 @@
+[
+    {
+        "dir": [
+            "function",
+            "name"
+        ],
+        "pattern": "swipe",
+        "multiplier": {
+            "reason": 5,
+            "reason_no_history": 5,
+            "grounder": 1,
+            "other": 1
+        }
+    }
+]

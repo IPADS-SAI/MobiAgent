@@ -1,0 +1,77 @@
+task_id: example_juxtaposition_demo
+app_id: com.example.app
+task_type: demo
+description: 演示escalate和juxtaposition检查器的使用
+
+####
+# 配置说明：
+# 示例1: 使用escalate模式 - 按顺序尝试，任意一个成功即可
+# 示例2: 使用juxtaposition模式 - 所有配置的检查器都必须成功
+# ocr支持使用any和all来控制匹配逻辑
+#   1. 使用any表示任意一个匹配即可
+#   2. 使用all表示必须全部匹配
+####
+
+nodes:
+  # 示例1: 使用escalate模式 - 按顺序尝试，任意一个成功即可
+  - id: search_with_escalate
+    name: 使用escalate模式进行搜索验证
+    condition:
+      type: escalate
+      params:
+        # 任意内容匹配到即可
+        ocr:
+          any: ["搜索", "查询"]
+        # 最后使用LLM验证
+        llm:
+          prompt: "该步是否执行了搜索操作？"
+          expected_true: true
+
+  # 示例2: 使用juxtaposition模式 - 所有配置的检查器都必须成功
+  - id: confirm_with_juxtaposition
+    deps: [search_with_escalate]
+    name: 使用juxtaposition模式进行严格验证
+    condition:
+      type: juxtaposition
+      params:
+        # 必须同时满足：检测到所有关键词
+        ocr:
+          all: ["确认", "提交"]
+        # 必须同时满足：LLM确认操作正确
+        llm:
+          prompt: "该步是否点击了确认/提交按钮？"
+          expected_true: true
+
+  # 示例3: 复杂的escalate配置，展示完整的升级链
+  - id: complex_escalate_example
+    deps: [confirm_with_juxtaposition]
+    name: 复杂的escalate升级链示例
+    condition:
+      type: escalate
+      params:
+        # 第6级：OCR图像识别
+        ocr:
+          any: ["购物车", "加入购物车", "立即购买"]
+          pattern: "(购物车|cart)"
+        # 第7级：LLM最终验证
+        llm:
+          prompt: "基于截图和上下文，该步是否成功将商品加入购物车？"
+          expected_true: true
+
+  # 示例4: 只使用高级检查器的juxtaposition
+  - id: advanced_juxtaposition
+    deps: [complex_escalate_example]
+    name: 高级检查器的juxtaposition组合
+    condition:
+      type: juxtaposition
+      params:
+        # 必须满足：OCR识别到相关元素
+        ocr:
+          all: ["支付", "确认订单"]
+        # 必须满足：LLM确认操作
+        llm:
+          prompt: "该步是否完成了购买/支付操作？"
+          expected_true: true
+
+success:
+  any_of: [advanced_juxtaposition]

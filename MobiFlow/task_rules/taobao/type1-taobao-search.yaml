@@ -1,0 +1,101 @@
+task_id: type1-taobao-search
+app_id: com.taobao.taobao
+task_type: type3
+description: 搜索<选择条件><商品描述>
+
+nodes:
+  # - id: open_app_home
+  #   name: 打开App首页（存在搜索入口）
+  #   condition:
+  #     type: escalate
+  #     params:
+  #       ocr:
+  #         all: ["视频", "消息", "搜索"]
+  #         pattern: "(搜索|查询)"
+
+  - id: activate_search
+    # deps: [open_app_home]
+    next: [input_keyword]
+    name: 激活搜索输入
+    condition:
+      type: escalate
+      params:
+        ocr:
+          all: ["搜索", "猜你想搜", "历史搜索"]
+        llm:
+          prompt: "该步是否在激活搜索输入框？"
+          expected_true: true
+
+  - id: input_keyword
+    # deps: [activate_search]
+    next: [apply_filter_condition,results_page]
+    name: 输入搜索关键词
+    condition:
+      type: escalate
+      params:
+        llm:
+          prompt: "该步是否向搜索框输入了查询物品关键词？"
+          expected_true: true
+
+  - id: apply_filter_condition
+    # deps: [input_keyword]
+    next: [results_page]
+    name: 应用过滤条件
+    condition:
+      type: escalate
+      params:
+        # dynamic_match:
+        #   extract_from: task_description
+        #   condition_patterns:
+        #     price_lowest:
+        #       trigger_keywords: ["价格最低", "最便宜", "价格从低到高"]
+        #       verify_keywords: ["价格", "低到高", "便宜", "最低"]
+        #       llm_prompt: "该步骤是否执行了按价格从低到高排序的操作？"
+        #     price_highest:
+        #       trigger_keywords: ["价格最高", "最贵", "价格从高到低"]
+        #       verify_keywords: ["价格", "高到低", "贵", "最高"]
+        #       llm_prompt: "该步骤是否执行了按价格从高到低排序的操作？"
+        #     sales_highest:
+        #       trigger_keywords: ["销量最高", "销量最多", "销量"]
+        #       verify_keywords: ["销量", "最高", "最多"]
+        #       llm_prompt: "该步骤是否执行了按销量从高到低排序的操作？"
+        #     sales_lowest:
+        #       trigger_keywords: ["销量最低", "销量最少"]
+        #       verify_keywords: ["销量", "最低", "最少"]
+        #       llm_prompt: "该步骤是否执行了按销量从低到高排序的操作？"
+        #   verification_fields: ["reasoning", "text"]
+        #   fallback_llm: true
+        llm:
+          prompt: "该步是否按照任务要求执行了相应的筛选或排序操作（如按价格排序、按销量排序等）？请结合任务描述和当前操作判断。若任务task_description没有排序、筛选要求则检查均返回False"
+          # prompt: "该步是否按照任务要求执行了相应的筛选或排序操作（如按价格排序、按销量排序等）？请结合任务描述和当前操作判断。"
+          expected_true: true
+        
+  - id: results_page
+    # deps: [apply_filter_condition]
+    next: [item_detail]
+    name: 显示搜索结果列表
+    condition:
+      type: escalate
+      params:
+        # 后续考虑增加图标匹配
+        # ui:
+        #   any: ["拍照"]
+        ocr:
+          all: ["销量", "天猫", "店铺"]
+        llm:
+          prompt: "该步是否正确呈现了满足任务task_description要求的完整的搜索结果列表？"
+          expected_true: true
+
+  - id: item_detail
+    name: 显示商品详情
+    condition:
+      type: escalate
+      params:
+        ocr:
+            all: ["店铺", "客服", "收藏"]
+        llm:
+          prompt: "该步是否正确呈现了满足任务task_description要求的商品详情页？"
+          expected_true: true
+
+success:
+  any_of: [item_detail]

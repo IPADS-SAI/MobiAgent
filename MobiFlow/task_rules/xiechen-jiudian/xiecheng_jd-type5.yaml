@@ -1,0 +1,72 @@
+task_id: fliggy_hotel_price_query
+app_id: com.taobao.trip
+task_type: query
+description: 在携程应用中根据指定城市、日期和酒店/地标查询酒店价格
+nodes:
+- id: launch_app
+  name: 启动携程应用
+  condition:
+    type: escalate
+    params:
+      ocr:
+        any: ["首页", "我的", "行程", "消息", "酒店", "机票"]
+      llm:
+        prompt: 当前页面是否为携程应用的首页或主界面？
+        expected_true: true
+  next: [navigate_to_hotel]
+- id: navigate_to_hotel
+  name: 进入酒店搜索
+  condition:
+    type: escalate
+    params:
+      ocr:
+        any: ["酒店", "民宿·客栈", "目的地/酒店/关键词", "搜酒店"]
+      llm:
+        prompt: 当前页面是否为酒店搜索的入口页面？
+        expected_true: true
+  next: [input_destination]
+- id: input_destination
+  name: 输入目的地或酒店名
+  condition:
+    type: escalate
+    params:
+      ocr:
+        any: ["目的地", "酒店", "位置", "关键词", "输入"]
+      llm:
+        prompt: 用户是否在当前页面输入了任务描述中指定的目的地、酒店或地标信息？
+        expected_true: true
+  next: [select_dates]
+- id: select_dates
+  name: 选择入住和离店日期
+  condition:
+    type: juxtaposition
+    params:
+      ocr:
+        all: ["入住", "离店", "日历", "确定"]
+      llm:
+        prompt: 用户是否在当前日历页面上，成功选择了任务描述中指定的入住和离店日期？
+        expected_true: true
+  next: [confirm_search]
+- id: confirm_search
+  name: 点击查询按钮
+  condition:
+    type: escalate
+    params:
+      ocr:
+        any: ["查询", "搜索", "查找酒店", "搜酒店", "完成"]
+      llm:
+        prompt: 用户是否点击了查询或搜索按钮以查找符合条件的酒店？
+        expected_true: true
+  next: [view_results]
+- id: view_results
+  name: 查看酒店价格列表
+  condition:
+    type: juxtaposition
+    params:
+      ocr:
+        any: ["价格", "筛选", "排序", "推荐", "¥", "起", "每晚", "综合推荐"]
+      llm:
+        prompt: 当前页面是否成功展示了符合任务描述中地点和日期要求的酒店列表及其价格信息？
+        expected_true: true
+success:
+  any_of: [view_results]

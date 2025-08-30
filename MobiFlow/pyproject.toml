@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "avdag"
+version = "0.0.1"
+description = "A minimal DAG-based verifier for mobile LLM agent task traces"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+  "PyYAML>=6.0.1",
+]
+authors = [{ name = "Auto Verify" }]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["avdag*"]

@@ -1,0 +1,73 @@
+task_id: map_navigation_generic
+app_id: com.autonavi.minimap
+task_type: navigation
+description: 通用地图导航任务验证配置，覆盖从搜索目的地到开始导航的关键步骤。
+nodes:
+# - id: launch_map
+#   name: 启动地图应用
+#   condition:
+#     type: escalate
+#     params:
+#       ocr:
+#         any: ["我的位置", "搜索", "路线", "附近", "去哪"]
+#       llm:
+#         prompt: 该步是否成功启动了地图应用并进入了主界面？
+#         expected_true: true
+#   next: [input_destination]
+# - id: input_destination
+#   name: 搜索目的地
+#   condition:
+#     type: escalate
+#     params:
+#       ocr:
+#         any: ["搜索", "路线", "去这里", "详情", "公里"]
+#       llm:
+#         prompt: 该步是否已经输入或选择了任务描述中的目的地，并展示了相关的地点信息或路线规划入口？
+#         expected_true: true
+#   next: [plan_route]
+# - id: plan_route
+#   name: 查看路线规划
+#   condition:
+#     type: escalate
+#     params:
+#       ocr:
+#         any: ["路线", "方案", "时间", "公里", "打车", "公交", "驾车", "步行", "开始导航"]
+#       llm:
+#         prompt: 该步是否展示了从当前位置到目标地点的多种路线规划方案？
+#         expected_true: true
+#   next: [start_navigation]
+# - id: start_navigation
+#   name: 开始导航
+#   condition:
+#     type: juxtaposition
+#     params:
+#       ocr:
+#         any: ["开始导航", "出发", "导航中", "全程", "剩余"]
+#       llm:
+#         prompt: 该步是否点击了'开始导航'或类似按钮，准备进入或已经进入实时导航界面？
+#         expected_true: true
+#   next: [navigation_active]
+- id: result_detail
+  name: 目的地结果
+  condition:
+    type: juxtaposition
+    params:
+      ocr:
+        all: ["周边", "分享", "打车", "导航", "路线"]
+      llm:
+        prompt: 是否已经正确查到到目的地结果，展示了相关的地点信息或路线规划入口？
+        expected_true: true
+  next: [navigation_active]
+
+- id: navigation_active
+  name: 导航进行中
+  condition:
+    type: escalate
+    params:
+      ocr:
+        any: ["全览", "km", "继续导航"]
+      llm:
+        prompt: 该步是否已成功进入实时导航模式，界面上显示了行进路线、方向指引和距离等信息？或提供导航方式选择？
+        expected_true: true
+success:
+  any_of: [start_navigation]

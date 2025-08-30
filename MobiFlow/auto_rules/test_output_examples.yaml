@@ -1,0 +1,72 @@
+task_id: taobao_search_and_add_to_cart
+app_id: com.taobao.taobao
+task_type: shopping
+description: 在淘宝应用中，根据指令搜索指定商品并将其成功加入购物车的任务验证配置。
+nodes:
+- id: launch_app
+  name: 启动淘宝应用
+  condition:
+    type: escalate
+    params:
+      ocr:
+        any: ["淘宝", "首页", "推荐", "消息", "购物车", "我的淘宝"]
+      llm:
+        prompt: 当前界面是否为淘宝应用的首页或主界面？
+        expected_true: true
+  next: [search_entry]
+- id: search_entry
+  name: 进入搜索界面
+  condition:
+    type: escalate
+    params:
+      ocr:
+        any: ["搜索", "发现", "扫一扫", "拍照搜", "search", "🔍"]
+      llm:
+        prompt: 用户是否已经点击了顶部的搜索框或通过其他方式进入了搜索输入界面？
+        expected_true: true
+  next: [input_search_keyword]
+- id: input_search_keyword
+  name: 输入搜索关键词
+  condition:
+    type: escalate
+    params:
+      ocr:
+        any: ["搜索", "取消", "清空", "键盘", "输入法"]
+      llm:
+        prompt: 用户是否在搜索框中输入了与任务描述（task_description）中指定的商品相关的关键词？
+        expected_true: true
+  next: [view_search_results]
+- id: view_search_results
+  name: 查看搜索结果列表
+  condition:
+    type: escalate
+    params:
+      ocr:
+        any: ["综合", "销量", "筛选", "店铺", "价格", "￥", "广告"]
+      llm:
+        prompt: 当前界面是否展示了与搜索关键词相关的商品结果列表？
+        expected_true: true
+  next: [select_product]
+- id: select_product
+  name: 选择商品进入详情页
+  condition:
+    type: escalate
+    params:
+      ocr:
+        any: ["商品详情", "宝贝详情", "评价", "参数", "客服", "店铺", "购物车", "加入购物车", "立即购买"]
+      llm:
+        prompt: 用户是否从商品列表中选择了一个目标商品并成功进入了其详情页面？
+        expected_true: true
+  next: [add_to_cart]
+- id: add_to_cart
+  name: 将商品加入购物车
+  condition:
+    type: juxtaposition
+    params:
+      ocr:
+        any: ["加入购物车", "添加成功", "已加入", "规格", "颜色", "尺码", "数量", "确定"]
+      llm:
+        prompt: 根据当前界面信息判断，用户是否成功将任务描述（task_description）中指定的商品加入了购物车？请注意检查是否有确认提示或规格选择步骤。
+        expected_true: true
+success:
+  any_of: [add_to_cart]

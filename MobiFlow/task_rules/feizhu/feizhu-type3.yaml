@@ -1,0 +1,29 @@
+task_id: fliggy_query_hotel_price
+app_id: com.taobao.trip
+task_type: query
+description: 在飞猪应用中查询指定城市和品牌的酒店及其价格
+nodes:
+- id: start_search
+  name: 进入酒店搜索界面
+  condition:
+    type: escalate
+    params:
+      ocr:
+        any: ["酒店", "民宿", "目的地", "关键词", "住/离店", "搜索"]
+      llm:
+        prompt: 当前界面是否为酒店搜索界面？用户可以在此界面输入城市、酒店名称或选择入住日期。
+        expected_true: true
+  next: [view_search_results]
+- id: view_search_results
+  name: 查看酒店搜索结果列表
+  deps: [start_search]
+  condition:
+    type: juxtaposition
+    params:
+      ocr:
+        any: ["¥", "起", "价格", "评分", "筛选", "订", "每晚", "详情"]
+      llm:
+        prompt: 当前界面是否成功展示了符合用户查询意图（城市和酒店品牌）的酒店列表，并且列表中清晰地显示了酒店的价格信息（如'¥'符号或'xx元起'）？
+        expected_true: true
+success:
+  any_of: [view_search_results]

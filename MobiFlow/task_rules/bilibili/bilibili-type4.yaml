@@ -1,0 +1,46 @@
+task_id: bilibili_view_creator_homepage
+app_id: tv.danmaku.bili
+task_type: search_and_view
+description: 在B站应用中，通过搜索或其他方式，进入指定UP主的个人主页。
+nodes:
+- id: enter_search_page
+  name: 进入搜索页面
+  score: 30
+  condition:
+    type: escalate
+    params:
+      ocr:
+        all: ["搜索", "搜索历史", "热搜"]
+      llm:
+        prompt: 请判断当前界面是否为B站的搜索输入界面，或者用户是否已点击了首页的搜索图标？
+        expected_true: true
+  next: [view_search_results]
+
+- id: view_search_results
+  name: 查看搜索结果
+  score: 30
+  condition:
+    type: juxtaposition
+    params:
+      ocr:
+        all: ["综合", "番剧", "直播", "用户", "关注"]
+      llm:
+        prompt: 请判断当前界面是否成功展示了与任务描述`{task_description}`高度相关的用户UP主？
+        expected_true: true
+  next: [enter_creator_homepage]
+
+- id: enter_creator_homepage
+  name: 进入UP主个人主页
+  score: 40
+  condition:
+    type: juxtaposition
+    params:
+      ocr:
+        all: ["主页", "动态", "投稿"]
+        any: ["关注", "粉丝"]
+      llm:
+        prompt: 当前界面是否为任务要求进入的目标UP主的个人主页？页面上应清晰展示该UP主的头像、昵称、粉丝数，并包含'主页'、'动态'、'投稿'等分区。
+        expected_true: true
+
+success:
+  any_of: [enter_creator_homepage]

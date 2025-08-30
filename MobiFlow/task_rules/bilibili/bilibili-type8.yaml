@@ -1,0 +1,90 @@
+task_id: bilibili_video_comment
+app_id: tv.danmaku.bili
+task_type: social_interaction
+description: 在Bilibili应用中搜索指定视频并发表评论
+nodes:
+# - id: launch_app
+#   name: 启动应用
+#   condition:
+#     type: escalate
+#     params:
+#       ocr:
+#         any: ["推荐", "首页", "动态", "我的", "大会员"]
+#       llm:
+#         prompt: 当前界面是否为Bilibili应用的主界面？
+#         expected_true: true
+#   next: [enter_search]
+# - id: enter_search
+#   name: 进入搜索界面
+#   condition:
+#     type: escalate
+#     params:
+#       ocr:
+#         any: ["搜索", "🔍", "排行榜", "游戏中心"]
+#       llm:
+#         prompt: 用户是否已经点击搜索图标，进入了搜索输入界面？
+#         expected_true: true
+#   next: [input_keyword_and_search]
+# - id: input_keyword_and_search
+#   name: 输入关键词并搜索
+#   condition:
+#     type: escalate
+#     params:
+#       ocr:
+#         any: ["搜索历史", "搜索发现", "综合", "番剧", "视频", "用户"]
+#       llm:
+#         prompt: 用户是否根据任务要求输入了视频关键词并执行了搜索，界面上是否展示了搜索结果列表？
+#         expected_true: true
+#   next: [select_video_from_results]
+
+# 前面可以增加更多的节点，限制路径
+
+- id: select_video_detail
+  name: 进入视频播放详情页
+  condition:
+    type: juxtaposition
+    params:
+      ocr:
+        all: ["简介", "评论", "点我发弹幕"]
+      llm:
+        prompt: 当前是否成功进入了目标视频的播放页面？
+        expected_true: true
+  next: [enter_comment_section]
+
+- id: enter_comment_section
+  name: 进入评论区或点击评论框
+  condition:
+    type: escalate
+    params:
+      ocr:
+        all: ["简介","评论","热门评论"]
+      llm:
+        prompt: 是否已经进入任务描述`{task_description}`的视频评论页面，并在页面内看到评论框？
+        expected_true: true
+  next: [input_and_publish_comment]
+
+- id: input_and_publish_comment
+  name: 输入并发表评论
+  condition:
+    type: juxtaposition
+    params:
+      ocr:
+        all: ["发布", "转到动态"]
+      llm:
+        prompt: 用户是否在输入框中输入了与任务描述一致的评论内容，等待发送？
+        expected_true: true
+  # next: [verify_comment_published]
+
+# - id: verify_comment_published
+#   name: 验证评论发布成功
+#   condition:
+#     type: juxtaposition
+#     params:
+#       ocr:
+#         any: ["发布成功", "评论发送成功", "审核", "我的评论", "删除", "撤回"]
+#       llm:
+#         prompt: 界面上是否出现了评论发布成功的提示，或者在评论区能看到用户刚刚发布的、与任务描述内容一致的评论？
+#         expected_true: true
+
+success:
+  any_of: [input_and_publish_comment]

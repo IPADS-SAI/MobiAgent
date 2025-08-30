@@ -1,0 +1,45 @@
+task_id: wechat_send_group_message_with_at
+app_id: com.tencent.mm
+task_type: communication
+description: 在微信群聊中发送消息，并可能@指定成员
+nodes:
+- id: launch_specific
+  name: 启动@指定人的窗口
+  score: 30
+  condition:
+    type: escalate
+    params:
+      ocr:
+        all: ["选择提醒的人", "多选"]
+        any: ["所有人", "all"]
+      llm:
+        prompt: 该步是否成功进入了与任务指定群聊的聊天信息界面，并弹出了选择提醒的人窗口？
+        expected_true: true
+  next: [select_someone]
+
+- id: select_someone
+  name: 选择提醒的人
+  score: 30
+  condition:
+    type: juxtaposition
+    params:
+      ocr:
+        all: ["选择提醒的人", "多选"]
+      llm:
+        prompt: 该步是否成功找到需要提醒的群成员，准备或已经将他添加到提醒列表？
+        expected_true: true
+  next: [send_message]
+
+- id: send_message
+  name: 发送消息并验证
+  score: 30
+  condition:
+    type: juxtaposition
+    params:
+      ocr:
+        all: ["发送", "q", "w", "e"]
+      llm:
+        prompt: 请判断消息框中是否输入了任务指令(task_description)中要求的完整消息内容？请重点核对是否提到了正确的接收群组、正确的@对象以及完全一致的消息文本。
+        expected_true: true
+success:
+  any_of: [send_message]

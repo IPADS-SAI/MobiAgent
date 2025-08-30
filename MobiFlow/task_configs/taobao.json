@@ -1,0 +1,42 @@
+{
+  "task_name": "taobao",
+  "description": "淘宝任务测试配置", 
+  
+  "rules_base_dir": "task_rules/taobao",
+  "data_base_dir": "data/taobao",
+  
+  "task_types": {
+    "type3": {
+      "name": "加购物车任务",
+      "rule_file": "type3-taobao_add_cart-new.yaml", 
+      "description": "添加商品到购物车"
+    },
+    "type4": {
+      "name": "排序/筛选任务",
+      "rule_file": "type4-taobao_add_cart.yaml",
+      "description": "商品排序和筛选功能"
+    }
+  },
+
+  "test_options": {
+    "enable_ocr": true,
+    "enable_llm": true,
+    "force_llm": false,
+    "ocr_frame_exclusive": true,
+    "llm_frame_exclusive": true,
+    "prevent_frame_backtrack": true
+  },
+
+  "logging": {
+    "level": "DEBUG",
+    "use_colors": true,
+    "show_time": true,
+    "show_module": true,
+    "output_file": "test-{task_name}-{timestamp}.log"
+  },
+
+  "output": {
+    "summary_file": "test-{task_name}-summary-{timestamp}.txt",
+    "detailed_results_file": "test-{task_name}-detailed-{timestamp}.json"
+  }
+}

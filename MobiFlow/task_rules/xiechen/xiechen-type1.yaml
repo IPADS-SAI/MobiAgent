@@ -1,0 +1,68 @@
+task_id: ctrip_ticket_search
+app_id: ctrip.android.view
+task_type: search
+description: 在携程应用中根据用户指令查询机票或火车票，并验证是否成功展示结果列表。
+nodes:
+# - id: launch_app
+#   name: 启动携程应用
+#   condition:
+#     type: escalate
+#     params:
+#       ocr:
+#         any: ["机票", "酒店", "火车票", "旅游", "首页", "我的"]
+#       llm:
+#         prompt: 当前页面是否为携程应用的首页或主界面？
+#         expected_true: true
+#   next: [navigate_to_flight]
+  
+- id: navigate_to_flight
+  name: 进入机票/火车票查询页面
+  condition:
+    type: escalate
+    params:
+      ocr:
+        all: ["单程", "往返", "查询"]
+      llm:
+        prompt: 当前页面是否为任务要求的票（机票或火车票）查询界面？
+        # 请结合任务描述(task_description)判断，页面上是否已自动填充或展示了正确的出发地和目的地？
+        expected_true: true
+  next: [view_results]
+
+# - id: navigate_to_train
+#   name: 进入火车票查询页面
+#   condition:
+#     type: escalate
+#     params:
+#       ocr:
+#         any: ["火车票查询", "出发站", "到达站", "学生票", "只看高铁动车", "查询车票"]
+#       llm:
+#         prompt: 当前页面是否为火车票/高铁票查询界面？请结合任务描述(task_description)判断，页面上是否已自动填充或展示了正确的出发地和目的地？
+#         expected_true: true
+#   next: [view_results]
+
+# 直接检查出发地、目的地、日期
+- id: check_departure_arrival
+  name: 检查出发地、目的地
+  condition:
+    type: juxtaposition
+    params:
+      ocr:
+        all: ["单程", "往返", "查询"]
+      llm:
+        prompt: 当前页面是否展示了任务`{task_description}`要求的正确的出发地、目的地？任一错误则判定为错误
+        expected_true: true
+  next: [view_results]
+
+- id: view_results
+  name: 查看查询结果列表
+  condition:
+    type: escalate
+    params:
+      ocr:
+        any: ["直飞优先", "时间排序", "价格排序", "经济舱", "商务", "一等", "二等", "出发最早","耗时最短"]
+      llm:
+        prompt: 当前页面是否成功展示了从任务描述(task_description)指定的出发地到目的地的机票或火车票的班次列表？列表中应包含价格、时间等关键信息。
+        expected_true: true
+ 
+success:
+  any_of: [view_results]

@@ -1,0 +1,47 @@
+{
+  "task_name": "ele",
+  "description": "饿了么任务测试配置",
+  
+  "rules_base_dir": "task_rules/ele",
+  "data_base_dir": "data/ele",
+  
+  "task_types": {
+    "type3": {
+      "name": "外卖订餐任务",
+      "rule_file": "ele-type3.yaml",
+      "description": "外卖订餐功能测试"
+    },
+    "type4": {
+      "name": "商家筛选任务",
+      "rule_file": "ele-type4.yaml", 
+      "description": "商家筛选和排序功能测试"
+    },
+    "type5": {
+      "name": "菜品搜索任务",
+      "rule_file": "ele-type5.yaml",
+      "description": "菜品搜索功能测试"
+    }
+  },
+
+  "test_options": {
+    "enable_ocr": true,
+    "enable_llm": true,
+    "force_llm": false,
+    "ocr_frame_exclusive": true,
+    "llm_frame_exclusive": true,
+    "prevent_frame_backtrack": true
+  },
+
+  "logging": {
+    "level": "DEBUG",
+    "use_colors": true,
+    "show_time": true,
+    "show_module": true,
+    "output_file": "test-{task_name}-{timestamp}.log"
+  },
+
+  "output": {
+    "summary_file": "test-{task_name}-summary-{timestamp}.txt",
+    "detailed_results_file": "test-{task_name}-detailed-{timestamp}.json"
+  }
+}

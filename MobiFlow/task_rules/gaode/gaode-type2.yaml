@@ -1,0 +1,42 @@
+task_id: ride_hailing_gaode
+app_id: com.autonavi.minimap
+task_type: ride_hailing
+description: 验证在高德地图中完成打车到指定目的地的任务流程
+nodes:
+- id: enter_ride_hailing_mode
+  name: 进入打车功能
+  condition:
+    type: escalate
+    params:
+      ocr:
+        all: ["你要去哪", "预约", "代叫", "接送机"]
+      llm:
+        prompt: 当前界面是否为打车功能主界面，通常会显示地图、出发地和目的地输入框？
+        expected_true: true
+  next: [input_destination]
+
+- id: input_destination
+  name: 输正确目的地
+  condition:
+    type: juxtaposition
+    params:
+      ocr:
+        all: ["我的位置","收藏夹","地图选点"]
+      llm:
+        prompt: 用户是否已在目的地输入框中输入或确认了任务描述（task_description）中指定的地点？
+        expected_true: true
+  next: [confirm_ride_request]
+
+- id: confirm_ride_request
+  name: 等待确认车型并呼叫
+  condition:
+    type: escalate
+    params:
+      ocr:
+        all: ["立即打车","预估"]
+      llm:
+        prompt: 界面是否已展示了路线、预估价格和可用的车型，并出现了'呼叫'或'确认'等按钮，让用户可以发起叫车请求？
+        expected_true: true
+
+success:
+  any_of: [confirm_ride_request]

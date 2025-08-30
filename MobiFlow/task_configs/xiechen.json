@@ -1,0 +1,57 @@
+{
+  "task_name": "xiechen",
+  "description": "携程任务测试配置",
+  
+  "rules_base_dir": "task_rules/xiechen",
+  "data_base_dir": "data/xiechen",
+  
+  "task_types": {
+    "type1": {
+      "name": "机票预订任务",
+      "rule_file": "xiechen-type1.yaml",
+      "description": "机票搜索和预订功能测试"
+    },
+    "type2": {
+      "name": "酒店预订任务",
+      "rule_file": "xiechen-type2.yaml",
+      "description": "酒店搜索和预订功能测试"
+    },
+    "type3": {
+      "name": "火车票预订任务",
+      "rule_file": "xiechen-type3.yaml",
+      "description": "火车票搜索和预订功能测试"
+    },
+    "type4": {
+      "name": "旅游产品任务",
+      "rule_file": "xiechen-type4.yaml",
+      "description": "旅游产品搜索和预订功能测试"
+    },
+    "type5": {
+      "name": "综合服务任务",
+      "rule_file": "xiechen-type5.yaml",
+      "description": "综合旅行服务功能测试"
+    }
+  },
+
+  "test_options": {
+    "enable_ocr": true,
+    "enable_llm": true,
+    "force_llm": false,
+    "ocr_frame_exclusive": true,
+    "llm_frame_exclusive": true,
+    "prevent_frame_backtrack": true
+  },
+
+  "logging": {
+    "level": "DEBUG",
+    "use_colors": true,
+    "show_time": true,
+    "show_module": true,
+    "output_file": "test-{task_name}-{timestamp}.log"
+  },
+
+  "output": {
+    "summary_file": "test-{task_name}-summary-{timestamp}.txt",
+    "detailed_results_file": "test-{task_name}-detailed-{timestamp}.json"
+  }
+}

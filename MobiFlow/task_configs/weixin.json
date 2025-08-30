@@ -1,0 +1,42 @@
+{
+  "task_name": "weixin",
+  "description": "微信任务测试配置", 
+  
+  "rules_base_dir": "task_rules/weixin",
+  "data_base_dir": "data/weixin",
+  
+  "task_types": {
+    "type1": {
+      "name": "type1任务",
+      "rule_file": "weixin-type1.yaml", 
+      "description": "微信type1功能测试 - 明确指定type1目录"
+    },
+    "type2": {
+      "name": "type2任务",
+      "rule_file": "weixin-type2.yaml", 
+      "description": "微信type2功能测试 - 明确指定type2目录"
+    }
+  },
+
+  "test_options": {
+    "enable_ocr": true,
+    "enable_llm": true,
+    "force_llm": false,
+    "ocr_frame_exclusive": true,
+    "llm_frame_exclusive": true,
+    "prevent_frame_backtrack": true
+  },
+
+  "logging": {
+    "level": "DEBUG",
+    "use_colors": true,
+    "show_time": true,
+    "show_module": true,
+    "output_file": "test-{task_name}-{timestamp}.log"
+  },
+
+  "output": {
+    "summary_file": "test-{task_name}-summary-{timestamp}.txt",
+    "detailed_results_file": "test-{task_name}-detailed-{timestamp}.json"
+  }
+}

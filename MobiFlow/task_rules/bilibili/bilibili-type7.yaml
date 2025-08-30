@@ -1,0 +1,43 @@
+task_id: bilibili_follow_creator
+app_id: tv.danmaku.bili
+task_type: follow_action
+description: 在B站(bilibili)应用中，通过搜索找到并成功关注一个指定的用户（UP主或官方账号）。
+nodes:
+# - id: launch_app
+#   name: 启动B站应用
+#   condition:
+#     type: escalate
+#     params:
+#       ocr:
+#         any: ["推荐", "首页", "动态", "我的", "热门", "会员购"]
+#       llm:
+#         prompt: 当前界面是否为B站应用的主界面或首页？
+#         expected_true: true
+#   next: [search_creator]
+
+- id: execute_search
+  name: 输入关键词并执行搜索
+  score: 10
+  condition:
+    type: juxtaposition
+    params:
+      ocr:
+        all: ["搜索", "搜索历史", "热搜"]
+      llm:
+        prompt: 请判断用户是否使用了与任务描述`{task_description}`相关的关键词搜索？
+        expected_true: true
+  next: [confirm_follow]
+
+- id: confirm_follow
+  name: 确认关注成功
+  condition:
+    type: juxtaposition
+    params:
+      ocr:
+        any: ["已关注", "关注"]
+        all: ["粉丝"]
+      llm:
+        prompt: 界面上是否（如按钮文字变为'已关注'）证明已经成功关注了任务描述中的目标创作者？
+        expected_true: true
+success:
+  any_of: [confirm_follow]

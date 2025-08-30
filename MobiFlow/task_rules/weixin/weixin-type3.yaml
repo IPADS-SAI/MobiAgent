@@ -1,0 +1,44 @@
+task_id: wechat_view_moments
+app_id: com.tencent.mm
+task_type: social_browsing
+description: 验证在微信中打开朋友圈信息流或特定联系人朋友圈的任务流程。
+nodes:
+# - id: start_wechat
+#   name: 启动微信或进入主界面
+#   condition:
+#     type: escalate
+#     params:
+#       ocr:
+#         any: ["微信", "通讯录", "发现", "我", "Chats", "Contacts", "Discover"]
+#       llm:
+#         prompt: 该步是否成功打开微信并进入主界面（如聊天、通讯录或发现页）？
+#         expected_true: true
+#   next: [view_general_moments]
+
+- id: view_contact_info
+  name: 进入朋友个人页
+  condition:
+    type: escalate
+    params:
+      ocr:
+        any: ["朋友资料", "发消息", "音视频通话"]
+      llm:
+        prompt: 当前页面是否为微信的朋友主页，即显示该朋友的个人信息和朋友圈入口？
+        expected_true: true
+  next: [view_specific_moments]
+
+
+- id: view_specific_moments
+  name: 查看特定联系人朋友圈
+  condition:
+    type: escalate
+    params:
+      # ocr:
+      #   all: ["朋友圈"]
+      #   any: ["封面", "相册", "动态"]
+      llm:
+        prompt: 当前页面是否为任务指定联系人的个人朋友圈页面，即只显示该联系人自己发布的动态？
+        expected_true: true
+
+success:
+  any_of: [view_specific_moments]

@@ -1,0 +1,83 @@
+task_id: eleme_order_food
+app_id: me.ele
+task_type: shopping
+description: 在饿了么应用中根据用户指令完成外卖下单任务，包括搜索店铺、选择商品。
+nodes:
+- id: enter_store_page
+  name: 进入店铺页面
+  condition:
+    type: escalate
+    params:
+      ocr:
+        all: ["综合排序","销量优先","速度优先"]
+      llm:
+        prompt: 根据任务描述`{{task_description}}`，该步骤是否展示了目标商品或商家店铺结果列表？
+        expected_true: true
+  next: [item_detail]
+
+
+- id: item_detail
+  name: 商品详情
+  deps: [enter_store_page]
+  condition:
+    type: juxtaposition
+    params:
+      ocr:
+        all: ["详情","评价","商品详情","商品描述"]
+      llm:
+        prompt: 当前节点是否正确选择了任务描述`{{task_description}}`中指定商品，进入商品详情页？
+        expected_true: true
+  next: [add_to_cart]
+
+# - id: select_item_and_specs
+#   name: 选择商品及规格
+#   deps: [enter_store_page]
+#   condition:
+#     type: juxtaposition
+#     params:
+#       ocr:
+#         all: ["选好了"]
+#       llm:
+#         prompt: 该步骤是否正确选择了任务描述`{{task_description}}`中指定的商品和规格（如辣度、甜度、温度、加料等）？
+#         expected_true: true
+#   next: [add_to_cart]
+
+- id: add_to_cart
+  name: 加入购物车
+  deps: [select_item_and_specs]
+  condition:
+    type: escalate
+    params:
+      ocr:
+        all: ["去结算"]
+      llm:
+        prompt: 该步骤是否成功将指定商品加入了购物车？
+        expected_true: true
+  # next: [go_to_checkout]
+
+# - id: go_to_checkout
+#   name: 进入结算页面
+#   condition:
+#     type: juxtaposition
+#     params:
+#       ocr:
+#         all: ["确认订单", "地址"]
+#         any: ["提交订单", "在线支付", "餐具", "备注", "合计", "实付"]
+#       llm:
+#         prompt: 该步骤是否已进入订单确认或结算页面，且页面中包含了任务描述`{{task_description}}`中指定的商品信息？
+#         expected_true: true
+#   next: [submit_order]
+
+# - id: submit_order
+#   name: 提交订单并支付
+#   deps: [go_to_checkout]
+#   condition:
+#     type: escalate
+#     params:
+#       ocr:
+#         any: ["支付成功", "下单成功", "订单已送出", "等待商家接单", "查看订单", "订单详情"]
+#       llm:
+#         prompt: 该步骤是否成功提交了订单并完成了支付，或者进入了订单成功的确认页面？
+#         expected_true: true
+success:
+  any_of: [add_to_cart]

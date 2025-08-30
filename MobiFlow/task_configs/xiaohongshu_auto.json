@@ -1,0 +1,47 @@
+{
+  "task_name": "xiaohongshu_auto",
+  "description": "小红书任务测试配置 - 使用自动发现功能",
+  
+  "rules_base_dir": "task_rules/xiaohongshu", 
+  "data_base_dir": "data/xiaohongshu",
+  
+  "task_types": {
+    "type4": {
+      "name": "type4任务",
+      "rule_file": "xiaohongshu-type4.yaml", 
+      "description": "小红书type4功能测试 - 明确指定type4目录"
+    },
+    "type5": {
+      "name": "type5任务",
+      "rule_file": "xiaohongshu-type5.yaml",
+      "description": "小红书type5功能测试 - 明确指定type5目录"
+    },
+    "type6": {
+      "name": "type6任务",
+      "rule_file": "xiaohongshu-type6.yaml",
+      "description": "小红书type6功能测试 - 明确指定type6目录"
+    }
+  },
+
+  "test_options": {
+    "enable_ocr": true,
+    "enable_llm": true,
+    "force_llm": false,
+    "ocr_frame_exclusive": true,
+    "llm_frame_exclusive": true,
+    "prevent_frame_backtrack": true
+  },
+
+  "logging": {
+    "level": "DEBUG",
+    "use_colors": true,
+    "show_time": true,
+    "show_module": true,
+    "output_file": "test-{task_name}-{timestamp}.log"
+  },
+
+  "output": {
+    "summary_file": "test-{task_name}-summary-{timestamp}.log",
+    "detailed_results_file": "test-{task_name}-detailed-{timestamp}.json"
+  }
+}

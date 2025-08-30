@@ -1,0 +1,7 @@
+{
+  "level": "DEBUG",
+  "use_colors": true,
+  "show_time": true,
+  "show_module": true,
+  "output_file": "./output_file/debug.log"
+}

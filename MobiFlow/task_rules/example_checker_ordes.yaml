@@ -1,0 +1,197 @@
+task_id: example_order_demo
+app_id: com.example.app
+task_type: demo
+description: 演示多路径任务验证配置的完整示例，展示deps和next的使用
+
+####
+# 配置说明：
+# deps: AND语义 - 严格的前置依赖，所有listed节点必须先完成
+# next: OR语义 - 灵活的后继选择，可以进入任一listed节点
+# 本示例展示一个电商购物任务的多种路径配置
+####
+
+nodes:
+  # 第1步：启动应用（入口节点）
+  - id: launch_app
+    name: 启动购物应用
+    condition:
+      type: escalate
+      params:
+        ocr:
+          any: ["打开应用", "启动", "进入首页", "主页面"]
+        llm:
+          prompt: "该步是否成功启动了购物应用？"
+          expected_true: true
+    next: [search_entry, browse_category]  # OR语义：可以选择搜索或浏览分类
+
+  # 路径A：搜索入口分支
+  - id: search_entry
+    name: 进入搜索功能
+    condition:
+      type: escalate
+      params:
+        ocr:
+          any: ["搜索", "search", "🔍"]
+        llm:
+          prompt: "该步是否点击了搜索功能？"
+          expected_true: true
+    next: [input_search_keyword]
+
+  # 路径B：分类浏览分支
+  - id: browse_category
+    name: 浏览商品分类
+    condition:
+      type: escalate
+      params:
+        ocr:
+          any: ["分类", "类目", "商品分类", "category"]
+        llm:
+          prompt: "该步是否进入了商品分类页面？"
+          expected_true: true
+    next: [select_category]
+
+  # 搜索路径继续
+  - id: input_search_keyword
+    name: 输入搜索关键词
+    condition:
+      type: escalate
+      params:
+        ocr:
+          any: ["输入", "搜索框", "关键词"]
+        llm:
+          prompt: "该步是否输入了任务task_description所需物品的搜索关键词？"
+          expected_true: true
+    next: [search_results]
+
+  # 分类路径继续
+  - id: select_category
+    name: 选择商品分类
+    condition:
+      type: escalate
+      params:
+        ocr:
+          any: ["选择", "点击", "分类"]
+        llm:
+          prompt: "该步是否正确选择了商品分类？"
+          expected_true: true
+    next: [category_results]
+
+  # 搜索结果页面
+  - id: search_results
+    name: 查看搜索结果
+    condition:
+      type: escalate
+      params:
+        ocr:
+          any: ["搜索结果", "共", "件商品", "结果"]
+        llm:
+          prompt: "该步是否显示了搜索结果？"
+          expected_true: true
+    next: [apply_filter, select_product]  # OR语义：可以筛选或直接选择商品
+
+  # 分类结果页面
+  - id: category_results
+    name: 查看分类商品列表
+    condition:
+      type: escalate
+      params:
+        ocr:
+          any: ["商品列表", "分类商品", "商品"]
+        llm:
+          prompt: "该步是否显示了分类商品列表？"
+          expected_true: true
+    next: [apply_filter, select_product]  # OR语义：同样可以筛选或直接选择
+
+  # 可选步骤：应用筛选条件
+  - id: apply_filter
+    name: 应用筛选条件
+    condition:
+      type: escalate
+      params:
+        ocr:
+          any: ["筛选", "排序", "销量", "价格", "评分", "filter"]
+        llm:
+          prompt: "该步是否按照任务task_description要求执行了相应的筛选或排序操作？"
+          expected_true: true
+    next: [select_product]
+
+  # 选择商品（两条路径汇聚点）
+  - id: select_product
+    name: 选择目标商品
+    condition:
+      type: escalate
+      params:
+        ocr:
+          any: ["选择", "点击", "商品", "详情"]
+        llm:
+          prompt: "该步是否选择了目标商品？"
+          expected_true: true
+    next: [add_to_cart, buy_now]  # OR语义：可以加购物车或直接购买
+
+  # 路径C：加入购物车分支
+  - id: add_to_cart
+    name: 加入购物车
+    condition:
+      type: juxtaposition
+      params:
+        ocr:
+          any: ["加入购物车", "购物车", "cart"]
+        llm:
+          prompt: "该步是否将任务task_description所要求商品加入了购物车？"
+          expected_true: true
+    next: [go_to_cart]
+
+  # 路径D：立即购买分支
+  - id: buy_now
+    name: 立即购买
+    condition:
+      type: juxtaposition
+      params:
+        ocr:
+          any: ["立即购买", "马上买", "buy now"]
+        llm:
+          prompt: "该步是否点击了立即购买？"
+          expected_true: true
+    next: [checkout]
+
+  # 购物车路径继续
+  - id: go_to_cart
+    name: 进入购物车
+    condition:
+      type: escalate
+      params:
+        ocr:
+          any: ["购物车", "cart", "已加入"]
+        llm:
+          prompt: "该步是否进入了购物车页面？"
+          expected_true: true
+    next: [checkout]
+
+  # 最终结算（两条路径最终汇聚）
+  - id: checkout
+    name: 结算/支付
+    deps: []  # 无强制依赖，通过next路径到达即可
+    condition:
+      type: escalate
+      params:
+        ocr:
+          any: ["结算", "支付", "确认订单", "checkout", "pay"]
+        llm:
+          prompt: "该步是否完成了结算或支付操作？"
+          expected_true: true
+
+  # 可选：订单确认
+  - id: order_confirmation
+    deps: [checkout]  # AND语义：必须等待checkout完成
+    name: 订单确认
+    condition:
+      type: escalate
+      params:
+        ocr:
+          any: ["订单成功", "支付成功", "下单成功", "确认"]
+        llm:
+          prompt: "该步是否显示了订单确认信息？"
+          expected_true: true
+
+success:
+  any_of: [checkout, order_confirmation]  # 完成结算或看到订单确认即为成功

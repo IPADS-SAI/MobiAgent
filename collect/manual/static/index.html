@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>安卓设备数据收集工具</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+
+<body>
+    <div class="container">
+        <!-- 左侧截图区域 -->
+        <div class="screenshot-section">
+            <div id="screenshotContainer" class="screenshot-container">
+                <div style="color: #999;">请先开始数据收集</div>
+            </div>
+        </div>
+
+        <!-- 右侧控制区域 -->
+        <div class="control-section">
+            <h1>📱 安卓设备数据收集工具</h1>
+
+            <div class="data-collection-controls">
+                <button id="startBtn" class="control-btn start-btn" onclick="startDataCollection()">
+                    🚀 开始收集
+                </button>
+                <button id="endBtn" class="control-btn end-btn" onclick="endDataCollection()" disabled>
+                    ⏹️ 结束收集
+                </button>
+                <button id="nextBtn" class="control-btn next-btn" onclick="nextDataCollection()" disabled>
+                    ➡️ 下一条数据
+                </button>
+                <button id="deleteBtn" class="control-btn delete-btn" onclick="deleteDataCollection()" disabled>
+                    🗑️ 删除当前数据
+                </button>
+            </div>
+
+            <div class="collection-status">
+                <div id="collectionInfo">点击"开始收集"按钮开始数据收集</div>
+            </div>
+
+            <div class="control-buttons">
+                <button id="inputBtn" class="control-btn" onclick="showInputModal()" disabled>
+                    ⌨️ 文本输入
+                </button>
+                <button id="historyBtn" class="control-btn" onclick="showActionHistory()" disabled>
+                    📋 查看操作历史
+                </button>
+                <button id="autoRefreshBtn" class="control-btn" onclick="toggleAutoRefresh()" disabled>
+                    ⏰ 自动刷新
+                </button>
+            </div>
+
+            <!-- 自动刷新状态显示 -->
+            <div class="auto-refresh-status" style="display: none;" id="autoRefreshStatus">
+                <div class="refresh-indicator">🔄 自动刷新已开启 (连续刷新模式)</div>
+            </div>
+
+            <div id="status"></div>
+
+            <!-- 元素信息显示区域 -->
+            <div id="elementInfo" class="element-info" style="display: none;">
+                <h3>🎯 UI元素信息</h3>
+                <div id="elementDetails"></div>
+            </div>
+
+            <!-- 操作提示 -->
+            <div class="action-hint" style="display: none;" id="actionHint">
+                <strong>📋 操作说明：</strong>
+                <ul>
+                    <li>🖱️ <strong>点击</strong>：快速点击截图上的任意位置（按下松开间隔很短）</li>
+                    <li>👆 <strong>滑动</strong>：按住鼠标拖拽到另一个位置松开（支持上下左右四个方向）</li>
+                    <li>📱 <strong>触摸设备</strong>：支持触摸屏的点击和滑动操作</li>
+                    <li>⚡ 操作会实时同步到连接的设备上，终端会显示详细的操作信息</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- 应用信息输入弹窗 -->
+    <div id="appInfoModal" class="task-modal" style="display: none;">
+        <div class="task-modal-content">
+            <div class="task-modal-header">
+                <h3>📱 应用信息配置</h3>
+            </div>
+            <div class="task-modal-body">
+                <label for="appName">应用名称：</label>
+                <select id="appName" required>
+                    <option value="">请选择应用</option>
+                    <option value="微信">微信</option>
+                    <option value="QQ">QQ</option>
+                    <option value="微博">微博</option>
+
+                    <option value="饿了么">饿了么</option>
+                    <option value="美团">美团</option>
+
+                    <option value="bilibili">bilibili</option>
+                    <option value="爱奇艺">爱奇艺</option>
+                    <option value="腾讯视频">腾讯视频</option>
+                    <option value="优酷">优酷</option>
+
+                    <option value="淘宝">淘宝</option>
+                    <option value="京东">京东</option>
+
+                    <option value="携程">携程</option>
+                    <option value="同城">同城</option>
+                    <option value="飞猪">飞猪</option>
+                    <option value="去哪儿">去哪儿</option>
+                    <option value="华住会">华住会</option>
+
+                    <option value="知乎">知乎</option>
+                    <option value="小红书">小红书</option>
+
+                    <option value="QQ音乐">QQ音乐</option>
+                    <option value="网易云音乐">网易云音乐</option>
+                    <option value="酷狗音乐">酷狗音乐</option>
+
+                    <option value="高德地图">高德地图</option>
+
+                </select>
+
+                <label for="taskType">任务类型：</label>
+                <input type="text" id="taskType" placeholder="请输入任务类型，如 “tpye1”、 “tpye2” 等，具体参考收集任务文档" required>
+
+                <div class="task-hint">💡 提示：应用名称和任务类型将用于创建数据存储目录，请确保输入准确</div>
+            </div>
+            <div class="task-modal-footer">
+                <button id="confirmAppInfoBtn" class="task-btn confirm-btn">下一步</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 任务描述弹窗 -->
+    <div id="taskDescriptionModal" class="task-modal" style="display: none;">
+        <div class="task-modal-content">
+            <div class="task-modal-header">
+                <h3>📝 任务描述</h3>
+            </div>
+            <div class="task-modal-body">
+                <label for="taskDescription">请输入任务描述：</label>
+                <textarea id="taskDescription" placeholder="请描述这个任务的目标和要求..." rows="4"></textarea>
+                <div class="task-hint">💡 提示：必须输入任务描述才能开始数据收集</div>
+            </div>
+            <div class="task-modal-footer">
+                <button id="confirmTaskBtn" class="task-btn confirm-btn">开始任务</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 文本输入弹窗 -->
+    <div id="inputModal" class="task-modal" style="display: none;">
+        <div class="task-modal-content">
+            <div class="task-modal-header">
+                <h3>⌨️ 文本输入</h3>
+                <button class="close-btn" onclick="hideInputModal()">✕</button>
+            </div>
+            <div class="task-modal-body">
+                <label for="inputText">请输入要发送到设备的文本：</label>
+                <textarea id="inputText" placeholder="请输入文本内容..." rows="3"></textarea>
+                <div class="task-hint">💡 提示：文本将发送到设备当前输入框，若不小心点击，可以点击弹窗左上角或者按下“ESC”键关闭</div>
+            </div>
+            <div class="task-modal-footer">
+                <button id="cancelInputBtn" class="task-btn cancel-btn" onclick="hideInputModal()">取消</button>
+                <button id="confirmInputBtn" class="task-btn confirm-btn" onclick="sendInputText()">发送</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/script.js"></script>
+</body>
+
+</html>

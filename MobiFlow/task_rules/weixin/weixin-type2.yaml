@@ -1,0 +1,87 @@
+task_id: wechat_make_call
+app_id: com.tencent.mm
+task_type: communication
+description: 在微信中搜索并选择联系人，然后发起语音或视频通话。
+nodes:
+# - id: find_contact
+#   name: 查找或选择联系人
+#   condition:
+#     type: escalate
+#     params:
+#       ocr:
+#         any: ["搜索", "通讯录", "聊天", "发起群聊"]
+#       llm:
+#         prompt: 该步骤是否进入了可以查找或选择联系人的界面（如聊天列表、通讯录或搜索页）？
+#         expected_true: true
+#   next: [chat_page]
+# - id: chat_page
+#   name: 进入聊天或详情页
+#   condition:
+#     type: escalate
+#     params:
+#       ocr:
+#         any: ["发消息", "+", "音视频通话", "设置"]
+#       llm:
+#         prompt: 该步骤是否成功进入了与目标联系人的聊天或联系人详情界面？
+#         expected_true: true
+#   next: [initiate_call_menu]
+# - id: initiate_call_menu
+#   name: 打开通话选项菜单
+#   condition:
+#     type: escalate
+#     params:
+#       ocr:
+#         any: ["视频通话", "语音通话", "位置", "红包", "转账"]
+#       llm:
+#         prompt: 该步骤是否打开了包含'视频通话'和'语音通话'选项的功能菜单或页面？
+#         expected_true: true
+#   next: [start_voice_call]
+#   - start_video_call
+# - id: start_voice_call
+#   name: 发起语音通话
+#   condition:
+#     type: juxtaposition
+#     params:
+#       ocr:
+#         any: ["语音通话", "等待对方接受", "邀请", "取消", "免提", "扬声器"]
+#       llm:
+#         prompt: 该步骤是否成功发起了语音通话，界面是否显示正在呼叫或等待对方接听的状态？
+#         expected_true: true
+# - id: start_video_call
+#   name: 发起视频通话
+#   condition:
+#     type: juxtaposition
+#     params:
+#       ocr:
+#         any: ["视频通话", "等待对方接受", "邀请", "取消", "切换到语音", "转换摄像头"]
+#       llm:
+#         prompt: 该步骤是否成功发起了视频通话，界面是否显示正在呼叫或等待对方接听的状态？
+#         expected_true: true
+
+
+- id: initiate_call_menu
+  name: 打开通话选项菜单
+  condition:
+    type: juxtaposition
+    params:
+      ocr:
+        all: ["相册", "拍摄", "视频通话", "位置", "红包", "礼物"]
+      llm:
+        prompt: 该步骤是否在**任务要求的联系人**界面否打开了包含'视频通话'和'语音通话'选项的功能菜单或页面？
+        expected_true: true
+  next: [start_video_call]
+
+- id: start_video_call
+  name: 发起音视频通话
+  condition:
+    type: escalate
+    params:
+      ocr:
+        any: ["视频通话", "语言通话"]
+      llm:
+        # prompt: 该步骤是否成功发起了视频通话，界面是否显示正在呼叫或等待对方接听的状态？
+        prompt: 该步骤是否在指定联系人聊天界面打开了视频通话或语音通话菜单？
+        expected_true: true
+
+success:
+  any_of: [start_video_call]

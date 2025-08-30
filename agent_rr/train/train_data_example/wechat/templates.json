@@ -1,0 +1,72 @@
+[
+    {
+        "task": "发一条微信朋友圈，内容为{content}",
+        "trajectory": [
+            "click 微信",
+            "click 发现",
+            "click 朋友圈",
+            "longclick 相机图标",
+            "input {content}",
+            "click 发表"
+        ],
+        "candidates": {
+            "content": ["和朋友们聚会很开心", "今日早餐打卡", "努力工作的一天", "周末快乐", "工作加油"]
+        }
+    },
+    {
+        "task": "给{user}发一条微信，内容为{content}",
+        "trajectory": [
+            "click 微信",
+            "click <user>",
+            "click 输入框",
+            "input {content}",
+            "click 发送"
+        ],
+        "candidates": {
+            "user": ["alice", "bob", "charlie"],
+            "content": ["你好", "下午几点出来", "请查收邮件"]
+        },
+        "dependency": "no"
+    },
+    {
+        "task": "搜索并打开微信小程序{app}",
+        "trajectory": [
+            "click 微信",
+            "click 放大镜图标",
+            "click 小程序选项",
+            "input {app}",
+            "click 搜索",
+            "click <app>"
+        ],
+        "candidates": {
+            "app": ["美团外卖", "肯德基"]
+        }
+    },
+    {
+        "task": "打开微信{service}服务",
+        "trajectory": [
+            "click 微信",
+            "click 个人中心",
+            "click 服务", 
+            "click <service>"
+        ],
+        "candidates": {
+            "service": ["手机充值", "生活缴费", "酒店民宿"]
+        }
+    },
+    {
+        "task": "搜索并关注微信公众号{account}",
+        "trajectory": [
+            "click 微信",
+            "click 放大镜图标",
+            "click 公众号选项",
+            "input {account}",
+            "click 搜索",
+            "click <account>",
+            "click 关注公众号"
+        ],
+        "candidates": {
+            "account": ["机器之心", "人民日报", "物理竞赛", "豆瓣"]
+        }
+    }
+]

@@ -1,0 +1,83 @@
+task_id: hotel_booking_task
+app_id: com.taobao.trip
+task_type: booking
+description: 验证用户在飞猪等旅行应用中，根据指定要求（地点、日期、房型）成功预订酒店的关键流程。
+nodes:
+- id: launch_app
+  name: 启动应用并进入首页
+  condition:
+    type: escalate
+    params:
+      ocr:
+        any: ["首页", "我的", "酒店", "机票", "火车票", "去哪玩"]
+      llm:
+        prompt: 屏幕是否显示了旅行应用（如飞猪）的首页或主功能界面？
+        expected_true: true
+  next: [enter_hotel_search]
+- id: enter_hotel_search
+  name: 进入酒店搜索模块
+  condition:
+    type: escalate
+    params:
+      ocr:
+        any: ["酒店", "民宿", "客栈", "Hotel"]
+      llm:
+        prompt: 用户是否已经点击并进入了酒店搜索功能的主界面？
+        expected_true: true
+  next: [input_search_criteria]
+- id: input_search_criteria
+  name: 输入或确认搜索条件
+  condition:
+    type: escalate
+    params:
+      ocr:
+        any: ["目的地", "我的位置", "入住", "离店", "关键词", "搜索", "查找酒店"]
+      llm:
+        prompt: 用户是否在当前页面输入或确认了任务描述中的核心搜索信息，如目的地、入住/离店日期或酒店名称/位置关键词？
+        expected_true: true
+  next: [view_hotel_list]
+- id: view_hotel_list
+  name: 查看酒店列表
+  condition:
+    type: escalate
+    params:
+      ocr:
+        any: ["综合排序", "筛选", "价格", "推荐", "评分", "列表", "地图"]
+      llm:
+        prompt: 屏幕是否展示了符合搜索条件的酒店列表，以供用户选择？
+        expected_true: true
+  next: [select_room_to_book]
+- id: select_room_to_book
+  name: 选择房型并预订
+  condition:
+    type: escalate
+    params:
+      ocr:
+        any: ["预订", "订", "立即预订", "订这间", "选择房型", "查看详情"]
+      llm:
+        prompt: 用户是否已经从酒店详情页或列表页中选择了符合任务要求的房型（如大床房、双床房）并点击了预订按钮？
+        expected_true: true
+  next: [fill_booking_details]
+- id: fill_booking_details
+  name: 填写预订信息
+  condition:
+    type: juxtaposition
+    params:
+      ocr:
+        any: ["订单填写", "入住人", "联系手机", "确认信息", "费用明细", "到店付"]
+      llm:
+        prompt: 屏幕是否跳转到了预订信息填写页面，要求用户输入住客姓名、联系方式等信息？
+        expected_true: true
+  next: [confirm_booking]
+- id: confirm_booking
+  name: 提交订单或支付
+  condition:
+    type: juxtaposition
+    params:
+      ocr:
+        any: ["提交订单", "去支付", "确认", "订单详情", "在线付", "信用住"]
+      llm:
+        prompt: 用户是否已到达最终的订单确认或支付页面？
+        expected_true: true
+success:
+  any_of: [confirm_booking]

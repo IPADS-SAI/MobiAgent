@@ -1,0 +1,180 @@
+task_id: taobao_generic_search
+app_id: com.taobao.taobao
+task_type: type3
+description: 在淘宝App中将<选择条件>的<商品描述>加入购物车
+
+nodes:
+  # - id: open_app_home
+  #   name: 打开App首页（存在搜索入口）
+  #   condition:
+  #     type: escalate
+  #     params:
+  #       # ui:
+  #       #   key: package
+  #       #   equals: com.taobao.taobao
+  #       ocr:
+  #         all: ["视频", "消息", "搜索"]
+  #         pattern: "(搜索|查询)"
+
+  - id: activate_search
+    # deps: [open_app_home]
+    next: [input_keyword]
+    name: 激活搜索输入
+    score: 10
+    condition:
+      type: escalate
+      params:
+        # action:
+        #   type: action_match
+        #   params:
+        #     type: click
+        # ui:
+        #   any: ["拍照"]
+        ocr:
+          all: ["搜索", "猜你想搜", "历史搜索"]
+        llm:
+          prompt: "该步是否在激活搜索输入框？"
+          expected_true: true
+
+  - id: input_keyword
+    # deps: [activate_search]
+    next: [results_page]
+    name: 输入搜索关键词
+    score: 10
+    condition:
+      type: escalate
+      params:
+        # action:
+        #   type: action_match
+        #   params:
+        #     type: input
+        # ocr:
+        #   any: ["取消"]
+        # 在每一次llm调用中，都会将当前的task_description传入
+        llm:
+          prompt: "该节点是否向搜索框输入了task_description所需查询物品关键词？"
+          expected_true: true
+
+  - id: results_page
+    # deps: [input_keyword]
+    next: [apply_filter_condition_first]
+    name: 显示搜索结果列表
+    score: 10
+    condition:
+      type: escalate
+      params:
+        # ui:
+        #   any: ["拍照"]
+        ocr:
+          all: ["销量", "天猫", "店铺"]
+        llm:
+          prompt: "该步是否呈现了搜索结果列表？"
+          expected_true: true
+
+# 先进行选择，再进入商品界面
+
+  - id: apply_filter_condition_first
+    # deps: [results_page]
+    next: [item_detail_second]
+    name: 按照任务要求应用筛选条件
+    score: 10
+    condition:
+      type: escalate
+      params:
+        llm:
+          # prompt: "该步是否按照任务task_description期望正确执行了选择筛选、排序等操作（如按价格、销量、评价、店铺等）？请结合任务task_description描述和当前操作判断。"
+          # prompt: "该步是否按照任务要求执行了相应的筛选、排序等操作（如按价格排序、按销量排序、选择天猫旗舰店等）？请结合任务task_description描述和当前操作判断。"
+          prompt: "该节点是否按照任务task_description期望正确执行了选择筛选、排序等操作（如按价格、销量、评价、店铺等）？请结合任务task_description描述和当前状态、操作判断。"
+          expected_true: true
+
+
+  - id: item_detail_second
+    # deps: [apply_filter_condition]
+    next: [confirm_add_to_cart, add_to_cart]
+    name: 进入详情页
+    score: 15
+    condition:
+      type: escalate
+      params:
+        ocr:
+          all: ["收藏", "店铺", "客服"]
+        llm:
+          prompt: "是否已进入某个结果的详情页？"
+          expected_true: true
+  
+# #   先进入商品页面，再进行筛选
+#   - id: item_detail_first
+#     # deps: [apply_filter_condition]
+#     next: [apply_filter_condition_second]
+#     name: 进入详情页
+#     score: 15
+#     condition:
+#       type: escalate
+#       params:
+#         ocr:
+#           all: ["收藏", "店铺", "客服"]
+#         llm:
+#           prompt: "是否已进入某个结果的详情页？"
+#           expected_true: true
+
+#   - id: apply_filter_condition_second
+#     # deps: [item_detail_first]
+#     next: [add_to_cart]
+#     name: 按照任务要求应用筛选条件
+#     score: 10
+#     condition:
+#       type: escalate
+#       params:
+#         llm:
+#           prompt: "该步是否按照任务task_description期望正确执行了选择筛选、排序等操作（如按价格、销量、评价、店铺等）？请结合任务task_description描述和当前操作判断。"
+#           # prompt: "该步是否按照任务要求执行了相应的筛选、排序等操作（如按价格排序、按销量排序、选择天猫旗舰店等）？请结合任务task_description描述和当前操作判断。"
+#           expected_true: true
+
+############
+# 可以考虑增加两个节点，判断不同的加入购物车方式
+# 1. 在商品详情页加入购物车
+# 2. 在搜索结果页加入购物车
+# 3. 模型判断和ocr识别判断
+###########
+#   - id: add_to_cart
+#     # deps: [item_detail]
+#     name: 加入购物车
+#     score: 25
+#     condition:
+#       type: escalate
+#       params:
+#         # action:
+#         #   type: action_match
+#         #   params:
+#         #     type: click
+#         ocr:
+#           all: ["购物车", "购买", "加购成功"]
+#         llm:
+#           prompt: "该步是否将任务task_description期望的物品加入购物车？"
+#           expected_true: true
+  
+# success:
+#   # any_of: [results_page, item_detail]
+#   any_of: [add_to_cart]
+
+  - id: confirm_add_to_cart
+    # deps: [apply_filter_condition_second]
+    name: 确认加入购物车
+    condition:
+      type: escalate
+      params:
+        # 仅ocr判断
+        ocr:
+          all: ["购物车", "购买", "加购成功"]
+
+  - id: add_to_cart
+    # deps: [apply_filter_condition_second]
+    name: 加入购物车
+    condition:
+      type: escalate
+      params:
+        llm:
+          prompt: "该节点是否将任务task_description要求的物品加入购物车？"
+          expected_true: true
+success:
+  any_of: [confirm_add_to_cart, add_to_cart]

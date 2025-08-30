@@ -1,0 +1,88 @@
+task_id: bilibili_play_video
+app_id: tv.danmaku.bili
+task_type: video_playback
+description: 在B站应用中，通过搜索或直接点击，找到并播放用户指定的视频。
+nodes:
+# - id: launch_bilibili
+#   name: 启动B站应用
+#   condition:
+#     type: escalate
+#     params:
+#       ocr:
+#         all: ["首页", "推荐", "动态", "会员购", "我的", "bilibili"]
+#       llm:
+#         prompt: 屏幕截图是否显示B站（bilibili）应用已成功打开并处于其主界面（如推荐、首页等）？
+#         expected_true: true
+#   next: [enter_search_page]
+
+- id: enter_search_page
+  name: 进入搜索页面
+  score: 10
+  condition:
+    type: escalate
+    params:
+      ocr:
+        all: ["搜索", "搜索历史", "热搜"]
+      llm:
+        prompt: 请判断当前界面是否为B站的搜索输入界面？
+        expected_true: true
+  next: [execute_search]
+
+- id: execute_search
+  name: 输入关键词并执行搜索
+  score: 10
+  condition:
+    type: escalate
+    params:
+      # ocr:
+      #   all: ["搜索", "搜索历史"]
+      llm:
+        prompt: 请判断用户是否在搜索框中输入了与任务描述`{task_description}`相关的关键词并执行了搜索操作？
+        expected_true: true
+  next: [view_search_results]
+
+- id: view_search_results
+  name: 查看搜索结果
+  score: 10
+  condition:
+    type: juxtaposition
+    params:
+      ocr:
+        all: ["综合", "番剧", "直播", "用户"]
+      llm:
+        prompt: 请判断当前界面是否成功展示了与任务描述`{task_description}`高度相关的视频、用户或内容列表？
+        expected_true: true
+  next: [click_video_from_feed_1, click_video_from_feed_2]
+
+- id: click_video_from_feed_1
+  name: 从推荐流点击视频
+  score: 20
+  condition:
+    type: escalate
+    params:
+      ocr:
+        all: ["简介", "评论", "弹幕", "关注"]
+
+- id: click_video_from_feed_2
+  name: 从推荐流点击视频
+  score: 20
+  condition:
+    type: escalate
+    llm:
+          prompt: 屏幕截图是否显示用户直接从推荐、首页或动态信息流中点击了一个视频进行播放？
+          expected_true: true
+
+  # next: [video_is_playing]
+
+# - id: video_is_playing
+#   name: 视频正在播放
+#   condition:
+#     type: juxtaposition
+#     params:
+#       ocr:
+#         all: ["弹幕", "点赞", "投币", "收藏", "分享", "全屏", "暂停", "倍速", "发弹幕", "弹幕列表"]
+#       llm:
+#         prompt: 屏幕截图是否明确显示一个视频正在播放（能看到播放器控件、进度条、弹幕等），并且视频内容与任务描述（task_description）高度相关？
+#         expected_true: true
+success:
+  any_of: [click_video_from_feed_1, click_video_from_feed_2]

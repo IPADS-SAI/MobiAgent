@@ -1,0 +1,42 @@
+task_id: bilibili_video_comment
+app_id: tv.danmaku.bili
+task_type: content_interaction
+description: 在Bilibili应用中，搜索指定UP主或视频，并成功发表一条指定内容的评论。
+nodes:
+- id: select_video_detail
+  name: 进入视频播放详情页
+  condition:
+    type: juxtaposition
+    params:
+      ocr:
+        all: ["简介", "评论", "点我发弹幕"]
+      llm:
+        prompt: 当前是否成功进入了指定UP主对应视频的播放页面？
+        expected_true: true
+  next: [enter_comment_section]
+
+- id: enter_comment_section
+  name: 进入评论区或点击评论框
+  condition:
+    type: escalate
+    params:
+      ocr:
+        all: ["简介","评论","热门评论"]
+      llm:
+        prompt: 是否已经进入任务描述`{task_description}`的视频评论页面，并在页面内看到评论框？
+        expected_true: true
+  next: [input_and_publish_comment]
+
+- id: input_and_publish_comment
+  name: 输入并发表评论
+  condition:
+    type: juxtaposition
+    params:
+      ocr:
+        all: ["发布", "转到动态"]
+      llm:
+        prompt: 用户是否在输入框中输入了与任务描述一致的评论内容，等待发送？
+        expected_true: true
+
+success:
+  any_of: [input_and_publish_comment]

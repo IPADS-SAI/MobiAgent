@@ -1,0 +1,39 @@
+# torch
+torch
+torchvision
+torchaudio
+
+# PaddlePaddle and OCR
+paddlepaddle
+paddleocr==2.10.0
+pytesseract
+
+# Computer Vision and ML
+ultralytics
+transformers==4.47.0
+supervision
+
+# Image Processing
+Pillow
+opencv-python
+
+# Scientific Computing
+numpy
+scipy
+
+# LangChain
+langchain-openai
+langchain-core
+
+# API and Mobile
+openai
+uiautomator2
+
+# Web Framework
+fastapi
+uvicorn
+
+# UI
+matplotlib
+requests
+ui-tars

@@ -1,0 +1,54 @@
+task_id: xiaohongshu_find_blogger_homepage
+app_id: com.xingin.xhs
+task_type: search_and_navigate
+description: 在小红书应用中，通过搜索找到指定博主并进入其个人主页。
+nodes:
+# - id: launch_app
+#   name: 启动小红书
+#   condition:
+#     type: escalate
+#     params:
+#       ocr:
+#         any: ["首页", "推荐", "关注", "发现", "购物"]
+#       llm:
+#         prompt: 当前界面是否为小红书的首页或主推荐流页面？
+#         expected_true: true
+#   next: [initiate_search]
+
+- id: enter_search_page
+  name: 进入搜索页面
+  condition:
+    type: escalate
+    params:
+      ocr:
+        all: ["搜索", "历史记录", "猜你想搜"]
+      llm:
+        prompt: 用户是否已经进入了搜索输入界面？
+        expected_true: true
+  next: [view_blogger_homepage]
+
+# - id: view_search_results
+#   name: 查看搜索结果
+#   condition:
+#     type: escalate
+#     params:
+#       ocr:
+#         any: ["综合", "用户", "笔记", "商品", "筛选", "粉丝"]
+#       llm:
+#         prompt: 界面是否展示了关于任务描述中博主名称的搜索结果列表，其中应包含用户、笔记等分类？
+#         expected_true: true
+#   next: [view_blogger_homepage]
+
+- id: view_blogger_homepage
+  name: 进入博主个人主页
+  condition:
+    type: escalate
+    params:
+      ocr:
+        all: ["关注", "粉丝", "获赞与收藏", "笔记", "私信"]
+      llm:
+        prompt: 当前界面是否为任务描述中指定博主的个人主页？请检查页面上是否有该博主的头像、昵称、关注/粉丝数、以及笔记列表等关键元素。
+        expected_true: true
+
+success:
+  any_of: [view_blogger_homepage]

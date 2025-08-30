@@ -1,0 +1,44 @@
+task_id: bilibili_search_content
+app_id: tv.danmaku.bili
+task_type: search
+description: 在B站(bilibili)应用中，根据用户指令搜索指定内容并验证搜索结果页面的展示。
+nodes:
+# - id: launch_bilibili
+#   name: 启动B站应用
+#   condition:
+#     type: escalate
+#     params:
+#       ocr:
+#         all: ["直播", "推荐", "热门", "首页", "动态", "我的", "频道"]
+#       llm:
+#         prompt: 请判断当前界面是否为B站(bilibili)的应用首页或主界面？
+#         expected_true: true
+#   next: [enter_search_page]
+
+- id: enter_search_page
+  name: 进入搜索页面
+  score: 40
+  condition:
+    type: escalate
+    params:
+      ocr:
+        all: ["搜索", "搜索历史", "热搜"]
+      llm:
+        prompt: 请判断当前界面是否为B站的搜索输入界面，或者用户是否已点击了首页的搜索图标？
+        expected_true: true
+  next: [view_search_results]
+
+- id: view_search_results
+  name: 查看搜索结果
+  score: 60
+  condition:
+    type: juxtaposition
+    params:
+      ocr:
+        all: ["综合", "番剧", "直播", "用户"]
+      llm:
+        prompt: 请判断当前界面是否成功展示了与任务描述`{task_description}`高度相关的视频、用户或内容列表？
+        expected_true: true
+
+success:
+  any_of: [view_search_results]

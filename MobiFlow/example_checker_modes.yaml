@@ -1,0 +1,92 @@
+task_id: example_juxtaposition_demo
+app_id: com.example.app
+task_type: demo
+description: 演示escalate和juxtaposition检查器的使用
+
+nodes:
+  # 示例1: 使用escalate模式 - 按顺序尝试，任意一个成功即可
+  - id: search_with_escalate
+    name: 使用escalate模式进行搜索验证
+    condition:
+      type: escalate
+      params:
+        action:
+          type: click
+        # 如果动作检查失败，使用OCR识别
+        icons:
+          all: ["购物车", "搜索"]
+        # 如果图标检查失败，检查动作类型
+        ocr:
+          any: ["搜索", "查询"]
+        # 最后使用LLM验证
+        llm:
+          prompt: "该步是否执行了搜索操作？"
+          expected_true: true
+
+  # 示例2: 使用juxtaposition模式 - 所有配置的检查器都必须成功
+  - id: confirm_with_juxtaposition
+    deps: [search_with_escalate]
+    name: 使用juxtaposition模式进行严格验证
+    condition:
+      type: juxtaposition
+      params:
+        # 必须同时满足：是点击动作
+        action:
+          type: click
+        # 必须同时满足：UI状态正确
+        icons:
+          any: ["确认", "提交"]
+        # 必须同时满足：OCR识别到确认按钮
+        ocr:
+          all: ["确认", "提交"]
+        # 必须同时满足：LLM确认操作正确
+        llm:
+          prompt: "该步是否点击了确认/提交按钮？"
+          expected_true: true
+
+  # 示例3: 复杂的escalate配置，
+  - id: complex_escalate_example
+    deps: [confirm_with_juxtaposition]
+    name: escalate 备用策略
+    condition:
+      type: escalate
+      params:
+        # 第1级：基础文本匹配
+        text:
+          all: ["购物车", "商品"]
+        # 第2级：正则表达式匹配
+        regex:
+          pattern: "(购物车|cart).*(添加|加入)"
+          ignore_case: true
+        # 第3级：动作验证
+        action:
+          type: click
+        # 第4级：UI状态检查
+        icons:
+          all: ["购物车", "已添加"]
+        # 第5级：OCR图像识别
+        ocr:
+          any: ["购物车", "加入购物车", "立即购买"]
+          pattern: "(购物车|cart)"
+        # 第6级：LLM最终验证
+        llm:
+          prompt: "基于截图和上下文，该步是否成功将商品加入购物车？"
+          expected_true: true
+
+  # 示例4: 只使用高级检查器的juxtaposition
+  - id: advanced_juxtaposition
+    deps: [complex_escalate_example]
+    name: 高级检查器的juxtaposition组合
+    condition:
+      type: juxtaposition
+      params:
+        # 必须满足：OCR识别到相关元素
+        ocr:
+          all: ["支付", "确认订单"]
+        # 必须满足：LLM确认操作
+        llm:
+          prompt: "该步是否完成了购买/支付操作？"
+          expected_true: true
+
+success:
+  any_of: [advanced_juxtaposition]

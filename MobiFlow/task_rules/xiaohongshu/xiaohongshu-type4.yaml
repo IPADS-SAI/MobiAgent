@@ -1,0 +1,65 @@
+task_id: xiaohongshu_search_content
+app_id: com.xingin.xhs
+task_type: search
+description: 在小红书应用中，根据指定的主题搜索并查看相关内容或攻略。
+nodes:
+# - id: launch_app
+#   name: 启动小红书应用
+#   condition:
+#     type: escalate
+#     params:
+#       ocr:
+#         any: ["首页", "推荐", "关注", "商城", "我"]
+#       llm:
+#         prompt: 当前界面是否为小红书应用的首页或主界面？
+#         expected_true: true
+#   next: [enter_search_page]
+- id: enter_search_page
+  name: 进入搜索页面
+  condition:
+    type: escalate
+    params:
+      ocr:
+        all: ["搜索", "历史记录", "猜你想搜"]
+      llm:
+        prompt: 用户是否已经进入了搜索输入界面？
+        expected_true: true
+  next: [view_search_results]
+
+# - id: input_keyword_and_search
+#   name: 输入关键词并执行搜索
+#   condition:
+#     type: escalate
+#     params:
+#       ocr:
+#         any: ["搜索", "确认", "搜索历史", "猜你想搜"]
+#       llm:
+#         prompt: 用户是否在搜索框中输入了与任务描述（如'自驾游'、'租房技巧'等）相关的关键词，并点击了搜索按钮？
+#         expected_true: true
+#   next: [view_search_results]
+
+- id: view_search_results
+  name: 浏览搜索结果列表
+  condition:
+    type: escalate
+    params:
+      ocr:
+        all: ["全部", "用户", "商品", "地点"]
+      llm:
+        prompt: 当前界面是否展示了与搜索关键词相关的图文或视频笔记列表？
+        expected_true: true
+  next: [view_content_details]
+
+- id: view_content_details
+  name: 查看内容详情
+  condition:
+    type: escalate
+    params:
+      ocr:
+        any: ["关注", "说点什么"]
+      llm:
+        prompt: 用户是否已经从搜索结果列表中点击并进入了某一篇具体的笔记（图文或视频）的详情页面进行查看？
+        expected_true: true
+
+success:
+  any_of: [view_content_details, view_search_results]

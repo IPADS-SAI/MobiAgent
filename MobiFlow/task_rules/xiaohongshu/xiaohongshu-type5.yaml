@@ -1,0 +1,42 @@
+task_id: xiaohongshu_search_and_view_first_result
+app_id: com.xingin.xhs
+task_type: search_and_browse
+description: 在小红书应用中，根据指定关键词进行搜索，并点击查看第一个搜索结果的详情内容。
+nodes:
+- id: enter_search_page
+  name: 进入搜索页面
+  condition:
+    type: escalate
+    params:
+      ocr:
+        all: ["搜索", "历史记录", "猜你想搜"]
+      llm:
+        prompt: 用户是否已经进入了搜索输入界面？
+        expected_true: true
+  next: [execute_search]
+
+- id: execute_search
+  name: 查看搜索结果列表
+  condition:
+    type: escalate
+    params:
+      ocr:
+        all: [ "用户", "商品", "地点", "问一问"]
+      llm:
+        prompt: 当前界面是否展示了与任务描述中关键词相关的图文或视频笔记列表？
+        expected_true: true
+  next: [view_first_result_detail]
+
+- id: view_first_result_detail
+  name: 查看第一个搜索结果详情
+  condition:
+    type: escalate
+    params:
+      # ocr:
+      #   any: ["关注", "评论", "点赞", "收藏", "分享", "作者", "相关推荐"]
+      llm:
+        prompt: 当前界面是否为一篇笔记详情页，展示正文内容、图片/视频、以及评论、点赞、收藏等互动按钮？这是否是用户点击搜索结果列表中的第一项后进入的页面？
+        expected_true: true
+        
+success:
+  any_of: [view_first_result_detail]

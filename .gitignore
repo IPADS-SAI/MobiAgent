@@ -1,0 +1,10 @@
+# 忽略特定文件
+screenshot.jpg
+list.error
+tasks.json
+
+# 忽略特定目录
+__pycache__/
+data/
+data_log/
+weights/

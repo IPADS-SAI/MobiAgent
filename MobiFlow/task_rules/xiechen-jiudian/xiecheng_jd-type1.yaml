@@ -1,0 +1,52 @@
+task_id: fliggy_query_hotel_price
+app_id: com.taobao.trip
+task_type: query
+description: 在携程应用中，通过搜索功能查询指定酒店的价格列表。
+nodes:
+# - id: launch_app
+#   name: 启动携程应用
+#   condition:
+#     type: escalate
+#     params:
+#       ocr:
+#         any: ["首页", "我的", "行程", "消息", "酒店", "机票", "火车票"]
+#       llm:
+#         prompt: 请判断当前界面是否为携程应用的首页或主界面？
+#         expected_true: true
+#   next: [enter_hotel_module]
+- id: enter_hotel_module
+  name: 进入酒店搜索页
+  condition:
+    type: escalate
+    params:
+      ocr:
+        all: ["国内", "查询", "海外"]
+      llm:
+        prompt: 请判断当前界面是否为酒店搜索功能的主页面，包含目的地、入住日期、离店日期和关键词搜索框等元素？
+        expected_true: true
+  next: [search_result]
+
+- id: search_result
+  name: 查看酒店搜索结果
+  condition:
+    type: escalate
+    params:
+      ocr:
+        any: ["位置", "距离", "价格", "筛选", "星级"]
+      llm:
+        prompt: 请判断当前是否正确搜索了和目标酒店相关的关键词，并展示正确搜索结果？
+        expected_true: true
+  # next: [view_search_results]
+
+# - id: view_search_results
+#   name: 查看酒店价格列表
+#   condition:
+#     type: juxtaposition
+#     params:
+#       ocr:
+#         any: ["¥", "起", "预订", "价格", "评分", "筛选", "订", "元"]
+#       llm:
+#         prompt: 请判断当前界面是否成功展示了酒店的搜索结果列表？列表中应包含多个酒店选项，并明确显示价格信息（如'¥'符号或'元'）和'预订'等操作按钮。
+#         expected_true: true
+success:
+  any_of: [search_result]

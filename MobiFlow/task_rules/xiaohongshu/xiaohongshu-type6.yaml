@@ -1,0 +1,90 @@
+task_id: xiaohongshu_find_blogger_content
+app_id: com.xingin.xhs
+task_type: search_and_browse
+description: 在小红书应用中，通过搜索或进入主页的方式，查找指定博主的特定内容并进行浏览。
+
+nodes:
+  # - id: launch_app
+  #   name: 启动小红书
+  #   condition:
+  #     type: escalate
+  #     params:
+  #       ocr:
+  #         any: ["首页", "推荐", "关注", "消息", "我", "商城"]
+  #       llm:
+  #         prompt: "当前界面是否为小红书应用的主界面（如推荐、首页）？"
+  #         expected_true: true
+  #   next: [enter_search_page]
+
+  - id: enter_search_page
+    name: 进入搜索页面
+    condition:
+      type: escalate
+      params:
+        ocr:
+          all: ["搜索", "历史记录", "猜你想搜"]
+        llm:
+          prompt: 用户是否已经进入了搜索输入界面？
+          expected_true: true
+    next: [enter_blogger_profile]
+
+  # - id: input_search_keyword
+  #   name: 输入搜索关键词并执行搜索
+  #   condition:
+  #     type: escalate
+  #     params:
+  #       ocr:
+  #         any: ["综合", "视频", "用户", "商品", "笔记", "搜索"]
+  #       llm:
+  #         prompt: "用户是否在搜索框中输入了任务描述中指定的博主名称或相关关键词，并看到了搜索结果页面？"
+  #         expected_true: true
+  #   next: [select_content_from_search_results, enter_blogger_profile]
+
+  - id: enter_blogger_profile
+    name: 进入博主主页
+    condition:
+      type: escalate
+      params:
+        ocr:
+          all: ["关注", "粉丝", "获赞与收藏", "笔记","私信"]
+        llm:
+          prompt: "用户是否从搜索结果中点击并成功进入了任务描述中指定的博主个人主页？"
+          expected_true: true
+    next: [use_profile_search]
+    # next: [browse_and_select_content_from_profile, use_profile_search]
+
+  - id: use_profile_search
+    name: 在主页内搜索
+    condition:
+      type: escalate
+      params:
+        ocr:
+          all: ["搜索","笔记"]
+          # 搜搜ta的商品/笔记
+        llm:
+          prompt: "用户是否在博主主页内使用了搜索功能，并输入了任务描述中指定的内容关键词（如'新疆', '读书日记', '好物分享'）？"
+          expected_true: true
+    next: [view_first_result_detail]
+
+  # - id: select_content_from_search_results
+  #   name: 从综合搜索结果中选择内容
+  #   condition:
+  #     type: juxtaposition
+  #     params:
+  #       ocr:
+  #         any: ["评论", "点赞", "收藏", "分享", "笔记详情", "相关推荐"]
+  #       llm:
+  #         prompt: "用户是否从全局搜索结果中，点击并打开了任务描述中
+  - id: view_first_result_detail
+    name: 查看第一个搜索结果详情
+    condition:
+      type: escalate
+      params:
+        # ocr:
+        #   any: ["关注", "评论", "点赞", "收藏", "分享", "作者", "相关推荐"]
+        llm:
+          prompt: 当前界面是否为一篇笔记详情页，展示正文内容、图片/视频、以及评论、点赞、收藏等互动按钮？这是否是用户点击搜索结果列表中的第一项后进入的页面？(若搜索显示没有对应搜索结果则返回true)
+          expected_true: true
+  
+success:
+  any_of: [view_first_result_detail]

@@ -1,0 +1,64 @@
+task_id: xiaohongshu_find_blogger_and_first_post
+app_id: com.xingin.xhs
+task_type: search_and_browse
+description: 在小红书应用中，根据任务描述搜索指定博主，并打开其发布的第一篇笔记。
+nodes:
+# - id: launch_app
+#   name: 启动小红书
+#   condition:
+#     type: escalate
+#     params:
+#       ocr:
+#         any: ["首页", "推荐", "关注", "消息", "我", "商城"]
+#       llm:
+#         prompt: 当前界面是否为小红书应用的主界面或首页？
+#         expected_true: true
+#   next: [enter_search]
+- id: enter_search_page
+  name: 进入搜索页面
+  condition:
+    type: escalate
+    params:
+      ocr:
+        all: ["搜索", "历史记录", "猜你想搜"]
+      llm:
+        prompt: 用户是否已经进入了搜索输入界面？
+        expected_true: true
+  next: [view_search_results]
+
+- id: view_search_results
+  name: 查看搜索结果
+  condition:
+    type: escalate
+    params:
+      ocr:
+        all: [ "全部", "用户", "商品", "地点"]
+      llm:
+        prompt: 当前界面是否展示了包含用户、笔记等分类的搜索结果列表？
+        expected_true: true
+  next: [select_user_profile, view_first_post]
+
+- id: select_user_profile
+  name: 进入博主主页
+  condition:
+    type: escalate
+    params:
+      ocr:
+        any: ["关注", "粉丝", "获赞与收藏", "笔记", "私信"]
+      llm:
+        prompt: 用户是否已成功从搜索结果中点击并进入了任务描述中指定博主的个人主页？
+        expected_true: true
+  next: [view_first_post]
+
+- id: view_first_post
+  name: 打开第一篇笔记
+  condition:
+    type: escalate
+    params:
+      # ocr:
+      #   any: ["评论", "点赞", "收藏", "分享", "关注", "作者"]
+      llm:
+        prompt: 用户是否已成功打开一篇笔记的详情页？请结合任务描述判断，这是否是目标博主发布的最近一篇笔记？
+        expected_true: true
+success:
+  any_of: [view_first_post]

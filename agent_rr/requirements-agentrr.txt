@@ -1,0 +1,10 @@
+scikit-image
+torch
+sentence-transformers
+transformers
+scikit-learn
+numpy
+torchvision
+supervision
+paddleocr
+paddlepaddle

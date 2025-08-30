@@ -1,0 +1,85 @@
+task_id: fliggy_select_hotel_room
+app_id: com.taobao.trip
+task_type: booking
+description: 在飞猪应用中，根据特定条件（如价格、评价、距离、房型）筛选并选择酒店房间。
+nodes:
+- id: launch_app
+  name: 启动飞猪应用
+  condition:
+    type: escalate
+    params:
+      ocr:
+        any: ["飞猪", "首页", "我的", "酒店", "机票"]
+      llm:
+        prompt: 当前界面是否为飞猪应用的首页或主界面？
+        expected_true: true
+  next: [enter_hotel_search]
+- id: enter_hotel_search
+  name: 进入酒店搜索
+  condition:
+    type: escalate
+    params:
+      ocr:
+        any: ["酒店", "民宿", "目的地", "入住", "离店", "搜索酒店"]
+      llm:
+        prompt: 当前界面是否为酒店搜索页面，可以输入目的地和日期？
+        expected_true: true
+  next: [view_hotel_list]
+- id: view_hotel_list
+  name: 查看酒店列表
+  condition:
+    type: escalate
+    params:
+      ocr:
+        any: ["家酒店", "筛选", "排序", "地图", "综合推荐"]
+      llm:
+        prompt: 当前界面是否展示了酒店搜索结果列表？
+        expected_true: true
+  next: [apply_filter]
+  - select_hotel
+- id: apply_filter
+  name: 应用筛选或排序
+  condition:
+    type: escalate
+    params:
+      ocr:
+        any: ["筛选", "排序", "价格", "距离", "评分", "好评优先", "价格优先", "距离优先", "确定"]
+      llm:
+        prompt: 用户是否根据任务描述（例如'价格最低'、'评价最好'或'距离最近'）执行了相应的筛选或排序操作？
+        expected_true: true
+  next: [select_hotel]
+- id: select_hotel
+  name: 选择酒店
+  condition:
+    type: escalate
+    params:
+      ocr:
+        any: ["酒店详情", "房型", "设施", "评价", "预订"]
+      llm:
+        prompt: 用户是否从列表中选择了一家酒店并进入了其详情页面？
+        expected_true: true
+  next: [select_room]
+- id: select_room
+  name: 选择目标房型
+  condition:
+    type: juxtaposition
+    params:
+      ocr:
+        any: ["预订", "订", "立即预订", "订这间", "选择"]
+      llm:
+        prompt: 用户是否准确选择了任务描述中要求的房型（如'大床房'或'双床房'），并且该选择符合任务的排序/筛选要求（如'价格最低'、'评价最好'或'距离最近'）？
+        expected_true: true
+  next: [confirm_booking]
+- id: confirm_booking
+  name: 确认订单
+  condition:
+    type: escalate
+    params:
+      ocr:
+        any: ["提交订单", "确认订单", "去支付", "订单详情"]
+      llm:
+        prompt: 当前界面是否为填写预订信息或确认订单的页面？
+        expected_true: true
+success:
+  any_of: [select_room]
+  - confirm_booking

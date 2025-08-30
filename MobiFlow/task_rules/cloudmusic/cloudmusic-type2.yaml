@@ -1,0 +1,30 @@
+task_id: play_music
+app_id: com.music.app
+task_type: music
+description: 验证在音乐应用中搜索并播放指定歌曲或歌手音乐的任务流程。
+nodes:
+- id: view_search_results
+  name: 查看搜索结果
+  condition:
+    type: escalate
+    params:
+      ocr:
+        all: ["综合", "单曲", "歌单","专辑"]
+      llm:
+        prompt: 该步是否成功展示了与任务描述中实体（如歌曲、歌手、短语等）相关的搜索结果列表？
+        expected_true: true
+  next: [playback_interface]
+
+
+- id: playback_interface
+  name: 进入播放界面
+  condition:
+    type: escalate
+    params:
+      # ocr:
+      #   any: ["播放中", "暂停", "下一首", "歌词", "评论", "分享", "'||'", "▶", "'0:'", "'1:'", "'2:'", "'3:'", "'4:'", "'5:'"]
+      llm:
+        prompt: 该步是否成功进入了音乐播放界面，并且界面显示正在播放或已加载任务所指定的音乐？
+        expected_true: true
+success:
+  any_of: [playback_interface]

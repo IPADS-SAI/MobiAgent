@@ -1,0 +1,73 @@
+task_id: type2-taobao-search-open-detail
+app_id: com.taobao.taobao
+task_type: type2
+description: 将<商品描述>加入购物车
+
+nodes:
+  - id: activate_search
+    name: 激活搜索输入
+    condition:
+      type: escalate
+      params:
+        ocr:
+          all: ["搜索", "猜你想搜", "历史搜索"]
+        llm:
+          prompt: "该步是否在激活淘宝的搜索输入框？"
+          expected_true: true
+
+  - id: input_keyword
+    deps: [activate_search]
+    name: 输入搜索关键词
+    condition:
+      type: escalate
+      params:
+        llm:
+          prompt: "该步是否向搜索框输入了查询商品的关键词？（限定任务task_description要求所需商品相关）"
+          expected_true: true
+
+  - id: results_page
+    deps: [input_keyword]
+    name: 显示搜索结果列表
+    condition:
+      type: escalate
+      params:
+        ocr:
+          all: ["销量", "天猫", "店铺"]
+        llm:
+          prompt: "该步是否呈现了搜索结果列表页面？"
+          expected_true: true
+
+  - id: open_detail
+    deps: [results_page]
+    name: 进入某个商品详情
+    condition:
+      type: escalate
+      params:
+        ocr:
+          all: ["店铺", "客服", "收藏"]
+        llm:
+          prompt: "是否点击某个满足task_description要求的搜索结果并进入了商品详情页？"
+          expected_true: true
+
+  - id: confirm_add_to_cart
+    deps: [open_detail]
+    name: 确认加入购物车
+    condition:
+      type: escalate
+      params:
+        # 仅ocr判断
+        ocr:
+          all: ["购物车", "购买", "加购成功"]
+
+  - id: add_to_cart
+    deps: [open_detail]
+    name: 加入购物车
+    condition:
+      type: escalate
+      params:
+        llm:
+          prompt: "该步是否将任务task_description要求物品加入购物车？"
+          expected_true: true
+
+success:
+  any_of: [add_to_cart, confirm_add_to_cart]

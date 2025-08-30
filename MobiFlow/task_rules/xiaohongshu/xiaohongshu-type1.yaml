@@ -1,0 +1,65 @@
+task_id: xiaohongshu_follow_blogger
+app_id: com.xingin.xhs
+task_type: social_interaction
+description: 在小红书应用中，通过搜索找到指定博主并完成关注操作。
+nodes:
+# - id: launch_app
+#   name: 启动小红书
+#   condition:
+#     type: escalate
+#     params:
+#       ocr:
+#         any: ["首页", "推荐", "发现", "我", "消息", "购物"]
+#       llm:
+#         prompt: 当前界面是否为小红书应用的主界面或首页？
+#         expected_true: true
+#   next: [enter_search_page]
+- id: enter_search_page
+  name: 进入搜索页面
+  condition:
+    type: escalate
+    params:
+      ocr:
+        all: ["搜索", "历史记录", "猜你想搜"]
+      llm:
+        prompt: 用户是否已经进入了搜索输入界面？
+        expected_true: true
+  next: [execute_search]
+
+- id: execute_search
+  name: 执行搜索并查看结果
+  condition:
+    type: escalate
+    params:
+      ocr:
+        all: [ "用户", "商品", "地点"]
+      llm:
+        prompt: 界面是否展示了与任务描述中博主相关的搜索结果列表，并包含'用户'筛选标签？
+        expected_true: true
+  # next: [view_blogger_profile, confirm_follow_status]
+  next: [confirm_follow_status]
+
+# - id: view_blogger_profile
+#   name: 进入博主主页
+#   condition:
+#     type: escalate
+#     params:
+#       ocr:
+#         any: ["关注", "粉丝", "获赞与收藏", "笔记", "瞬间", "主页"]
+#       llm:
+#         prompt: 当前界面是否为博主的个人主页，且包含一个可点击的'关注'按钮？
+#         expected_true: true
+#   next: [confirm_follow_status]
+
+- id: confirm_follow_status
+  name: 确认关注成功
+  condition:
+    type: escalate
+    params:
+      ocr:
+        all: ["已关注", "粉丝"]
+      llm:
+        prompt: 界面是否明确显示用户已成功关注该博主（例如，按钮状态变为'已关注'或'私信'）？
+        expected_true: true
+success:
+  any_of: [confirm_follow_status]

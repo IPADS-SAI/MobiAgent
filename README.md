@@ -58,7 +58,7 @@ MobiAgent: A Systematic Framework for Customizable Mobile Agents
 
 Mobile App Demo:
 <div align="center">
-  <video src="https://ipads.se.sjtu.edu.cn:1313/seafhttp/f/ee7cdc887568496b981c/?op=view"/>
+  <video src="https://github.com/user-attachments/assets/ab59d02a-5daa-44e9-b67c-607976edb9bd"/>
 </div>
 
 AgentRR Demo (Left: first task; Right: subsequent task)

@@ -9,7 +9,7 @@ MobiAgent: A Systematic Framework for Customizable Mobile Agents
 </h3>
 
 <p align="center">
-| <a href="https://arxiv.org/"><b>Paper</b></a> | <a href="https://huggingface.co/collections/IPADS-SAI/mobimind-68b2aad150ccafd9d9e10e4d"><b>Huggingface</b></a> | <a href="https://github.com/IPADS-SAI/MobiAgent/releases/tag/v1.0"><b>App</b></a> |
+| <a href="https://github.com/IPADS-SAI/MobiAgent/blob/main/tech_report/Mobiagent_v1.pdf"><b>Paper</b></a> | <a href="https://huggingface.co/collections/IPADS-SAI/mobimind-68b2aad150ccafd9d9e10e4d"><b>Huggingface</b></a> | <a href="https://github.com/IPADS-SAI/MobiAgent/releases/tag/v1.0"><b>App</b></a> |
 </p> 
 
 <p align="center">

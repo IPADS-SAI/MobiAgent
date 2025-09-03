@@ -9,7 +9,7 @@ MobiAgent: A Systematic Framework for Customizable Mobile Agents
 </h3>
 
 <p align="center">
-| <a href="https://arxiv.org/"><b>论文</b></a> | <a href="https://huggingface.co/collections/IPADS-SAI/mobimind-68b2aad150ccafd9d9e10e4d"><b>Huggingface</b></a> | <a href="https://github.com/IPADS-SAI/MobiAgent/releases/tag/v1.0"><b>App</b></a> |
+| <a href="https://arxiv.org/abs/2509.00531"><b>论文</b></a> | <a href="https://huggingface.co/collections/IPADS-SAI/mobimind-68b2aad150ccafd9d9e10e4d"><b>Huggingface</b></a> | <a href="https://github.com/IPADS-SAI/MobiAgent/releases/tag/v1.0"><b>App</b></a> |
 </p> 
 
 <p align="center">
@@ -60,7 +60,7 @@ MobiAgent: A Systematic Framework for Customizable Mobile Agents
 - `collect/` - 数据收集、标注、处理与导出工具
 - `runner/` - 智能体执行器，通过ADB连接手机、执行任务、并记录执行轨迹
 - `MobiFlow/` - 基于里程碑DAG的智能体评测基准
-- `app` - MobiAgent安卓App
+- `app/` - MobiAgent安卓App
 - `deployment/` - MobiAgent移动端应用的服务部署方式
 
 ## 快速开始

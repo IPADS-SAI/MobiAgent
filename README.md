@@ -9,7 +9,7 @@ MobiAgent: A Systematic Framework for Customizable Mobile Agents
 </h3>
 
 <p align="center">
-| <a href="https://github.com/IPADS-SAI/MobiAgent/blob/main/tech_report/Mobiagent_v1.pdf"><b>Paper</b></a> | <a href="https://huggingface.co/collections/IPADS-SAI/mobimind-68b2aad150ccafd9d9e10e4d"><b>Huggingface</b></a> | <a href="https://github.com/IPADS-SAI/MobiAgent/releases/tag/v1.0"><b>App</b></a> |
+| <a href="https://arxiv.org/abs/2509.00531"><b>Paper</b></a> | <a href="https://huggingface.co/collections/IPADS-SAI/mobimind-68b2aad150ccafd9d9e10e4d"><b>Huggingface</b></a> | <a href="https://github.com/IPADS-SAI/MobiAgent/releases/tag/v1.0"><b>App</b></a> |
 </p> 
 
 <p align="center">
@@ -72,7 +72,7 @@ AgentRR Demo (Left: first task; Right: subsequent task)
 - `collect/` - Data collection, annotation, processing and export tools
 - `runner/` - Agent executor that connects to phone via ADB, executes tasks, and records execution traces
 - `MobiFlow/` - Agent evaluation benchmark based on milestone DAG
-- `app` - MobiAgent Android app
+- `app/` - MobiAgent Android app
 - `deployment/` - Service deployment for MobiAgent mobile application
 
 ## Quick Start
@@ -139,3 +139,19 @@ The runner automatically controls the device and invoke agent models to complete
 ## Detailed Sub-module Usage
 
 For detailed usage instructions, see the `README.md` files in each sub-module directory.
+
+## Citation
+
+If you find MobiAgent useful in your research, please feel free to cite our [paper](https://arxiv.org/abs/2509.00531):
+
+```
+@misc{zhang2025mobiagentsystematicframeworkcustomizable,
+  title={MobiAgent: A Systematic Framework for Customizable Mobile Agents}, 
+  author={Cheng Zhang and Erhu Feng and Xi Zhao and Yisheng Zhao and Wangbo Gong and Jiahui Sun and Dong Du and Zhichao Hua and Yubin Xia and Haibo Chen},
+  year={2025},
+  eprint={2509.00531},
+  archivePrefix={arXiv},
+  primaryClass={cs.MA},
+  url={https://arxiv.org/abs/2509.00531}, 
+}
+```

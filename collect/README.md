@@ -1,5 +1,7 @@
 # 数据收集标注工具
 
+[English](README_en.md) | [中文](README.md)
+
 ## 数据收集
 
 ### 数据格式

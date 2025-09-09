@@ -1,36 +1,13 @@
 # A.I. Chatbot README
 
-## 主要功能
-
-### AI聊天功能
-- **智能对话**: 支持与AI进行自然语言对话
-- **实时响应**: 使用HTTP API与AI服务进行实时通信
-- **消息历史**: 完整的聊天记录管理和显示
-- **多媒体支持**: 支持文本输入和屏幕截图分析
-
-### 设备自动化控制
-- **点击操作**: 自动点击屏幕指定位置或元素
-- **文本输入**: 自动输入文本内容
-- **滑动手势**: 支持各方向的滑动操作
-- **应用启动**: 自动打开指定应用程序
-- **任务管理**: 支持任务完成和异常终止控制
-
-### 交互界面
-- **现代化UI**: 采用Material Design设计风格
-- **响应式布局**: 适配不同屏幕尺寸
-- **实时反馈**: Toast提示和状态指示
-- **便捷操作**: 清空、分享、终止等快捷按钮
-
-## 技术架构
-
-### 开发环境
+## 开发环境
 - **IDE**: Android Studio
 - **语言**: Java
 - **最低SDK**: Android 8.0 (API 26)
 - **目标SDK**: Android 14 (API 34)
 - **编译工具**: Gradle 8.3.0
 
-### 核心依赖
+## 核心依赖
 ```gradle
 // 网络请求
 implementation 'com.squareup.okhttp3:okhttp:4.10.0'
@@ -79,12 +56,7 @@ implementation 'com.google.android.material:material:1.8.0'
 git clone https://github.com/your-username/AI-Chatbot-AndroidStudio.git
 ```
 
-2. 在Android Studio中打开项目
-
-3. 编译并安装到设备
-```bash
-./gradlew assembleDebug
-```
+2. 在Android Studio中打开`app`文件夹项目，连接到对应`Android`设备后`Build`后`Run`
 
 ### 权限设置
 1. **无障碍服务**

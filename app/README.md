@@ -51,12 +51,8 @@ implementation 'com.google.android.material:material:1.8.0'
 3. 稳定的网络连接
 
 ### 安装步骤
-1. 克隆项目到本地
-```bash
-git clone https://github.com/your-username/AI-Chatbot-AndroidStudio.git
-```
 
-2. 在Android Studio中打开`app`文件夹项目，连接到对应`Android`设备后`Build`后`Run`
+在Android Studio中打开`app`文件夹项目，连接到对应`Android`设备后`Build`,`Run`
 
 ### 权限设置
 1. **无障碍服务**

@@ -126,3 +126,6 @@ python -m runner.mobiagent.mobiagent --service_ip <服务IP> --decider_port <决
 ## 子模块详细使用方式
 
 详细使用方式见各子模块目录下的 `README.md` 文件。
+
+## 致谢
+我们感谢MobileAgent，UI-TARS，Qwen-VL等优秀的开源工作，同时，感谢国家高端智能化家用电器创新中心对项目的支持。

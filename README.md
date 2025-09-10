@@ -155,3 +155,7 @@ If you find MobiAgent useful in your research, please feel free to cite our [pap
   url={https://arxiv.org/abs/2509.00531}, 
 }
 ```
+
+## Acknowledgements
+We gratefully acknowledge the open-source projects like MobileAgent, UI-TARS, and Qwen-VL, etc. We also thank the National Innovation Institute of High-end Smart Appliances for their support of this project.
+

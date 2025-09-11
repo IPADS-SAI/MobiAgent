@@ -87,10 +87,23 @@ If you would like to try MobiAgent with python scripts which leverage Android De
 
 #### Environment Setup
 
+Create virtual environment, e.g., using conda:
+
 ```bash
 conda create -n MobiMind python=3.10
 conda activate MobiMind
+```
 
+Simplest environment setup (in case you want to run the agent runner alone, and do not want heavy dependencies like torch to be installed):
+
+```bash
+# Install simplest dependencies
+pip install -r requirements_simple.txt
+```
+
+Full environment setup (in case you want to run the full pipeline): 
+
+```bash
 pip install -r requirements.txt
 
 # Download OmniParser model weights

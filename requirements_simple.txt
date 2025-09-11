@@ -1,0 +1,5 @@
+openai
+uiautomator2
+Pillow
+ui-tars
+matplotlib

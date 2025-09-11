@@ -75,10 +75,23 @@ MobiAgent: A Systematic Framework for Customizable Mobile Agents
 
 #### 环境配置
 
+创建虚拟环境，例如，使用conda：
+
 ```bash
 conda create -n MobiMind python=3.10
 conda activate MobiMind
+```
 
+最简环境（如果您只想运行agent runner，不希望安装torch等重型依赖）：
+
+```bash
+# 安装最简化依赖
+pip install -r requirements_simple.txt
+```
+
+完整环境（如果您想运行完整流水线）：
+
+```bash
 pip install -r requirements.txt
 
 # 下载OmniParser模型权重

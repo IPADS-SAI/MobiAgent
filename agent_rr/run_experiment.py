@@ -1,7 +1,7 @@
 from train.task_template import get_app_task_trajectories
 from agent.agent import Agent
 from agent.env import Environment
-import os
+import os, random, math
 from action_cache.action import Action
 from action_cache.tree import ActionTree, Task, MatchMode
 
@@ -87,9 +87,6 @@ class MybenchEnvironment(Environment):
 
     def get_agent_input(self, history, task_description):
         self.agent.task_step[task_description] += 1
-        if self.cur_task != task_description:
-            self.reset_cur_task()
-            self.total_task_cnt += 1
         self.cur_task = task_description
         return {"task": task_description, "history": history}
 
@@ -134,14 +131,30 @@ def main(args):
 
     app_task_trajectories = agent.tasks.get_app_task_trajectories()
     for app, task_trajectories in app_task_trajectories.items():
-        print(f"Current app: {app}")
         tree.clear()
-        for task, _ in task_trajectories:
+        tasks = [t for t, _ in task_trajectories]
+        random.shuffle(tasks)
+        redistributed_tasks = []
+        if args.distribution == 'uniform':
+            redistributed_tasks = tasks
+        elif args.distribution == 'power_law':
+            num_task20 = math.ceil(0.2 * len(tasks))
+            task20 = tasks[:num_task20]
+            task80 = tasks[num_task20:]
+            redistributed_tasks = task20 * 16 + task80
+            random.shuffle(redistributed_tasks)
+        else:
+            raise ValueError(f"Unknown distribution: {args.distribution}")
+        for task in redistributed_tasks:
             print(f"Current task: {task}")
             tree.execute(task)
             env.check_done()
             if not env.cur_success:
                 tree.root.remove_task_trace(Task(task))
+            agent.task_step[task] = -1
+            env.reset_cur_task()
+            env.total_task_cnt += 1
+        print(f"Current app: {app}")
         env.print_cnt()
         agent.print_cnt()
         input("Press enter to continue")
@@ -152,5 +165,6 @@ if __name__ == '__main__':
     parser.add_argument('--embedder_path', type=str, required=True)
     parser.add_argument('--reranker_path', type=str, required=True)
     parser.add_argument('--data_path', type=str, required=True)
+    parser.add_argument('--distribution', choices=['uniform', 'power_law'], default='uniform')
     args = parser.parse_args()
     main(args)

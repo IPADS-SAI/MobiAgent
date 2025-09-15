@@ -243,12 +243,48 @@ python -m collect.construct_sft --data_path <原始数据路径> --ss_data_path 
 
 ### 参数说明
 
-**必需参数**
 - `--data_path`：原始轨迹数据存储路径（默认：`data`）
+- `--out_path`：训练数据集输出路径（默认：`output`）
 - `--ss_data_path`：单步数据存储路径（默认：`ss_data`）
 - `--unexpected_img_path`：意外图片数据路径（默认：`unexpected_img`）
-- `--out_path`：训练数据集输出路径（默认：`output`）
-
-**可选参数**
 - `--factor`：图片缩放因子，用于减小图片尺寸（默认：`0.5`）
 - `--train_ratio`：训练集与验证集的划分比例（默认：`0.9`）
+
+其中，`data_path`存放完整的、VLM标注后的操作轨迹，示例目录结构为：
+
+```
+data/
+|-- some-subpath1
+|   |-- 1.jpg
+|   |-- 2.jpg
+|   |-- ...
+|   `-- react.json
+`-- some-subpath2
+    |-- 1.jpg
+    |-- 2.jpg
+    |-- ...
+    `-- react.json
+```
+
+`some-subpath`代表任意深度的路径，可根据数据组织的需要任意指定，一个最深的子目录包含 `n` 个屏幕截图，以及长度为 `n` 的动作列表 `react.json`，动作和截图按照下标一一对应，且这 `n` 个截图-动作对构成一个任务的完整操作轨迹。
+
+`ss_data_path`存放手动收集的单步动作数据，示例目录结构为：
+
+```
+ss_data/
+|-- decider
+|   `-- some-subpath
+|       |-- 1.jpg
+|       |-- 2.jpg
+|       |-- ...
+|       |-- react.json
+|       `-- tasks.json
+`-- grounder
+    `-- some-subpath
+        |-- 1.jpg
+        |-- 2.jpg
+        |-- ...
+        `-- react.json
+```
+
+`ss_data_path`内必须仅包含 `decider` 和 `grounder` 作为一级目录，分别代表用于训练 `decider` 和 `grounder` 模型的单步动作数据。`some-subpath` 的深度和命名均任意，一个最深的子目录包含 `n` 个屏幕截图，长度为 `n` 的动作列表 `react.json`，动作和截图按照下标一一对应，且这 `n` 个截图-动作对均为单步操作，彼此之间没有联系。特别地，`decider` 目录下的子目录还包含一个长度任意的任务列表 `tasks.json` ，构建训练数据集时会为每个截图-动作对，从列表中随机采样一个任务，用于填充训练时模型输入提示词中的任务描述部分。

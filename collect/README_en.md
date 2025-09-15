@@ -256,7 +256,7 @@ data/
 
 `some-subpath` can be any depth, as needed. The deepest subdirectory contains `n` screenshots and action lists `react.json` + `actions.json` of length `n`, with actions and screenshots matched by index, forming a complete task operation trajectory.
 
-`ss_data_path` stores manually collected single-step action data. Example directory structure is as follows:
+`ss_data_path` stores manually collected single-step action data and can be empty. Example directory structure is as follows:
 
 ```
 ss_data/
@@ -293,4 +293,48 @@ ss_data/
         "bbox": [100, 200, 300, 400]
     }
 ]
+```
+
+`unexpected_img_path` directory stores screenshots of ads or pop-ups that require the agent to terminate task execution when encountered, and can be empty.
+
+### Data Augmentation (Optional)
+
+The training dataset construction supports data augmentation based on predefined rules. You can modify the `augment_config.json` file to adjust data distribution by applying regex matching on each action (item in `react.json`). Each rule contains three fields:
+
+* `dir`: the JSON field path to match
+* `pattern`: the field value to match (use regex)
+* `multiplier`: the augmentation multiplier, `reason`, `reason_no_history`, `grounder` represent the corresponding dataset's augmentation factor, `default` represents the default augmentation factor (when a dataset's augmentation factor is not specified).
+
+Example:
+
+1. Multiply `swipe` actions by 5x in the `decider` dataset
+
+```json
+{
+    "dir": [
+        "function",
+        "name"
+    ],
+    "pattern": "swipe",
+    "multiplier": {
+        "reason": 5,
+        "reason_no_history": 5,
+        "grounder": 1,
+        "default": 1
+    }
+}
+```
+
+2. Multiply actions whose `reasoning` contains the keyword "delete" by 3x in all datasets
+
+```json
+{
+    "dir": [
+        "reasoning"
+    ],
+    "pattern": "delete",
+    "multiplier": {
+        "default": 3
+    }
+}
 ```

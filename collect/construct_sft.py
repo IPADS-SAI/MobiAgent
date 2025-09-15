@@ -55,7 +55,7 @@ def augment_data(action, rules):
             continue
         if rule["compiled_pattern"].search(field_value):
             return rule["multiplier"]
-    return {"other": 1}
+    return {"default": 1}
 
 @dataclass
 class AlpacaImageEntry:
@@ -69,67 +69,6 @@ executor_prompt_bbox = load_prompt("grounder_bbox.md")
 
 decider_prompt = load_prompt("decider.md")
 decider_prompt_no_history = load_prompt("decider_nohistory.md")
-
-main_page_classification_prompt = '''
-<image>
-Is this screenshot the main page of the current app? Your answer can only be "yes" or "no".
-'''
-
-def construct_main_page_classification_ds(data_path, out_path, factor=0.5, train_ratio=0.9):
-    if not os.path.exists(out_path):
-        raise RuntimeError(f"Output path {out_path} does not exist. Make sure out_path is the same as construct_ds")
-    entries_train = []
-    entries_val = []
-
-    main_pages = []
-    other_pages = []
-    for root, dirs, files in os.walk(data_path):
-        if len(files) == 0:
-            continue
-        if "react.json" not in files or "actions.json" not in files or "parse.error" in files:
-            continue
-        if "1.jpg" not in files:
-            continue
-        idx = 1
-        while f"{idx}.jpg" in files:
-            idx += 1
-        largest_idx = idx - 1
-        for i in range(1, largest_idx + 1):
-            img_path = os.path.join(root, f"{i}.jpg")
-            relative_path = os.path.relpath(img_path, data_path)
-            safe_filename = relative_path.replace(os.sep, "_").replace(":", "_")
-            safe_filename = f"main_{safe_filename}"
-            out_relpath = os.path.join(out_path, safe_filename)
-            out_abspath = os.path.abspath(out_relpath)
-            if not os.path.exists(out_abspath):
-                raise RuntimeError(f"Image {out_abspath} does not exist. Make sure out_path is the same as construct_ds")
-            if i == 1:
-                main_pages.append(out_abspath)
-            else:
-                other_pages.append(out_abspath)
-    other_pages = random.sample(other_pages, len(other_pages) // 2)
-    for pages in [main_pages, other_pages]:
-        output = "yes" if pages is main_pages else "no"
-        entries = []
-        for abspath in pages:
-            entry = AlpacaImageEntry(
-                instruction=main_page_classification_prompt,
-                output=output,
-                images=[abspath]
-            )
-            entries.append(entry)
-        random.shuffle(entries)
-        split_idx = int(len(entries) * train_ratio)
-        entries_train.extend(entries[:split_idx])
-        entries_val.extend(entries[split_idx:])
-
-    print(f"main_page_classification entries_train: {len(entries_train)}")
-    print(f"main_page_classification entries_val: {len(entries_val)}")
-
-    with open(os.path.join(out_path, "main_page_train.json"), "w", encoding="utf-8") as f:
-        json.dump([asdict(entry) for entry in entries_train], f, ensure_ascii=False)
-    with open(os.path.join(out_path, "main_page_val.json"), "w", encoding="utf-8") as f:
-        json.dump([asdict(entry) for entry in entries_val], f, ensure_ascii=False)
 
 def construct_ss_data(single_step_data_path, out_path, factor=0.5, train_ratio=0.9):
     if not os.path.exists(single_step_data_path):
@@ -197,7 +136,7 @@ def construct_ss_data(single_step_data_path, out_path, factor=0.5, train_ratio=0
                         images=[out_abspath]
                     )
                     if is_train:
-                        num = augment_rule.get("reason_no_history", augment_rule.get("other", 1))
+                        num = augment_rule.get("reason_no_history", augment_rule.get("default", 1))
                         decider_ss_entry_train.extend([entry] * num)
                     else:
                         decider_ss_entry_val.append(entry)
@@ -264,7 +203,7 @@ def construct_ss_data(single_step_data_path, out_path, factor=0.5, train_ratio=0
                         images=[out_abspath]
                     )
                     if is_train:
-                        num = augment_rule.get("grounder", augment_rule.get("other", 1))
+                        num = augment_rule.get("grounder", augment_rule.get("default", 1))
                         grounder_ss_entry_train.extend([entry] * num)
                     else:
                         grounder_ss_entry_val.append(entry)
@@ -276,14 +215,12 @@ def construct_ds(data_path, single_step_data_path, unexpected_img_path, out_path
     
     # 训练集
     reason_entries_train = []
-    shift_entries_train = []
     terminate_entries_train = []
     reason_no_history_entries_train = []
     grounder_entries_train = []
     
     # 验证集
     reason_entries_val = []
-    shift_entries_val = []
     terminate_entries_val = []
     reason_no_history_entries_val = []
     grounder_entries_val = []
@@ -292,25 +229,28 @@ def construct_ds(data_path, single_step_data_path, unexpected_img_path, out_path
     rules = load_augmentation_rules(augment_config_path)
 
     #TODO: unexpected_img_path 不存在情况
-    unexpected_img_dir = os.path.abspath(unexpected_img_path)
-    unexpected_img_paths = os.listdir(unexpected_img_dir)
-    unexpected_img_paths = [os.path.join(unexpected_img_dir, img) for img in unexpected_img_paths]
+    if os.path.exists(unexpected_img_path):
+        unexpected_img_dir = os.path.abspath(unexpected_img_path)
+        unexpected_img_paths = os.listdir(unexpected_img_dir)
+        unexpected_img_paths = [os.path.join(unexpected_img_dir, img) for img in unexpected_img_paths]
 
-    unexpected_img_safe_abspaths = []
-    for unexpected_img_path in unexpected_img_paths:
-        pil_img = Image.open(unexpected_img_path)
-        width, height = pil_img.size
-        new_width = int(width * factor)
-        new_height = int(height * factor)
-        resized_img = pil_img.resize((new_width, new_height), Image.LANCZOS)
+        unexpected_img_safe_abspaths = []
+        for unexpected_img_path in unexpected_img_paths:
+            pil_img = Image.open(unexpected_img_path)
+            width, height = pil_img.size
+            new_width = int(width * factor)
+            new_height = int(height * factor)
+            resized_img = pil_img.resize((new_width, new_height), Image.LANCZOS)
 
-        relative_path = os.path.relpath(unexpected_img_path, unexpected_img_dir)
-        safe_filename = relative_path.replace(os.sep, "_").replace(":", "_")
-        safe_filename = f"unexpected_{safe_filename}"
-        out_relpath = os.path.join(out_path, safe_filename)
-        resized_img.save(out_relpath)
-        out_abspath = os.path.abspath(out_relpath)
-        unexpected_img_safe_abspaths.append(out_abspath)
+            relative_path = os.path.relpath(unexpected_img_path, unexpected_img_dir)
+            safe_filename = relative_path.replace(os.sep, "_").replace(":", "_")
+            safe_filename = f"unexpected_{safe_filename}"
+            out_relpath = os.path.join(out_path, safe_filename)
+            resized_img.save(out_relpath)
+            out_abspath = os.path.abspath(out_relpath)
+            unexpected_img_safe_abspaths.append(out_abspath)
+    else:
+        unexpected_img_safe_abspaths = []
 
     for root, dirs, files in tqdm(os.walk(data_path), desc="constructing dataset"):
         if len(files) == 0:
@@ -415,10 +355,10 @@ def construct_ds(data_path, single_step_data_path, unexpected_img_path, out_path
 
             history.append(output)
 
-            shifted_history_entry = []
             terminate_history_entry = []
 
             synthesize_terminate = action_type != "wait" and action_type != "done" and action_type != "swipe"
+            synthesize_terminate = synthesize_terminate and len(unexpected_img_safe_abspaths) > 0
             # synthesize terminate samples
             if synthesize_terminate:
                 terminate_list1 = [
@@ -465,54 +405,6 @@ def construct_ds(data_path, single_step_data_path, unexpected_img_path, out_path
                     )
                     terminate_history_entry.append(entry)
 
-            synthesize_retry = synthesize_terminate
-            if synthesize_retry:
-                # i+1.jpg must exist since action_type is not done
-                cv2_img = cv2.imread(os.path.join(root, f"{i}.jpg"), cv2.IMREAD_GRAYSCALE)
-                next_cv2_img = cv2.imread(os.path.join(root, f"{i + 1}.jpg"), cv2.IMREAD_GRAYSCALE)
-                if cv2_img.shape != next_cv2_img.shape:
-                    next_cv2_img = cv2.resize(next_cv2_img, (cv2_img.shape[1], cv2_img.shape[0]))
-                ssim_value = ssim(cv2_img, next_cv2_img)
-                synthesize_retry = ssim_value < 0.9
-
-            # synthesize retry samples
-            if synthesize_retry:
-                retry_list1 = [
-                    "应用未响应",
-                    "上一个操作没有成功",
-                    "操作未响应",
-                    "上一动作未正常执行"
-                ]
-                retry_list2 = [
-                    "需要重新执行上一个动作",
-                    "需要再执行一次上一个操作",
-                    "我需要进行重试",
-                ]
-
-                retry_reasoning = "，".join(map(random.choice, [retry_list1, retry_list2]))
-                retry_output_dict = dict(reasoning=retry_reasoning, action=action_type, parameters=param)
-                retry_output = json.dumps(retry_output_dict, ensure_ascii=False)
-
-                history_str = "\n".join(f"{idx}. {h}" for idx, h in enumerate(history, 1))
-                if(isinstance(task_description, list)):
-                    weight = 1
-                    random_tasks = random.sample(task_description, weight)
-                    for task in random_tasks:
-                        instruction = decider_prompt.format(task=task, history=history_str)
-                        entry = AlpacaImageEntry(
-                            instruction=instruction,
-                            output=retry_output,
-                            images=[out_abspath]
-                        )
-                        shifted_history_entry.append(entry)
-                else:
-                    instruction = decider_prompt.format(task=task_description, history=history_str)
-                    entry = AlpacaImageEntry(
-                        instruction=instruction,
-                        output=retry_output,
-                        images=[out_abspath]
-                    )
-                    shifted_history_entry.append(entry)
 
             # 有历史action训练集
             full_history_entry = partial_history_entries[0]
@@ -521,13 +413,11 @@ def construct_ds(data_path, single_step_data_path, unexpected_img_path, out_path
             
             # 按比例分配到训练集和验证集（在增强前分配）
             if is_train:
-                num = augment_rule.get("reason", augment_rule.get("other", 1))
+                num = augment_rule.get("reason", augment_rule.get("default", 1))
                 reason_entries_train.extend((partial_history_entries + [full_history_entry]) * num)
-                shift_entries_train.extend(shifted_history_entry * num)
                 terminate_entries_train.extend(terminate_history_entry * num)
             else:
                 reason_entries_val.extend(partial_history_entries + [full_history_entry])
-                shift_entries_val.extend(shifted_history_entry)
                 terminate_entries_val.extend(terminate_history_entry)
 
             # 无历史action训练集 (input类型不生成no history数据)
@@ -556,7 +446,7 @@ def construct_ds(data_path, single_step_data_path, unexpected_img_path, out_path
 
                 # 按比例分配到训练集和验证集（在增强前分配）
                 if is_train:
-                    num = augment_rule.get("reason_no_history", augment_rule.get("other", 1))
+                    num = augment_rule.get("reason_no_history", augment_rule.get("default", 1))
                     reason_no_history_entries_train.extend(no_history_entries * num)
                 else:
                     reason_no_history_entries_val.extend(no_history_entries)
@@ -576,7 +466,7 @@ def construct_ds(data_path, single_step_data_path, unexpected_img_path, out_path
                 
                 # 按比例分配到训练集和验证集（在增强前分配）
                 if is_train:
-                    num = augment_rule.get("grounder", augment_rule.get("other", 1))
+                    num = augment_rule.get("grounder", augment_rule.get("default", 1))
                     grounder_entries_train.extend([entry] * num)
                 else:
                     grounder_entries_val.append(entry)
@@ -593,7 +483,7 @@ def construct_ds(data_path, single_step_data_path, unexpected_img_path, out_path
                     
                     # 按比例分配到训练集和验证集（在增强前分配）
                     if is_train:
-                        num = augment_rule.get("grounder", augment_rule.get("other", 1))
+                        num = augment_rule.get("grounder", augment_rule.get("default", 1))
                         grounder_entries_train.extend([entry] * num)
                     else:
                         grounder_entries_val.append(entry)
@@ -601,14 +491,11 @@ def construct_ds(data_path, single_step_data_path, unexpected_img_path, out_path
     decider_ss_entry_train, decider_ss_entry_val, grounder_ss_entry_train, grounder_ss_entry_val = construct_ss_data(single_step_data_path, out_path, factor, train_ratio)
 
     # 合并训练集数据
-    shift_entries_train = random.sample(shift_entries_train, len(shift_entries_train) // 8)
-    shift_entries_val = random.sample(shift_entries_val, len(shift_entries_val) // 8)
     terminate_entries_train = random.sample(terminate_entries_train, len(terminate_entries_train) // 5)
     terminate_entries_val = random.sample(terminate_entries_val, len(terminate_entries_val) // 5)
 
     print(f"reason_entries_train: {len(reason_entries_train)}")
     print(f"reason_entries_no_history_train: {len(reason_no_history_entries_train)}")
-    print(f"shift_entries_train: {len(shift_entries_train)}")
     print(f"terminate_entries_train: {len(terminate_entries_train)}")
     print(f"grounder_entries_train: {len(grounder_entries_train)}")
     print(f"decider_ss_entry_train: {len(decider_ss_entry_train)}")
@@ -618,7 +505,6 @@ def construct_ds(data_path, single_step_data_path, unexpected_img_path, out_path
     data = {
         "reason_entries_train": len(reason_entries_train),
         "reason_entries_no_history_train": len(reason_no_history_entries_train),
-        "shift_entries_train": len(shift_entries_train),
         "terminate_entries_train": len(terminate_entries_train),
         "grounder_entries_train": len(grounder_entries_train),
         "decider_ss_entry_train": len(decider_ss_entry_train),
@@ -627,7 +513,6 @@ def construct_ds(data_path, single_step_data_path, unexpected_img_path, out_path
 
     decider_entries_train = [asdict(entry) for entry in reason_entries_train]
     decider_entries_train.extend([asdict(entry) for entry in reason_no_history_entries_train])
-    decider_entries_train.extend([asdict(entry) for entry in shift_entries_train])
     decider_entries_train.extend([asdict(entry) for entry in terminate_entries_train])
     decider_entries_train.extend([asdict(entry) for entry in decider_ss_entry_train])
     # random.shuffle(decider_entries_train)
@@ -639,7 +524,6 @@ def construct_ds(data_path, single_step_data_path, unexpected_img_path, out_path
     # 合并验证集数据
     print(f"reason_entries_val: {len(reason_entries_val)}")
     print(f"reason_entries_no_history_val: {len(reason_no_history_entries_val)}")
-    print(f"shift_entries_val: {len(shift_entries_val)}")
     print(f"terminate_entries_val: {len(terminate_entries_val)}")
     print(f"grounder_entries_val: {len(grounder_entries_val)}")
     print(f"decider_ss_entry_val: {len(decider_ss_entry_val)}")
@@ -649,7 +533,6 @@ def construct_ds(data_path, single_step_data_path, unexpected_img_path, out_path
     data.update({
         "reason_entries_val": len(reason_entries_val),
         "reason_entries_no_history_val": len(reason_no_history_entries_val),
-        "shift_entries_val": len(shift_entries_val),
         "terminate_entries_val": len(terminate_entries_val),
         "grounder_entries_val": len(grounder_entries_val),
         "decider_ss_entry_val": len(decider_ss_entry_val),
@@ -658,7 +541,6 @@ def construct_ds(data_path, single_step_data_path, unexpected_img_path, out_path
 
     decider_entries_val = [asdict(entry) for entry in reason_entries_val]
     decider_entries_val.extend([asdict(entry) for entry in reason_no_history_entries_val])
-    decider_entries_val.extend([asdict(entry) for entry in shift_entries_val])
     decider_entries_val.extend([asdict(entry) for entry in terminate_entries_val])
     decider_entries_val.extend([asdict(entry) for entry in decider_ss_entry_val])
     # random.shuffle(decider_entries_val)
@@ -699,10 +581,4 @@ if __name__ == "__main__":
         out_path=args.out_path,
         factor=args.factor,
         train_ratio=args.train_ratio,
-    )
-    construct_main_page_classification_ds(
-        data_path=args.data_path,
-        out_path=args.out_path,
-        factor=args.factor,
-        train_ratio=args.train_ratio
     )

@@ -112,7 +112,7 @@ def init(service_ip, decider_port, grounder_port, planner_port):
     )
     grounder_client = OpenAI(
         api_key = "0",
-        base_url = f"{service_ip}:{grounder_port}/v1",
+        base_url = f"http://{service_ip}:{grounder_port}/v1",
     )
     planner_client = OpenAI(
         api_key = "0",
@@ -193,7 +193,7 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True):
         )
         # logging.info(f"Decider prompt: \n{decider_prompt}")
         decider_response_str = decider_client.chat.completions.create(
-            model="decider",
+            model="",
             messages=[
                 {
                     "role": "user",
@@ -379,7 +379,7 @@ def get_app_package_name(task_description):
     app_selection_prompt = app_selection_prompt_template.format(task_description=task_description)
     while True:
         response_str = planner_client.chat.completions.create(
-            model="planner",
+            model="",
             messages=[
                 {
                     "role": "user",

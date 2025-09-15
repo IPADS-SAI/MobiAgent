@@ -258,15 +258,17 @@ data/
 |   |-- 1.jpg
 |   |-- 2.jpg
 |   |-- ...
+|   |-- actions.json
 |   `-- react.json
 `-- some-subpath2
     |-- 1.jpg
     |-- 2.jpg
     |-- ...
+    |-- actions.json
     `-- react.json
 ```
 
-`some-subpath`代表任意深度的路径，可根据数据组织的需要任意指定，一个最深的子目录包含 `n` 个屏幕截图，以及长度为 `n` 的动作列表 `react.json`，动作和截图按照下标一一对应，且这 `n` 个截图-动作对构成一个任务的完整操作轨迹。
+`some-subpath`代表任意深度的路径，可根据数据组织的需要任意指定，一个最深的子目录包含 `n` 个屏幕截图，以及长度为 `n` 的动作列表 `react.json` + `actions.json`，动作和截图按照下标一一对应，且这 `n` 个截图-动作对构成一个任务的完整操作轨迹。
 
 `ss_data_path`存放手动收集的单步动作数据，示例目录结构为：
 
@@ -287,4 +289,22 @@ ss_data/
         `-- react.json
 ```
 
-`ss_data_path`内必须仅包含 `decider` 和 `grounder` 作为一级目录，分别代表用于训练 `decider` 和 `grounder` 模型的单步动作数据。`some-subpath` 的深度和命名均任意，一个最深的子目录包含 `n` 个屏幕截图，长度为 `n` 的动作列表 `react.json`，动作和截图按照下标一一对应，且这 `n` 个截图-动作对均为单步操作，彼此之间没有联系。特别地，`decider` 目录下的子目录还包含一个长度任意的任务列表 `tasks.json` ，构建训练数据集时会为每个截图-动作对，从列表中随机采样一个任务，用于填充训练时模型输入提示词中的任务描述部分。
+`ss_data_path`内必须仅包含 `decider` 和 `grounder` 作为一级目录，分别代表用于训练 `decider` 和 `grounder` 模型的单步动作数据。`some-subpath` 的深度和命名均任意，一个最深的子目录包含 `n` 个屏幕截图，长度为 `n` 的动作列表 `react.json`，动作和截图按照下标一一对应，且这 `n` 个截图-动作对均为单步操作，彼此之间没有联系。子目录不包含 `actions.json`。
+
+* `ss_data/decider` 下的子目录还包含一个长度任意的任务列表 `tasks.json` ，构建训练数据集时会为每个截图-动作对，从列表中随机采样一个任务，用于填充训练时模型输入提示词中的任务描述部分
+* `ss_data/grounder` 下的子目录下的 `react.json` 中，每一个动作应为`click`，且包含一个额外的 `bbox` 字段，代表此次点击的元素的边界框（绝对坐标），例如：
+
+```json
+[
+    {
+        "reasoning": "...",
+        "function": {
+            "name": "click",
+            "parameters": {
+                "target_element": "..."
+            }
+        },
+        "bbox": [100, 200, 300, 400]
+    }
+]
+```

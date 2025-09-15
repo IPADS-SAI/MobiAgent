@@ -244,15 +244,17 @@ data/
 |   |-- 1.jpg
 |   |-- 2.jpg
 |   |-- ...
+|   |-- actions.json
 |   `-- react.json
 `-- some-subpath2
-  |-- 1.jpg
-  |-- 2.jpg
-  |-- ...
-  `-- react.json
+    |-- 1.jpg
+    |-- 2.jpg
+    |-- ...
+    |-- actions.json
+    `-- react.json
 ```
 
-`some-subpath` can be any depth, as needed. The deepest subdirectory contains `n` screenshots and a `react.json` of length `n`, with actions and screenshots matched by index, forming a complete trajectory.
+`some-subpath` can be any depth, as needed. The deepest subdirectory contains `n` screenshots and action lists `react.json` + `actions.json` of length `n`, with actions and screenshots matched by index, forming a complete task operation trajectory.
 
 `ss_data_path` stores manually collected single-step action data. Example directory structure is as follows:
 
@@ -273,4 +275,22 @@ ss_data/
     `-- react.json
 ```
 
-`ss_data_path` must only contain `decider` and `grounder` as top-level directories, for training the respective models. `some-subpath` can be any depth or name. The deepest subdirectory contains `n` screenshots and a `react.json` of length `n`, with actions and screenshots matched by index, and all pairs are single-step and independent. In particular, subdirectories under `decider` also contain a `tasks.json` list, from which a random task is sampled for each screenshot-action pair when constructing the training dataset prompt.
+`ss_data_path` must only contain `decider` and `grounder` as top-level directories, for training the respective models. `some-subpath` can be any depth or name. The deepest subdirectory contains `n` screenshots and action list `react.json` of length `n`, with actions and screenshots matched by index, and all pairs are single-step and independent. Subdirectories do not contain `actions.json`.
+
+* Subdirectories under `ss_data/decider` also contain a `tasks.json` list of arbitrary length. When constructing the training dataset, a random task is sampled from the list for each screenshot-action pair to fill the task description part of the training prompt.
+* Subdirectories under `ss_data/grounder` should have a `react.json` in which each item must be `click` action and include an additional `bbox` field representing the bounding box (absolute coordinates) of the target element, for example:
+
+```json
+[
+    {
+        "reasoning": "...",
+        "function": {
+            "name": "click",
+            "parameters": {
+                "target_element": "..."
+            }
+        },
+        "bbox": [100, 200, 300, 400]
+    }
+]
+```

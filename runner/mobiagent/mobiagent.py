@@ -116,7 +116,7 @@ def init(service_ip, decider_port, grounder_port, planner_port):
     )
     planner_client = OpenAI(
         api_key = "0",
-        base_url = f"{service_ip}:{planner_port}/v1",
+        base_url = f"http://{service_ip}:{planner_port}/v1",
     )
 
 decider_prompt_template = """

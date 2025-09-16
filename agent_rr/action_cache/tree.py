@@ -1,6 +1,7 @@
 from enum import Enum
 import torch
 import time
+from sentence_transformers import util
 try:
     from omniparser.omniparser import Omniparser
 except ImportError as e:

@@ -62,8 +62,8 @@ class AlpacaImageEntry:
     images: List[str]
     input: str = ""
 
-executor_prompt = load_prompt("grounder_coordinates.md")
-executor_prompt_bbox = load_prompt("grounder_bbox.md")
+grounder_prompt = load_prompt("grounder_coordinates.md")
+grounder_prompt_bbox = load_prompt("grounder_bbox.md")
 
 decider_prompt = load_prompt("decider.md")
 decider_prompt_no_history = load_prompt("decider_nohistory.md")
@@ -180,7 +180,7 @@ def construct_ss_data(single_step_data_path, out_path, factor=0.5, train_ratio=0
                     y = (y1 + y2) // 2
                     coords = [int(x * factor), int(y * factor)]
 
-                    instruction = executor_prompt.format(reasoning=reasoning, description=param["target_element"])
+                    instruction = grounder_prompt.format(reasoning=reasoning, description=param["target_element"])
                     output = json.dumps(dict(coordinates=coords))
                     entry = AlpacaImageEntry(
                         instruction=instruction,
@@ -194,7 +194,7 @@ def construct_ss_data(single_step_data_path, out_path, factor=0.5, train_ratio=0
 
                     bbox = [int(x * factor) for x in bbox]
                     output = json.dumps(dict(bbox=bbox))
-                    instruction = executor_prompt_bbox.format(reasoning=reasoning, description=param["target_element"])
+                    instruction = grounder_prompt_bbox.format(reasoning=reasoning, description=param["target_element"])
                     entry = AlpacaImageEntry(
                         instruction=instruction,
                         output=output,
@@ -207,6 +207,155 @@ def construct_ss_data(single_step_data_path, out_path, factor=0.5, train_ratio=0
                         grounder_ss_entry_val.append(entry)
 
     return decider_ss_entry_train, decider_ss_entry_val, grounder_ss_entry_train, grounder_ss_entry_val
+
+def position_num_repeat(index, total_length):
+    if index / total_length <= 0.5:
+        return 1
+    else:
+        return 2
+    
+def augment_num_repeat(part, augment_rule, is_train):
+    return augment_rule.get(part, augment_rule.get("default", 1)) if is_train else 1
+
+def history_str(history):
+    if len(history) == 0:
+        return "(No history)"
+    else:
+        return "\n".join(f"{idx}. {h}" for idx, h in enumerate(history, 1))
+
+def create_entries_for_one_step(num_repeat, instruction, output, image_path):
+    entry = AlpacaImageEntry(
+        instruction=instruction,
+        output=output,
+        images=[image_path]
+    )
+    return [entry] * num_repeat
+
+def create_entries_for_one_task(task, react_data, actions, root, data_path, out_path, factor, rules, unexpected_img_safe_abspaths, is_train):
+    # decider
+    normal_entries = []
+    no_history_entries = []
+    terminate_entries = []
+    # grounder
+    grounder_entries = []
+
+    history = []
+    for i, react in enumerate(react_data, 1):
+        augment_rule = augment_data(react, rules)
+        pos_num_repeat = position_num_repeat(i, len(react_data))
+        reason_aug_num_repeat = augment_num_repeat("reason", augment_rule, is_train)
+        reason_no_history_aug_num_repeat = augment_num_repeat("reason_no_history", augment_rule, is_train)
+        grounder_aug_num_repeat = augment_num_repeat("grounder", augment_rule, is_train)
+
+        # Resize image并保存在同一目录下
+        img_path = os.path.join(root, f"{i}.jpg")
+        pil_img = Image.open(img_path)
+        width, height = pil_img.size
+        new_width = int(width * factor)
+        new_height = int(height * factor)
+        resized_img = pil_img.resize((new_width, new_height), Image.LANCZOS)
+        
+        relative_path = os.path.relpath(img_path, data_path)
+        safe_filename = relative_path.replace(os.sep, "_").replace(":", "_")
+        safe_filename = f"main_{safe_filename}"
+        out_relpath = os.path.join(out_path, safe_filename)
+        resized_img.save(out_relpath)
+        out_abspath = os.path.abspath(out_relpath)
+
+        # 获取相关参数
+        reasoning = react["reasoning"]
+        action_type = react["function"]["name"]
+        param = react["function"]["parameters"]
+        
+        output_dict = dict(reasoning=reasoning, action=action_type, parameters=param)
+        output = json.dumps(output_dict, ensure_ascii=False)
+
+        # partial_histories是当前action的前几个action
+        # 对input类和done类型特殊处理
+        if action_type == "input" or action_type == "done":
+            min_history_length = min(3, len(history))
+            partial_histories = [history[i:] for i in range(len(history) + 1 - min_history_length)]
+        else:
+            partial_histories = [history[i:] for i in range(len(history) + 1)]
+
+        partial_histories = partial_histories[0] + random.sample(partial_histories[1:], min(2, len(partial_histories) - 1))
+        
+        for partial_history in partial_histories:
+            normal_entries.extend(create_entries_for_one_step(
+                pos_num_repeat * reason_aug_num_repeat, 
+                decider_prompt.format(task=task, history=history_str(partial_history)), 
+                output, 
+                out_abspath
+            ))
+
+        history.append(output)
+
+        synthesize_terminate = action_type != "wait" and action_type != "done" and action_type != "swipe"
+        synthesize_terminate = synthesize_terminate and len(unexpected_img_safe_abspaths) > 0
+        # synthesize terminate samples
+        if synthesize_terminate:
+            terminate_reasoning_part1 = [
+                "当前页面未按预期加载",
+                "进入了错误的页面",
+                "打开了不合预期的页面",
+                "当前打开了错误页面",
+                "当前页面不合预期"
+            ]
+            terminate_reasoning_part2 = [
+                "需要用户介入",
+                "需要用户接管",
+                "任务无法继续执行"
+            ]
+            terminate_reasoning_part3 = [
+                "任务提前结束",
+                "中止任务执行"
+            ]
+
+            terminate_reasoning = "，".join(map(random.choice, [terminate_reasoning_part1, terminate_reasoning_part2, terminate_reasoning_part3]))
+            terminate_output_dict = dict(reasoning=terminate_reasoning, action="done", parameters={})
+            terminate_output = json.dumps(terminate_output_dict, ensure_ascii=False)
+
+            terminate_entries.extend(create_entries_for_one_step(
+                pos_num_repeat * reason_aug_num_repeat,
+                decider_prompt.format(task=task, history=history_str(history)),
+                terminate_output,
+                random.choice(unexpected_img_safe_abspaths)
+            ))
+
+        
+        # 无历史action训练集 (input类型不生成no history数据)
+        if action_type != "done" and action_type != "input":
+            no_history_entries.extend(create_entries_for_one_step(
+                pos_num_repeat * reason_no_history_aug_num_repeat,
+                decider_prompt_no_history.format(task=task),
+                output,
+                out_abspath
+            ))
+
+        # grounder
+        if action_type == "click":
+            action = actions[i - 1]
+            coords = [int(action["position_x"]* factor), int(action["position_y"]* factor)]
+            bbox = action.get("bounds", None)
+
+            grounder_entries.extend(create_entries_for_one_step(
+                grounder_aug_num_repeat,
+                grounder_prompt.format(reasoning=reasoning, description=param["target_element"]),
+                json.dumps(dict(coordinates=coords)),
+                out_abspath
+            ))
+
+            if bbox:
+                bbox = [int(x * factor) for x in bbox]
+                grounder_entries.extend(create_entries_for_one_step(
+                    grounder_aug_num_repeat,
+                    grounder_prompt_bbox.format(reasoning=reasoning, description=param["target_element"]),
+                    json.dumps(dict(bbox=bbox)),
+                    out_abspath
+                ))
+
+    return normal_entries, no_history_entries, terminate_entries, grounder_entries
+
 
 def construct_ds(data_path, single_step_data_path, unexpected_img_path, out_path, factor=0.5, train_ratio=0.9):
     os.makedirs(out_path, exist_ok=True)
@@ -284,207 +433,24 @@ def construct_ds(data_path, single_step_data_path, unexpected_img_path, out_path
         elif num_img != len(react_data):
             print(f"Warning: Number of images ({num_img}) does not match number of ReAct entries ({len(react_data)}) in {root}. Skipping this directory.")
             continue
-    
-        history = []
-        for i, react in enumerate(react_data, 1):
-            is_train = random.random() < train_ratio
 
-            augment_rule = augment_data(react, rules)
-
-            # Resize image并保存在同一目录下
-            img_path = os.path.join(root, f"{i}.jpg")
-            pil_img = Image.open(img_path)
-            width, height = pil_img.size
-            new_width = int(width * factor)
-            new_height = int(height * factor)
-            resized_img = pil_img.resize((new_width, new_height), Image.LANCZOS)
-            
-            relative_path = os.path.relpath(img_path, data_path)
-            safe_filename = relative_path.replace(os.sep, "_").replace(":", "_")
-            safe_filename = f"main_{safe_filename}"
-            out_relpath = os.path.join(out_path, safe_filename)
-            resized_img.save(out_relpath)
-            out_abspath = os.path.abspath(out_relpath)
-
-            # 获取相关参数
-            reasoning = react["reasoning"]
-            action_type = react["function"]["name"]
-            param = react["function"]["parameters"]
-            
-            output_dict = dict(reasoning=reasoning, action=action_type, parameters=param)
-            output = json.dumps(output_dict, ensure_ascii=False)
-
-            # partial_histories是当前action的前几个action
-            # 对input类和done类型特殊处理
-            if action_type == "input" or action_type == "done":
-                min_history_length = min(3, len(history))
-                partial_histories = [history[i:] for i in range(len(history) + 1 - min_history_length)]
-            else:
-                partial_histories = [history[i:] for i in range(len(history) + 1)]
-            
-            partial_history_entries = []
-
-            for partial_history in partial_histories:
-                if len(partial_history) == 0:
-                    partial_history_str = "(No history)"
-                else:
-                    partial_history_str = "\n".join(f"{idx}. {h}" for idx, h in enumerate(partial_history, 1))
-
-                if(isinstance(task_description, list)):
-                    weight = calculate_index_weight(i, len(actions))
-                    weight = min(weight, len(task_description))
-                    random_tasks = random.sample(task_description, weight)
-                    for task in random_tasks:
-                        instruction = decider_prompt.format(task=task, history=partial_history_str)
-                        entry = AlpacaImageEntry(
-                            instruction=instruction,
-                            output=output,
-                            images=[out_abspath]
-                        )
-                        partial_history_entries.append(entry)
-                else:
-                    instruction = decider_prompt.format(task=task_description, history=partial_history_str)
-                    entry = AlpacaImageEntry(
-                        instruction=instruction,
-                        output=output,
-                        images=[out_abspath]
-                    )
-                    partial_history_entries.append(entry)
-
-            history.append(output)
-
-            terminate_history_entry = []
-
-            synthesize_terminate = action_type != "wait" and action_type != "done" and action_type != "swipe"
-            synthesize_terminate = synthesize_terminate and len(unexpected_img_safe_abspaths) > 0
-            # synthesize terminate samples
-            if synthesize_terminate:
-                terminate_list1 = [
-                    "当前页面未按预期加载",
-                    "进入了错误的页面",
-                    "打开了不合预期的页面",
-                    "当前打开了错误页面",
-                    "当前页面不合预期"
-                ]
-                terminate_list2 = [
-                    "需要用户介入",
-                    "需要用户接管",
-                    "任务无法继续执行"
-                ]
-                terminate_list3 = [
-                    "任务提前结束",
-                    "中止任务执行"
-                ]
-
-                terminate_reasoning = "，".join(map(random.choice, [terminate_list1, terminate_list2, terminate_list3]))
-                terminate_output_dict = dict(reasoning=terminate_reasoning, action="done", parameters={})
-                terminate_output = json.dumps(terminate_output_dict, ensure_ascii=False)
-
-                history_str = "\n".join(f"{idx}. {h}" for idx, h in enumerate(history, 1))
-                if(isinstance(task_description, list)):
-                    weight = 1
-                    random_tasks = random.sample(task_description, weight)
-                    for task in random_tasks:
-                        instruction = decider_prompt.format(task=task, history=history_str)
-                        unexpected_img_abspath = random.choice(unexpected_img_safe_abspaths)
-                        entry = AlpacaImageEntry(
-                            instruction=instruction,
-                            output=terminate_output,
-                            images=[unexpected_img_abspath]
-                        )
-                        terminate_history_entry.append(entry)
-                else:
-                    instruction = decider_prompt.format(task=task_description, history=history_str)
-                    unexpected_img_abspath = random.choice(unexpected_img_safe_abspaths)
-                    entry = AlpacaImageEntry(
-                        instruction=instruction,
-                        output=terminate_output,
-                        images=[unexpected_img_abspath]
-                    )
-                    terminate_history_entry.append(entry)
-
-
-            # 有历史action训练集
-            full_history_entry = partial_history_entries[0]
-            partial_history_entries = partial_history_entries[1:]
-            partial_history_entries = random.sample(partial_history_entries, min(2, len(partial_history_entries)))
-            
-            # 按比例分配到训练集和验证集（在增强前分配）
+        if not isinstance(task_description, list):
+            task_description = [task_description]
+        is_train = random.random() < train_ratio
+        for task in task_description:
+            normal_entries, no_history_entries, terminate_entries, grounder_entries = create_entries_for_one_task(
+                task, react_data, actions, root, data_path, out_path, factor, rules, unexpected_img_safe_abspaths, is_train
+            )
             if is_train:
-                num = augment_rule.get("reason", augment_rule.get("default", 1))
-                reason_entries_train.extend((partial_history_entries + [full_history_entry]) * num)
-                terminate_entries_train.extend(terminate_history_entry * num)
+                reason_entries_train.extend(normal_entries)
+                reason_no_history_entries_train.extend(no_history_entries)
+                terminate_entries_train.extend(terminate_entries)
+                grounder_entries_train.extend(grounder_entries)
             else:
-                reason_entries_val.extend(partial_history_entries + [full_history_entry])
-                terminate_entries_val.extend(terminate_history_entry)
-
-            # 无历史action训练集 (input类型不生成no history数据)
-            if action_type != "done" and action_type != "input":
-                no_history_entries = []
-                if(isinstance(task_description, list)):
-                    weight = calculate_index_weight(i, len(actions))
-                    weight = min(weight, len(task_description))
-                    random_tasks = random.sample(task_description, weight)
-                    for task in random_tasks:
-                        instruction = decider_prompt_no_history.format(task=task)
-                        entry = AlpacaImageEntry(
-                            instruction=instruction,
-                            output=output,
-                            images=[out_abspath]
-                        )
-                        no_history_entries.append(entry)
-                else:
-                    instruction = decider_prompt_no_history.format(task=task_description)
-                    entry = AlpacaImageEntry(
-                        instruction=instruction,
-                        output=output,
-                        images=[out_abspath]
-                    )
-                    no_history_entries.append(entry)
-
-                # 按比例分配到训练集和验证集（在增强前分配）
-                if is_train:
-                    num = augment_rule.get("reason_no_history", augment_rule.get("default", 1))
-                    reason_no_history_entries_train.extend(no_history_entries * num)
-                else:
-                    reason_no_history_entries_val.extend(no_history_entries)
-
-            # grounder训练集
-            if action_type == "click":
-                action = actions[i - 1]
-                coords = [int(action["position_x"]* factor), int(action["position_y"]* factor)]
-                bbox = action.get("bounds", None)
-                instruction = executor_prompt.format(reasoning=reasoning, description=param["target_element"])
-                output = json.dumps(dict(coordinates=coords))
-                entry = AlpacaImageEntry(
-                    instruction=instruction,
-                    output=output,
-                    images=[out_abspath]
-                )
-                
-                # 按比例分配到训练集和验证集（在增强前分配）
-                if is_train:
-                    num = augment_rule.get("grounder", augment_rule.get("default", 1))
-                    grounder_entries_train.extend([entry] * num)
-                else:
-                    grounder_entries_val.append(entry)
-
-                if bbox:
-                    bbox = [int(x * factor) for x in bbox]
-                    output = json.dumps(dict(bbox=bbox))
-                    instruction = executor_prompt_bbox.format(reasoning=reasoning, description=param["target_element"])
-                    entry = AlpacaImageEntry(
-                        instruction=instruction,
-                        output=output,
-                        images=[out_abspath]
-                    )
-                    
-                    # 按比例分配到训练集和验证集（在增强前分配）
-                    if is_train:
-                        num = augment_rule.get("grounder", augment_rule.get("default", 1))
-                        grounder_entries_train.extend([entry] * num)
-                    else:
-                        grounder_entries_val.append(entry)
+                reason_entries_val.extend(normal_entries)
+                reason_no_history_entries_val.extend(no_history_entries)
+                terminate_entries_val.extend(terminate_entries)
+                grounder_entries_val.extend(grounder_entries)
 
     decider_ss_entry_train, decider_ss_entry_val, grounder_ss_entry_train, grounder_ss_entry_val = construct_ss_data(single_step_data_path, out_path, factor, train_ratio)
 

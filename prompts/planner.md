@@ -6,6 +6,7 @@
 
 ## 可用应用列表
 以下是可用的应用及其包名：
+- 支付宝: com.eg.android.AlipayGphone
 - 微信: com.tencent.mm
 - QQ: com.tencent.mobileqq
 - 新浪微博: com.sina.weibo

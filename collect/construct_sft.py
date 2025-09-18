@@ -11,16 +11,6 @@ from functools import reduce
 
 from utils.load_md_prompt import load_prompt
 
-def calculate_index_weight(index, total_length):
-    # 分段权重计算
-    if index <= 5:
-        base_weight = 1
-    elif index <= 8:
-        base_weight = 1 + index // 4
-    else:
-        base_weight = 1 + index // 3
-    return base_weight
-
 def load_augmentation_rules(config_path="augment_config.json"):
     """读取数据扩充配置文件，返回规则列表"""
     if not os.path.exists(config_path):
@@ -68,9 +58,51 @@ grounder_prompt_bbox = load_prompt("grounder_bbox.md")
 decider_prompt = load_prompt("decider.md")
 decider_prompt_no_history = load_prompt("decider_nohistory.md")
 
+def history_str(history):
+    if len(history) == 0:
+        return "(No history)"
+    else:
+        return "\n".join(f"{idx}. {h}" for idx, h in enumerate(history, 1))
+
+
+def position_num_repeat(index, total_length):
+    if index == total_length - 1 or index / total_length <= 0.5:
+        return 1
+    else:
+        return 2
+    
+def augment_num_repeat(part, augment_rule, is_train):
+    return augment_rule.get(part, augment_rule.get("default", 1)) if is_train else 1
+
+def create_entries_for_one_step(num_repeat, instruction, output, image_path):
+    entry = AlpacaImageEntry(
+        instruction=instruction,
+        output=output,
+        images=[image_path]
+    )
+    return [entry] * num_repeat
+
+def resize_and_copy_image(part, img_path, data_path, out_path, factor, do_copy=False):
+    relative_path = os.path.relpath(img_path, data_path)
+    safe_filename = relative_path.replace(os.sep, "_").replace(":", "_")
+    safe_filename = f"{part}_{safe_filename}"
+    out_relpath = os.path.join(out_path, safe_filename)
+
+    # Resize image并保存在同一目录下
+    if do_copy:
+        pil_img = Image.open(img_path)
+        width, height = pil_img.size
+        new_width = int(width * factor)
+        new_height = int(height * factor)
+        resized_img = pil_img.resize((new_width, new_height), Image.LANCZOS)
+        resized_img.save(out_relpath)
+
+    out_abspath = os.path.abspath(out_relpath)
+    return out_abspath
+
 def construct_ss_data(single_step_data_path, out_path, factor=0.5, train_ratio=0.9):
     if not os.path.exists(single_step_data_path):
-        return
+        return [], [], [], []
 
     augment_config_path = os.path.join(os.path.dirname(__file__), 'augment_config.json')
     rules = load_augmentation_rules(augment_config_path)
@@ -105,18 +137,7 @@ def construct_ss_data(single_step_data_path, out_path, factor=0.5, train_ratio=0
                 augment_rule = augment_data(react, rules)
 
                 img_path = os.path.join(root, f"{i}.jpg")
-                pil_img = Image.open(img_path)
-                width, height = pil_img.size
-                new_width = int(width * factor)
-                new_height = int(height * factor)
-                resized_img = pil_img.resize((new_width, new_height), Image.LANCZOS)
-
-                relative_path = os.path.relpath(img_path, single_step_data_path)
-                safe_filename = relative_path.replace(os.sep, "_").replace(":", "_")
-                safe_filename = f"ss_{safe_filename}"
-                out_relpath = os.path.join(out_path, safe_filename)
-                resized_img.save(out_relpath)
-                out_abspath = os.path.abspath(out_relpath)
+                out_abspath = resize_and_copy_image("ss", img_path, single_step_data_path, out_path, factor, do_copy=True)
 
                 reasoning = react["reasoning"]
                 action = react["function"]["name"]
@@ -125,19 +146,19 @@ def construct_ss_data(single_step_data_path, out_path, factor=0.5, train_ratio=0
                 random_tasks = random.sample(tasks, 1)
 
                 for task in random_tasks:
-                    instruction = decider_prompt_no_history.format(task=task)
                     output_dict = dict(reasoning=reasoning, action=action, parameters=param)
                     output = json.dumps(output_dict, ensure_ascii=False)
-                    entry = AlpacaImageEntry(
-                        instruction=instruction,
+                    aug_num_repeat = augment_num_repeat("reason", augment_rule, is_train)
+                    entries = create_entries_for_one_step(
+                        num_repeat=aug_num_repeat,
+                        instruction=decider_prompt.format(task=task, history=history_str([])),
                         output=output,
-                        images=[out_abspath]
+                        image_path=out_abspath
                     )
                     if is_train:
-                        num = augment_rule.get("reason_no_history", augment_rule.get("default", 1))
-                        decider_ss_entry_train.extend([entry] * num)
+                        decider_ss_entry_train.extend(entries)
                     else:
-                        decider_ss_entry_val.append(entry)
+                        decider_ss_entry_val.extend(entries)
 
     grounder_ss_path = os.path.join(single_step_data_path, "grounder")
     if os.path.exists(grounder_ss_path):
@@ -154,19 +175,10 @@ def construct_ss_data(single_step_data_path, out_path, factor=0.5, train_ratio=0
             for i, react in enumerate(react_data, 1):
                 is_train = random.random() < train_ratio
 
-                img_path = os.path.join(root, f"{i}.jpg")
-                pil_img = Image.open(img_path)
-                width, height = pil_img.size
-                new_width = int(width * factor)
-                new_height = int(height * factor)
-                resized_img = pil_img.resize((new_width, new_height), Image.LANCZOS)
+                augment_rule = augment_data(react, rules)
 
-                relative_path = os.path.relpath(img_path, single_step_data_path)
-                safe_filename = relative_path.replace(os.sep, "_").replace(":", "_")
-                safe_filename = f"ss_{safe_filename}"
-                out_relpath = os.path.join(out_path, safe_filename)
-                resized_img.save(out_relpath)
-                out_abspath = os.path.abspath(out_relpath)
+                img_path = os.path.join(root, f"{i}.jpg")
+                out_abspath = resize_and_copy_image("ss", img_path, single_step_data_path, out_path, factor, do_copy=True)
 
                 reasoning = react["reasoning"]
                 action = react["function"]["name"]
@@ -175,69 +187,62 @@ def construct_ss_data(single_step_data_path, out_path, factor=0.5, train_ratio=0
                 # grounder训练集
                 if action == "click":
                     bbox = react["bbox"]
-                    x1, y1 ,x2 ,y2 = bbox
-                    x = (x1 + x2) // 2
-                    y = (y1 + y2) // 2
-                    coords = [int(x * factor), int(y * factor)]
-
-                    instruction = grounder_prompt.format(reasoning=reasoning, description=param["target_element"])
-                    output = json.dumps(dict(coordinates=coords))
-                    entry = AlpacaImageEntry(
-                        instruction=instruction,
-                        output=output,
-                        images=[out_abspath]
-                    )
-                    if is_train:
-                        grounder_ss_entry_train.extend([entry])
-                    else:
-                        grounder_ss_entry_val.append(entry)
-
                     bbox = [int(x * factor) for x in bbox]
-                    output = json.dumps(dict(bbox=bbox))
-                    instruction = grounder_prompt_bbox.format(reasoning=reasoning, description=param["target_element"])
-                    entry = AlpacaImageEntry(
-                        instruction=instruction,
-                        output=output,
-                        images=[out_abspath]
+                    aug_num_repeat = augment_num_repeat("grounder", augment_rule, is_train)
+                    entries = create_entries_for_one_step(
+                        num_repeat=aug_num_repeat,
+                        instruction=grounder_prompt_bbox.format(reasoning=reasoning, description=param["target_element"]),
+                        output=json.dumps(dict(bbox=bbox)),
+                        image_path=out_abspath
                     )
                     if is_train:
-                        num = augment_rule.get("grounder", augment_rule.get("default", 1))
-                        grounder_ss_entry_train.extend([entry] * num)
+                        grounder_ss_entry_train.extend(entries)
                     else:
-                        grounder_ss_entry_val.append(entry)
+                        grounder_ss_entry_val.extend(entries)
 
     return decider_ss_entry_train, decider_ss_entry_val, grounder_ss_entry_train, grounder_ss_entry_val
 
-def position_num_repeat(index, total_length):
-    if index / total_length <= 0.5:
-        return 1
-    else:
-        return 2
-    
-def augment_num_repeat(part, augment_rule, is_train):
-    return augment_rule.get(part, augment_rule.get("default", 1)) if is_train else 1
+def create_grounder_entries_for_one_trace(react_data, actions, root, data_path, out_path, factor, rules, is_train, do_copy=False):
+    grounder_entries = []
 
-def history_str(history):
-    if len(history) == 0:
-        return "(No history)"
-    else:
-        return "\n".join(f"{idx}. {h}" for idx, h in enumerate(history, 1))
+    for i, react in enumerate(react_data, 1):
+        augment_rule = augment_data(react, rules)
+        grounder_aug_num_repeat = augment_num_repeat("grounder", augment_rule, is_train)
 
-def create_entries_for_one_step(num_repeat, instruction, output, image_path):
-    entry = AlpacaImageEntry(
-        instruction=instruction,
-        output=output,
-        images=[image_path]
-    )
-    return [entry] * num_repeat
+        img_path = os.path.join(root, f"{i}.jpg")
+        out_abspath = resize_and_copy_image("main", img_path, data_path, out_path, factor, do_copy)
 
-def create_entries_for_one_task(task, react_data, actions, root, data_path, out_path, factor, rules, unexpected_img_safe_abspaths, is_train):
+        reasoning = react["reasoning"]
+        action_type = react["function"]["name"]
+        param = react["function"]["parameters"]
+
+        if action_type == "click":
+            action = actions[i - 1]
+            coords = [int(action["position_x"]* factor), int(action["position_y"]* factor)]
+            bbox = action.get("bounds", None)
+
+            grounder_entries.extend(create_entries_for_one_step(
+                num_repeat=grounder_aug_num_repeat,
+                instruction=grounder_prompt.format(reasoning=reasoning, description=param["target_element"]),
+                output=json.dumps(dict(coordinates=coords)),
+                image_path=out_abspath
+            ))
+
+            if bbox:
+                bbox = [int(x * factor) for x in bbox]
+                grounder_entries.extend(create_entries_for_one_step(
+                    num_repeat=grounder_aug_num_repeat,
+                    instruction=grounder_prompt_bbox.format(reasoning=reasoning, description=param["target_element"]),
+                    output=json.dumps(dict(bbox=bbox)),
+                    image_path=out_abspath
+                ))
+    return grounder_entries
+
+def create_decider_entries_for_one_task(task, react_data, root, data_path, out_path, factor, rules, unexpected_img_safe_abspaths, is_train, do_copy=False):
     # decider
     normal_entries = []
     no_history_entries = []
     terminate_entries = []
-    # grounder
-    grounder_entries = []
 
     history = []
     for i, react in enumerate(react_data, 1):
@@ -245,22 +250,9 @@ def create_entries_for_one_task(task, react_data, actions, root, data_path, out_
         pos_num_repeat = position_num_repeat(i, len(react_data))
         reason_aug_num_repeat = augment_num_repeat("reason", augment_rule, is_train)
         reason_no_history_aug_num_repeat = augment_num_repeat("reason_no_history", augment_rule, is_train)
-        grounder_aug_num_repeat = augment_num_repeat("grounder", augment_rule, is_train)
 
-        # Resize image并保存在同一目录下
         img_path = os.path.join(root, f"{i}.jpg")
-        pil_img = Image.open(img_path)
-        width, height = pil_img.size
-        new_width = int(width * factor)
-        new_height = int(height * factor)
-        resized_img = pil_img.resize((new_width, new_height), Image.LANCZOS)
-        
-        relative_path = os.path.relpath(img_path, data_path)
-        safe_filename = relative_path.replace(os.sep, "_").replace(":", "_")
-        safe_filename = f"main_{safe_filename}"
-        out_relpath = os.path.join(out_path, safe_filename)
-        resized_img.save(out_relpath)
-        out_abspath = os.path.abspath(out_relpath)
+        out_abspath = resize_and_copy_image("main", img_path, data_path, out_path, factor, do_copy)
 
         # 获取相关参数
         reasoning = react["reasoning"]
@@ -278,14 +270,14 @@ def create_entries_for_one_task(task, react_data, actions, root, data_path, out_
         else:
             partial_histories = [history[i:] for i in range(len(history) + 1)]
 
-        partial_histories = partial_histories[0] + random.sample(partial_histories[1:], min(2, len(partial_histories) - 1))
-        
+        partial_histories = [partial_histories[0]] + random.sample(partial_histories[1:], min(2, len(partial_histories) - 1))
+
         for partial_history in partial_histories:
             normal_entries.extend(create_entries_for_one_step(
-                pos_num_repeat * reason_aug_num_repeat, 
-                decider_prompt.format(task=task, history=history_str(partial_history)), 
-                output, 
-                out_abspath
+                num_repeat=pos_num_repeat * reason_aug_num_repeat, 
+                instruction=decider_prompt.format(task=task, history=history_str(partial_history)), 
+                output=output, 
+                image_path=out_abspath
             ))
 
         history.append(output)
@@ -316,45 +308,23 @@ def create_entries_for_one_task(task, react_data, actions, root, data_path, out_
             terminate_output = json.dumps(terminate_output_dict, ensure_ascii=False)
 
             terminate_entries.extend(create_entries_for_one_step(
-                pos_num_repeat * reason_aug_num_repeat,
-                decider_prompt.format(task=task, history=history_str(history)),
-                terminate_output,
-                random.choice(unexpected_img_safe_abspaths)
+                num_repeat=pos_num_repeat * reason_aug_num_repeat,
+                instruction=decider_prompt.format(task=task, history=history_str(history)),
+                output=terminate_output,
+                image_path=random.choice(unexpected_img_safe_abspaths)
             ))
 
         
         # 无历史action训练集 (input类型不生成no history数据)
         if action_type != "done" and action_type != "input":
             no_history_entries.extend(create_entries_for_one_step(
-                pos_num_repeat * reason_no_history_aug_num_repeat,
-                decider_prompt_no_history.format(task=task),
-                output,
-                out_abspath
+                num_repeat=pos_num_repeat * reason_no_history_aug_num_repeat,
+                instruction=decider_prompt_no_history.format(task=task),
+                output=output,
+                image_path=out_abspath
             ))
 
-        # grounder
-        if action_type == "click":
-            action = actions[i - 1]
-            coords = [int(action["position_x"]* factor), int(action["position_y"]* factor)]
-            bbox = action.get("bounds", None)
-
-            grounder_entries.extend(create_entries_for_one_step(
-                grounder_aug_num_repeat,
-                grounder_prompt.format(reasoning=reasoning, description=param["target_element"]),
-                json.dumps(dict(coordinates=coords)),
-                out_abspath
-            ))
-
-            if bbox:
-                bbox = [int(x * factor) for x in bbox]
-                grounder_entries.extend(create_entries_for_one_step(
-                    grounder_aug_num_repeat,
-                    grounder_prompt_bbox.format(reasoning=reasoning, description=param["target_element"]),
-                    json.dumps(dict(bbox=bbox)),
-                    out_abspath
-                ))
-
-    return normal_entries, no_history_entries, terminate_entries, grounder_entries
+    return normal_entries, no_history_entries, terminate_entries
 
 
 def construct_ds(data_path, single_step_data_path, unexpected_img_path, out_path, factor=0.5, train_ratio=0.9):
@@ -383,18 +353,7 @@ def construct_ds(data_path, single_step_data_path, unexpected_img_path, out_path
 
         unexpected_img_safe_abspaths = []
         for unexpected_img_path in unexpected_img_paths:
-            pil_img = Image.open(unexpected_img_path)
-            width, height = pil_img.size
-            new_width = int(width * factor)
-            new_height = int(height * factor)
-            resized_img = pil_img.resize((new_width, new_height), Image.LANCZOS)
-
-            relative_path = os.path.relpath(unexpected_img_path, unexpected_img_dir)
-            safe_filename = relative_path.replace(os.sep, "_").replace(":", "_")
-            safe_filename = f"unexpected_{safe_filename}"
-            out_relpath = os.path.join(out_path, safe_filename)
-            resized_img.save(out_relpath)
-            out_abspath = os.path.abspath(out_relpath)
+            out_abspath = resize_and_copy_image("unexpected", unexpected_img_path, unexpected_img_dir, out_path, factor, do_copy=True)
             unexpected_img_safe_abspaths.append(out_abspath)
     else:
         unexpected_img_safe_abspaths = []
@@ -436,27 +395,35 @@ def construct_ds(data_path, single_step_data_path, unexpected_img_path, out_path
 
         if not isinstance(task_description, list):
             task_description = [task_description]
-        is_train = random.random() < train_ratio
-        for task in task_description:
-            normal_entries, no_history_entries, terminate_entries, grounder_entries = create_entries_for_one_task(
-                task, react_data, actions, root, data_path, out_path, factor, rules, unexpected_img_safe_abspaths, is_train
+        
+        task_description = task_description[:1] + random.sample(task_description[1:], min(len(task_description[1:]), 3))
+
+        for i, task in enumerate(task_description):
+            is_train = random.random() < train_ratio
+            normal_entries, no_history_entries, terminate_entries = create_decider_entries_for_one_task(
+                task, react_data, root, data_path, out_path, factor, rules, unexpected_img_safe_abspaths, is_train, do_copy=(i == 0)
             )
             if is_train:
                 reason_entries_train.extend(normal_entries)
                 reason_no_history_entries_train.extend(no_history_entries)
                 terminate_entries_train.extend(terminate_entries)
-                grounder_entries_train.extend(grounder_entries)
             else:
                 reason_entries_val.extend(normal_entries)
                 reason_no_history_entries_val.extend(no_history_entries)
                 terminate_entries_val.extend(terminate_entries)
-                grounder_entries_val.extend(grounder_entries)
+
+        is_train = random.random() < train_ratio
+        grounder_entries = create_grounder_entries_for_one_trace(react_data, actions, root, data_path, out_path, factor, rules, is_train, do_copy=False)
+        if is_train:
+            grounder_entries_train.extend(grounder_entries)
+        else:
+            grounder_entries_val.extend(grounder_entries)
 
     decider_ss_entry_train, decider_ss_entry_val, grounder_ss_entry_train, grounder_ss_entry_val = construct_ss_data(single_step_data_path, out_path, factor, train_ratio)
 
     # 合并训练集数据
-    terminate_entries_train = random.sample(terminate_entries_train, len(terminate_entries_train) // 5)
-    terminate_entries_val = random.sample(terminate_entries_val, len(terminate_entries_val) // 5)
+    terminate_entries_train = random.sample(terminate_entries_train, len(terminate_entries_train) // 10)
+    terminate_entries_val = random.sample(terminate_entries_val, len(terminate_entries_val) // 10)
 
     print(f"reason_entries_train: {len(reason_entries_train)}")
     print(f"reason_entries_no_history_train: {len(reason_no_history_entries_train)}")
@@ -514,15 +481,15 @@ def construct_ds(data_path, single_step_data_path, unexpected_img_path, out_path
     # random.shuffle(grounder_entries_val_dict)
 
     # 保存训练集
-    with open(os.path.join(out_path, f"general_decider_train.json"), "w", encoding="UTF-8") as f:
+    with open(os.path.join(out_path, f"mobimind_decider_train.json"), "w", encoding="UTF-8") as f:
         json.dump(decider_entries_train, f, ensure_ascii=False)
-    with open(os.path.join(out_path, f"general_grounder_train.json"), "w", encoding="UTF-8") as f:
+    with open(os.path.join(out_path, f"mobimind_grounder_train.json"), "w", encoding="UTF-8") as f:
         json.dump(grounder_entries_train, f, ensure_ascii=False)
     
     # 保存验证集
-    with open(os.path.join(out_path, f"general_decider_val.json"), "w", encoding="UTF-8") as f:
+    with open(os.path.join(out_path, f"mobimind_decider_val.json"), "w", encoding="UTF-8") as f:
         json.dump(decider_entries_val, f, ensure_ascii=False)
-    with open(os.path.join(out_path, f"general_grounder_val.json"), "w", encoding="UTF-8") as f:
+    with open(os.path.join(out_path, f"mobimind_grounder_val.json"), "w", encoding="UTF-8") as f:
         json.dump(grounder_entries_val_dict, f, ensure_ascii=False)
 
     with open(os.path.join(out_path, f"metadata.json"), "w", encoding="UTF-8") as f:

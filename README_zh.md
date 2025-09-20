@@ -18,6 +18,8 @@ MobiAgent: A Systematic Framework for Customizable Mobile Agents
 
 ---
 
+![Service Status](https://img.shields.io/github/actions/workflow/status/IPADS-SAI/MobiAgent/main.yml?label=service%20status)
+
 ## 简介
 
 **MobiAgent**是一个强大的、可定制的移动端智能体系统，包含：

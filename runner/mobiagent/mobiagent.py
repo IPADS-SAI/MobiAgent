@@ -17,7 +17,7 @@ import numpy as np
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-MAX_STEPS = 30
+MAX_STEPS = 35
 
 class Device(ABC):
     @abstractmethod
@@ -157,6 +157,33 @@ Target element's description: {description}
 Your output should be a JSON object with the following format:
 {{"bbox": [x1, y1, x2, y2]}}'''
 
+decider_prompt_template_zh = """
+你是一个手机使用AI代理。现在你的任务是“{task}”。
+你的操作历史如下：
+{history}
+请根据截图和你的操作历史提供下一步操作。在提供操作之前，你需要进行仔细的推理。
+你的操作范围包括：
+- 名称：点击（click），参数：目标元素（target_element，对要点击的UI元素的高级描述）。
+- 名称：滑动（swipe），参数：方向（direction，UP、DOWN、LEFT、RIGHT中的一个）。
+- 名称：输入（input），参数：文本（text，要输入的文本）。
+- 名称：等待（wait），参数：（无参数，将等待1秒）。
+- 名称：完成（done），参数：（无参数）。
+你的输出应该是一个如下格式的JSON对象：
+{{"reasoning": "你的推理分析过程在此", "action": "下一步操作（click、input、swipe、done中的一个）", "parameters": {{"param1": "value1", ...}}}}"""
+
+grounder_prompt_template_no_bbox_zh = """
+根据截图、用户意图和目标UI元素的描述，使用**绝对坐标**提供该元素的坐标。
+用户意图：{reasoning}
+目标元素描述：{description}
+你的输出应该是一个如下格式的JSON对象：
+{{"coordinates": [x, y]}}"""
+
+grounder_prompt_template_bbox_zh = """"
+根据截图、用户意图和目标UI元素的描述，使用**绝对坐标**提供该元素的边界框。
+用户意图：{reasoning}
+目标元素描述：{description}
+你的输出应该是一个如下格式的JSON对象：
+{{"bbox": [x1, y1, x2, y2]}}"""
 
 screenshot_path = "screenshot.jpg"
 factor = 0.5
@@ -242,7 +269,7 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True):
 
         screenshot = get_screenshot(device)
 
-        decider_prompt = decider_prompt_template.format(
+        decider_prompt = decider_prompt_template_zh.format(
             task=task,
             history=history_str
         )

@@ -148,10 +148,10 @@ def construct_ss_data(single_step_data_path, out_path, factor=0.5, train_ratio=0
                 for task in random_tasks:
                     output_dict = dict(reasoning=reasoning, action=action, parameters=param)
                     output = json.dumps(output_dict, ensure_ascii=False)
-                    aug_num_repeat = augment_num_repeat("reason", augment_rule, is_train)
+                    aug_num_repeat = augment_num_repeat("decider_no_history", augment_rule, is_train)
                     entries = create_entries_for_one_step(
                         num_repeat=aug_num_repeat,
-                        instruction=decider_prompt.format(task=task, history=history_str([])),
+                        instruction=decider_prompt_no_history.format(task=task),
                         output=output,
                         image_path=out_abspath
                     )
@@ -248,8 +248,8 @@ def create_decider_entries_for_one_task(task, react_data, root, data_path, out_p
     for i, react in enumerate(react_data, 1):
         augment_rule = augment_data(react, rules)
         pos_num_repeat = position_num_repeat(i, len(react_data))
-        reason_aug_num_repeat = augment_num_repeat("reason", augment_rule, is_train)
-        reason_no_history_aug_num_repeat = augment_num_repeat("reason_no_history", augment_rule, is_train)
+        reason_aug_num_repeat = augment_num_repeat("decider", augment_rule, is_train)
+        reason_no_history_aug_num_repeat = augment_num_repeat("decider_no_history", augment_rule, is_train)
 
         img_path = os.path.join(root, f"{i}.jpg")
         out_abspath = resize_and_copy_image("main", img_path, data_path, out_path, factor, do_copy)
@@ -331,15 +331,15 @@ def construct_ds(data_path, single_step_data_path, unexpected_img_path, out_path
     os.makedirs(out_path, exist_ok=True)
     
     # 训练集
-    reason_entries_train = []
+    decider_entries_train = []
     terminate_entries_train = []
-    reason_no_history_entries_train = []
+    decider_no_history_entries_train = []
     grounder_entries_train = []
     
     # 验证集
-    reason_entries_val = []
+    decider_entries_val = []
     terminate_entries_val = []
-    reason_no_history_entries_val = []
+    decider_no_history_entries_val = []
     grounder_entries_val = []
 
     augment_config_path = os.path.join(os.path.dirname(__file__), 'augment_config.json')
@@ -396,23 +396,33 @@ def construct_ds(data_path, single_step_data_path, unexpected_img_path, out_path
         if not isinstance(task_description, list):
             task_description = [task_description]
         
-        task_description = task_description[:1] + random.sample(task_description[1:], min(len(task_description[1:]), 3))
+        # 第一个任务：原始描述
+        # 后三个任务：去除标点
+        # 中间：泛化任务
+        tasks = [task_description[0]]
+        if len(task_description) >= 4:
+            tasks += random.sample(task_description[-3:], 1)
+        if len(task_description) > 4:
+            tasks += random.sample(task_description[1:-3], 1)
 
-        for i, task in enumerate(task_description):
-            is_train = random.random() < train_ratio
+        is_train = random.random() < train_ratio
+        for i, task in enumerate(tasks):
             normal_entries, no_history_entries, terminate_entries = create_decider_entries_for_one_task(
                 task, react_data, root, data_path, out_path, factor, rules, unexpected_img_safe_abspaths, is_train, do_copy=(i == 0)
             )
+            if i != 0:
+                normal_entries = random.sample(normal_entries, len(normal_entries) * 3 // 4 )
+                no_history_entries = random.sample(no_history_entries, len(no_history_entries) * 3 // 4)
+                terminate_entries = random.sample(terminate_entries, len(terminate_entries) * 3 // 4)
             if is_train:
-                reason_entries_train.extend(normal_entries)
-                reason_no_history_entries_train.extend(no_history_entries)
+                decider_entries_train.extend(normal_entries)
+                decider_no_history_entries_train.extend(no_history_entries)
                 terminate_entries_train.extend(terminate_entries)
             else:
-                reason_entries_val.extend(normal_entries)
-                reason_no_history_entries_val.extend(no_history_entries)
+                decider_entries_val.extend(normal_entries)
+                decider_no_history_entries_val.extend(no_history_entries)
                 terminate_entries_val.extend(terminate_entries)
 
-        is_train = random.random() < train_ratio
         grounder_entries = create_grounder_entries_for_one_trace(react_data, actions, root, data_path, out_path, factor, rules, is_train, do_copy=False)
         if is_train:
             grounder_entries_train.extend(grounder_entries)
@@ -425,25 +435,25 @@ def construct_ds(data_path, single_step_data_path, unexpected_img_path, out_path
     terminate_entries_train = random.sample(terminate_entries_train, len(terminate_entries_train) // 10)
     terminate_entries_val = random.sample(terminate_entries_val, len(terminate_entries_val) // 10)
 
-    print(f"reason_entries_train: {len(reason_entries_train)}")
-    print(f"reason_entries_no_history_train: {len(reason_no_history_entries_train)}")
+    print(f"decider_entries_train: {len(decider_entries_train)}")
+    print(f"decider_no_history_entries_train: {len(decider_no_history_entries_train)}")
     print(f"terminate_entries_train: {len(terminate_entries_train)}")
     print(f"grounder_entries_train: {len(grounder_entries_train)}")
     print(f"decider_ss_entry_train: {len(decider_ss_entry_train)}")
     print(f"grounder_ss_entry_train: {len(grounder_ss_entry_train)}")
-    print(f"\n")
+    print()
 
     data = {
-        "reason_entries_train": len(reason_entries_train),
-        "reason_entries_no_history_train": len(reason_no_history_entries_train),
+        "decider_entries_train": len(decider_entries_train),
+        "decider_no_history_entries_train": len(decider_no_history_entries_train),
         "terminate_entries_train": len(terminate_entries_train),
         "grounder_entries_train": len(grounder_entries_train),
         "decider_ss_entry_train": len(decider_ss_entry_train),
         "grounder_ss_entry_train": len(grounder_ss_entry_train)
     }
 
-    decider_entries_train = [asdict(entry) for entry in reason_entries_train]
-    decider_entries_train.extend([asdict(entry) for entry in reason_no_history_entries_train])
+    decider_entries_train = [asdict(entry) for entry in decider_entries_train]
+    decider_entries_train.extend([asdict(entry) for entry in decider_no_history_entries_train])
     decider_entries_train.extend([asdict(entry) for entry in terminate_entries_train])
     decider_entries_train.extend([asdict(entry) for entry in decider_ss_entry_train])
     # random.shuffle(decider_entries_train)
@@ -453,8 +463,8 @@ def construct_ds(data_path, single_step_data_path, unexpected_img_path, out_path
     # random.shuffle(grounder_entries_train)
     
     # 合并验证集数据
-    print(f"reason_entries_val: {len(reason_entries_val)}")
-    print(f"reason_entries_no_history_val: {len(reason_no_history_entries_val)}")
+    print(f"decider_entries_val: {len(decider_entries_val)}")
+    print(f"decider_no_history_entries_val: {len(decider_no_history_entries_val)}")
     print(f"terminate_entries_val: {len(terminate_entries_val)}")
     print(f"grounder_entries_val: {len(grounder_entries_val)}")
     print(f"decider_ss_entry_val: {len(decider_ss_entry_val)}")
@@ -462,16 +472,16 @@ def construct_ds(data_path, single_step_data_path, unexpected_img_path, out_path
 
     # 添加验证集统计信息到data字典
     data.update({
-        "reason_entries_val": len(reason_entries_val),
-        "reason_entries_no_history_val": len(reason_no_history_entries_val),
+        "decider_entries_val": len(decider_entries_val),
+        "decider_no_history_entries_val": len(decider_no_history_entries_val),
         "terminate_entries_val": len(terminate_entries_val),
         "grounder_entries_val": len(grounder_entries_val),
         "decider_ss_entry_val": len(decider_ss_entry_val),
         "grounder_ss_entry_val": len(grounder_ss_entry_val)
     })
 
-    decider_entries_val = [asdict(entry) for entry in reason_entries_val]
-    decider_entries_val.extend([asdict(entry) for entry in reason_no_history_entries_val])
+    decider_entries_val = [asdict(entry) for entry in decider_entries_val]
+    decider_entries_val.extend([asdict(entry) for entry in decider_no_history_entries_val])
     decider_entries_val.extend([asdict(entry) for entry in terminate_entries_val])
     decider_entries_val.extend([asdict(entry) for entry in decider_ss_entry_val])
     # random.shuffle(decider_entries_val)

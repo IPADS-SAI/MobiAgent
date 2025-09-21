@@ -303,7 +303,7 @@ The training dataset construction supports data augmentation based on predefined
 
 * `dir`: the JSON field path to match
 * `pattern`: the field value to match (use regex)
-* `multiplier`: the augmentation multiplier, `reason`, `reason_no_history`, `grounder` represent the corresponding dataset's augmentation factor, `default` represents the default augmentation factor (when a dataset's augmentation factor is not specified).
+* `multiplier`: the augmentation multiplier, `decider`, `decider_no_history`, `grounder` represent the corresponding dataset's augmentation factor, `default` represents the default augmentation factor (when a dataset's augmentation factor is not specified).
 
 Example:
 
@@ -317,8 +317,8 @@ Example:
     ],
     "pattern": "swipe",
     "multiplier": {
-        "reason": 5,
-        "reason_no_history": 5,
+        "decider": 5,
+        "decider_no_history": 5,
         "grounder": 1,
         "default": 1
     }

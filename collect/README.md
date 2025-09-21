@@ -334,7 +334,7 @@ ss_data/
 
 * `dir`：匹配目标的json字段路径
 * `pattern`：匹配目标的字段值（可用正则表达式匹配）
-* `multiplier`：扩增倍数，`reason`、`reason_no_history`、`grounder` 分别代表在对应数据集中扩增的倍数，`default` 代表默认扩增倍数（当某个数据集未指定时，使用该值）。
+* `multiplier`：扩增倍数，`decider`、`decider_no_history`、`grounder` 分别代表在对应数据集中扩增的倍数，`default` 代表默认扩增倍数（当某个数据集未指定时，使用该值）。
 
 示例：
 
@@ -348,8 +348,8 @@ ss_data/
     ],
     "pattern": "swipe",
     "multiplier": {
-        "reason": 5,
-        "reason_no_history": 5,
+        "decider": 5,
+        "decider_no_history": 5,
         "grounder": 1,
         "default": 1
     }

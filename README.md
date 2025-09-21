@@ -172,3 +172,6 @@ If you find MobiAgent useful in your research, please feel free to cite our [pap
 ## Acknowledgements
 We gratefully acknowledge the open-source projects like MobileAgent, UI-TARS, and Qwen-VL, etc. We also thank the National Innovation Institute of High-end Smart Appliances for their support of this project.
 
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=IPADS-SAI/MobiAgent&type=Date)](https://www.star-history.com/#IPADS-SAI/MobiAgent&Date)

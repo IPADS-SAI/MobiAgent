@@ -483,10 +483,53 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True):
 
 from utils.load_md_prompt import load_prompt
 app_selection_prompt_template = load_prompt("planner.md")
+fill_prompt_template = load_prompt("planner_fill.md")
+
+TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), 'template', 'settings')
+
+def list_task_templates():
+    templates = []
+    if os.path.isdir(TEMPLATE_DIR):
+        for fname in os.listdir(TEMPLATE_DIR):
+            if fname.endswith('.md'):
+                path = os.path.join(TEMPLATE_DIR, fname)
+                # 简单读取前两行作为描述（去掉Markdown标题符号）
+                try:
+                    with open(path, 'r', encoding='utf-8') as f:
+                        lines = [l.strip() for l in f.readlines() if l.strip()]
+                    if lines:
+                        # 找第一行非空行
+                        first_line = lines[0].lstrip('# ').strip()
+                    else:
+                        first_line = '无描述'
+                except Exception:
+                    first_line = '读取失败'
+                templates.append({
+                    'file': fname,
+                    'path': path,
+                    'desc': first_line[:60]
+                })
+    # print(templates)
+    return templates
+
+def build_template_list_text():
+    items = []
+    for t in list_task_templates():
+        items.append(f"- {t['file']}: {t['desc']}")
+    if not items:
+        return "(当前无可用模板)"
+    return '\n'.join(items)
 
 def get_app_package_name(task_description):
-    """根据任务描述获取需要启动的app包名和改写后的任务描述"""
-    app_selection_prompt = app_selection_prompt_template.format(task_description=task_description)
+    """双阶段：阶段1选择APP与模板；阶段2若有模板则填充最终描述。"""
+    # 阶段1
+    template_list_text = build_template_list_text()
+    print(template_list_text)
+    app_selection_prompt = app_selection_prompt_template.format(
+        task_description=task_description,
+        task_templates=template_list_text
+    )
+    # print(app_selection_prompt)
     while True:
         response_str = planner_client.chat.completions.create(
             model="",
@@ -499,20 +542,52 @@ def get_app_package_name(task_description):
                 }
             ]
         ).choices[0].message.content
-
-        logging.info(f"应用选择响应: \n{response_str}")
-        
+        logging.info(f"阶段1 应用/模板选择响应: \n{response_str}")
         pattern = re.compile(r"```json\n(.*)\n```", re.DOTALL)
         match = pattern.search(response_str)
         if match:
             break
-        
-    response = json.loads(match.group(1))
-    app_name = response.get("app_name")
-    package_name = response.get("package_name")
-    new_task_description = response.get("task_description", task_description)  # 如果没有新描述，使用原描述
-        
-    return app_name, package_name, new_task_description
+    stage1 = json.loads(match.group(1))
+    app_name = stage1.get("app_name")
+    package_name = stage1.get("package_name")
+    optimized_desc = stage1.get("task_description", task_description)
+    template_name = stage1.get("template_name")
+
+    # 若无模板 直接返回
+    if not template_name:
+        return app_name, package_name, optimized_desc, None
+
+    # 阶段2 模板填充
+    template_path = os.path.join(TEMPLATE_DIR, template_name)
+    if not os.path.exists(template_path):
+        logging.warning(f"模板 {template_name} 不存在，跳过填充。")
+        return app_name, package_name, optimized_desc, template_name
+    with open(template_path, 'r', encoding='utf-8') as f:
+        template_content = f.read()
+    fill_prompt = fill_prompt_template.format(
+        original_task_description=task_description,
+        optimized_task_description=optimized_desc,
+        app_name=app_name,
+        package_name=package_name,
+        template_name=template_name,
+        template_content=template_content
+    )
+    # print(fill_prompt)
+    while True:
+        fill_resp_str = planner_client.chat.completions.create(
+            model="",
+            messages=[
+                {"role": "user", "content": [{"type": "text", "text": fill_prompt}]}
+            ]
+        ).choices[0].message.content
+        logging.info(f"阶段2 模板填充响应: \n{fill_resp_str}")
+        pattern2 = re.compile(r"```json\n(.*)\n```", re.DOTALL)
+        match2 = pattern2.search(fill_resp_str)
+        if match2:
+            break
+    stage2 = json.loads(match2.group(1))
+    final_desc = stage2.get("final_task_description", optimized_desc)
+    return app_name, package_name, final_desc, template_name
 
 # for testing purposes
 if __name__ == "__main__":
@@ -552,8 +627,7 @@ if __name__ == "__main__":
         os.makedirs(data_dir)
 
         task_description = task
-        app_name, package_name, new_task_description = get_app_package_name(task_description)
-
+        app_name, package_name, new_task_description, template_name = get_app_package_name(task_description)
         device.app_start(package_name)
-        print(f"Starting task '{new_task_description}' in app '{app_name}'")
+        print(f"Starting task '{new_task_description}' in app '{app_name}' (模板: {template_name})")
         task_in_app(app_name, task_description, new_task_description, device, data_dir, True)

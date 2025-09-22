@@ -485,7 +485,7 @@ from utils.load_md_prompt import load_prompt
 app_selection_prompt_template = load_prompt("planner.md")
 fill_prompt_template = load_prompt("planner_fill.md")
 
-TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), 'template', 'settings')
+TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), 'experience', 'store')
 
 def list_task_templates():
     templates = []

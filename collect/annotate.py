@@ -190,7 +190,7 @@ def visual_prompt(root, actions):
             file_path = os.path.join(root, file_name)
             os.remove(file_path)
 
-    jpg_files = [f for f in os.listdir(root) if f.endswith('.jpg')]
+    jpg_files = [f for f in os.listdir(root) if f.endswith('.jpg') and f.replace('.jpg', '').isdigit()]
 
     if actions[-1]["type"] == "done":
         if(len(jpg_files)!= len(actions)):
@@ -340,7 +340,7 @@ if __name__ == "__main__":
     )
 
     from utils.load_md_prompt import load_prompt
-    sys_prompt = load_prompt("annotation_en_general.md")
+    sys_prompt = load_prompt("annotation_zh_general.md")
 
     prompt = ChatPromptTemplate.from_messages(
         [
@@ -385,9 +385,11 @@ if __name__ == "__main__":
 
             app_name = data.get("app_name")
             if(isinstance(task_description, str)):
-                new_tasks = change_task_description(app_name, task_description)
-                all_tasks = [task_description] + new_tasks
-                data["task_description"] = all_tasks
+                # new_tasks = change_task_description(app_name, task_description)
+                new_tasks = task_description
+                data["task_description"] = new_tasks  # 不修改任务描述
+                # all_tasks = [task_description] + new_tasks
+                # data["task_description"] = all_tasks
 
                 with open(actions_json, 'w', encoding='utf-8') as file:
                     json.dump(data, file, ensure_ascii=False, indent=4)

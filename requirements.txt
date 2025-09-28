@@ -37,3 +37,6 @@ uvicorn
 matplotlib
 requests
 ui-tars
+
+llama-index
+llama-index-embeddings-huggingface

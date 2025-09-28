@@ -74,7 +74,7 @@ The functions that the ReAct agent can call are as follows:
     }},
     {{
         "name": "done",
-        "description": "Indicate that the assigned task has been successfully completed",
+        "description": "Indicate that the designated task has been successfully completed. Briefly summarize the core points of the completed task and briefly explain whether the completion/end conditions have been met.",
         "parameters": {{}}
     }},
     {{

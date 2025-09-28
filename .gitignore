@@ -9,3 +9,9 @@ data/
 data_log/
 weights/
 utils/experience/BAAI/
+utils/experience/all-MiniLM-L6-v2/
+runner/mobiagent/data-*
+runner/HarmonyOS-mobiagent/
+vectordb/all-MiniLM-L6-v2/
+RAG/
+utils/experience/BAAI/

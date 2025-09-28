@@ -73,9 +73,17 @@ The functions that the ReAct agent can call are as follows:
         }}
     }},
     {{
-        "name": "done",
-        "description": "Indicate that the designated task has been successfully completed. Briefly summarize the core points of the completed task and briefly explain whether the completion/end conditions have been met.",
-        "parameters": {{}}
+    "name": "done",
+    "description": "Indicate that the designated task has been successfully completed and that all requirements of the task have been met.",
+    "parameters": {{
+        "description": "A short description of the task template name, summarizing the task objective in one sentence and categorizing it into a general task type.",
+        "full_experience": "The task template content, listing step-by-step key operations for this type of task while ignoring irrelevant extra actions. Abstract the process into a reusable operation template (so that future tasks of the same type in the same app can directly reference it). All task-specific contents (such as items, locations, brands, cities, etc.) must be replaced with type placeholders {{item, location, brand, city, etc.}}."
+        }},
+        "keywords": [
+            "keyword1 for this type of task",
+            "keyword2 for this type of task",
+            "keyword3 for this type of task"
+        ]
     }},
     {{
         "name": "long_press",

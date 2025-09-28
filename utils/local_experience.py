@@ -52,7 +52,7 @@ class PromptTemplateSearch:
         ]
         model_path = current_dir / "experience" / "BAAI" / "bge-small-zh"
         print("Using embedding model path:", model_path)
-        embed_model = HuggingFaceEmbedding(model_name= "/Users/zhaoxi/Documents/ipads/LlmAgent/MobiAgent/utils/experience/BAAI/bge-small-zh")
+        embed_model = HuggingFaceEmbedding(model_name= "BAAI/bge-small-zh")
         self.index = VectorStoreIndex.from_documents(documents, embed_model=embed_model)
 
     def query(self, task_description, top_k=1):

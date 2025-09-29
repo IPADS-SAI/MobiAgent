@@ -15,6 +15,7 @@ import textwrap
 import cv2
 import numpy as np
 from utils.local_experience import PromptTemplateSearch 
+from pathlib import Path
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -489,11 +490,17 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True):
 from utils.load_md_prompt import load_prompt
 planner_prompt_template = load_prompt("planner_oneshot.md")
 
+current_file_path = Path(__file__).resolve()
+current_dir = current_file_path.parent
+default_template_path = current_dir.parent.parent / "utils" /"experience" / "templates-new.json"
+
 def get_app_package_name(task_description):
     """单阶段：本地检索经验，调用模型完成应用选择和任务描述生成。"""
     # 本地检索经验
-    search_engine = PromptTemplateSearch()
-    experience_content = search_engine.get_experience(task_description, 1)
+    search_engine = PromptTemplateSearch(default_template_path)
+    print("Using template path:", default_template_path)
+    experience_content = search_engine.get_experience(task_description, default_template_path, 1)
+    # experience_content = ""
     print(f"检索到的相关经验:\n{experience_content}")
 
     # 构建Prompt

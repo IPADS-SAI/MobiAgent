@@ -221,6 +221,8 @@ def visual_prompt(root, actions):
             text = f"LONG PRESS [{int(action['position_x'])}, {int(action['position_y'])}]"
         elif action["type"] == "open_app":
             text = f"OPEN APP {action['app_name']}"
+        elif action["type"] == "wait":
+            text = f"WAIT 1 s"
         else:
             raise Exception(f"[Visual Prompt] Unknown action type: {action['type']}")
         
@@ -350,8 +352,10 @@ def auto_annotate(root, chain, task_description, actions):
                 if match is None:
                     print(f"[Reasoning] Batch {batch_index + 1}, Attempt {attempt + 1} failed, no JSON found in response.")
                     continue
-
-
+                
+                # 在match中增加一个索引字段react_index，从1开始
+                for i, item in enumerate(match):
+                    item['react_index'] = i + 1 + batch_index * max_images_per_request
                 all_data.extend(match)  # 合并当前批次的结果
                 break
 
@@ -365,7 +369,7 @@ def auto_annotate(root, chain, task_description, actions):
 
     temp_json_path = os.path.join(root, "temp.json")
     with open(temp_json_path, "w", encoding="UTF-8") as temp_file:
-        json.dump(match, temp_file, ensure_ascii=False, indent=4)
+        json.dump(all_data, temp_file, ensure_ascii=False, indent=4)
     print(f"[Debug] Saved temp JSON to {temp_json_path}")
     
     compare_actions(actions, all_data)
@@ -437,11 +441,11 @@ if __name__ == "__main__":
 
             app_name = data.get("app_name")
             if(isinstance(task_description, str)):
-                # new_tasks = change_task_description(app_name, task_description)
-                new_tasks = task_description
+                new_tasks = change_task_description(app_name, task_description)
+                # new_tasks = task_description
                 data["task_description"] = new_tasks  # 不修改任务描述
-                # all_tasks = [task_description] + new_tasks
-                # data["task_description"] = all_tasks
+                all_tasks = [task_description] + new_tasks
+                data["task_description"] = all_tasks
 
                 with open(actions_json, 'w', encoding='utf-8') as file:
                     json.dump(data, file, ensure_ascii=False, indent=4)

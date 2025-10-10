@@ -119,6 +119,9 @@ decider_client = None
 grounder_client = None
 planner_client = None
 
+planner_model = ""
+decider_model = ""
+grounder_model = ""
 def init(service_ip, decider_port, grounder_port, planner_port):
     global decider_client, grounder_client, planner_client, general_client, general_model, apps
     decider_client = OpenAI(
@@ -299,7 +302,26 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True):
 
         logging.info(f"Decider response: \n{decider_response_str}")
 
-        decider_response = json.loads(decider_response_str)
+        # 预处理 decider_response_str，增强健壮性
+        def robust_json_loads(s):
+            import re
+            s = s.strip()
+            # 提取 ```json ... ``` 代码块
+            codeblock = re.search(r"```json(.*?)```", s, re.DOTALL)
+            if codeblock:
+                s = codeblock.group(1).strip()
+            # 替换中文省略号为英文 ...
+            s = s.replace("…", "...")
+            # 去除多余换行
+            s = s.replace("\r", "").replace("\n", " ")
+            # 尝试解析
+            try:
+                return json.loads(s)
+            except Exception as e:
+                logging.error(f"解析 decider_response_str 失败: {e}\n原始内容: {s}")
+                raise
+
+        decider_response = robust_json_loads(decider_response_str)
         converted_item = {
             "reasoning": decider_response["reasoning"],
             "function": {
@@ -497,10 +519,30 @@ current_file_path = Path(__file__).resolve()
 current_dir = current_file_path.parent
 default_template_path = current_dir.parent.parent / "utils" /"experience" / "templates-new.json"
 
+def parse_planner_response(response_str: str):
+
+    # 尝试匹配 ```json ... ``` 代码块
+    pattern = re.compile(r"```json\s*(.*?)\s*```", re.DOTALL)
+    match = pattern.search(response_str)
+
+    json_str = None
+    if match:
+        json_str = match.group(1)
+    else:
+        # 如果没有代码块，直接当成 JSON
+        json_str = response_str.strip()
+
+    try:
+        data = json.loads(json_str)
+        return data
+    except json.JSONDecodeError as e:
+        logging.error(f"解析 JSON 失败: {e}\n内容为:\n{json_str}")
+        return None
+
 def get_app_package_name(task_description):
     """单阶段：本地检索经验，调用模型完成应用选择和任务描述生成。"""
     # 本地检索经验
-    search_engine = PromptTemplateSearch(default_template_path)
+    search_engine = PromptTemplateSearch()
     print("Using template path:", default_template_path)
     experience_content = search_engine.get_experience(task_description, default_template_path, 1)
     print(f"检索到的相关经验:\n{experience_content}")
@@ -512,24 +554,22 @@ def get_app_package_name(task_description):
     )
     
     # 调用模型
-    while True:
-        response_str = planner_client.chat.completions.create(
-            model = planner_model,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [{"type": "text", "text": prompt}],
-                }
-            ]
-        ).choices[0].message.content
-        logging.info(f"Planner 响应: \n{response_str}")
-        
-        pattern = re.compile(r"```json\n(.*)\n```", re.DOTALL)
-        match = pattern.search(response_str)
-        if match:
-            break
-            
-    response_json = json.loads(match.group(1))
+    # while True:
+    response_str = planner_client.chat.completions.create(
+        model = planner_model,
+        messages=[
+            {
+                "role": "user",
+                "content": [{"type": "text", "text": prompt}],
+            }
+        ]
+    ).choices[0].message.content
+    logging.info(f"Planner 响应: \n{response_str}")
+    
+    response_json = parse_planner_response(response_str)
+    if response_json is None:
+        raise ValueError("无法解析模型响应为 JSON。")
+
     app_name = response_json.get("app_name")
     package_name = response_json.get("package_name")
     final_desc = response_json.get("final_task_description", task_description)

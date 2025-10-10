@@ -13,9 +13,16 @@ import shutil
 import base64
 import re
 from datetime import datetime
+from pathlib import Path
 from openai import OpenAI
 from ui_tars_automation import UITarsAutomationFramework, ExecutionConfig
 from ui_tars_automation.action_parser import ActionParser
+
+# 添加必要的导入用于experience检索和任务描述改写
+import sys
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
+from utils.local_experience import PromptTemplateSearch 
+from utils.load_md_prompt import load_prompt
 
 # 配置日志
 logging.basicConfig(
@@ -28,6 +35,9 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+
+API_KEY = ""  # 如果需要，可以在这里设置API Key
+BASE_URL = "http://ipads.chat.gpt:3006/v1"  # 应用选择模型服务地址
 
 class BatchTaskExecutor:
     """批量任务执行器"""
@@ -42,11 +52,19 @@ class BatchTaskExecutor:
         self.model_url = model_url
         self.data_base_dir = data_base_dir
         
+        # 设置默认的模板路径（参考mobiagent）
+        current_file_path = Path(__file__).resolve()
+        current_dir = current_file_path.parent
+        self.default_template_path = current_dir.parent.parent / "utils" / "experience" / "templates-new.json"
+        
+        # 加载planner prompt模板
+        self.planner_prompt_template = load_prompt("planner_oneshot.md")
+        
         # 初始化模型客户端用于智能应用选择（使用专门的模型）
         try:
             self.app_selection_client = OpenAI(
-                api_key="sk-rfCIGhxrzcdsMV4jC17e406bE56c47CbA5416068A62318D3",
-                base_url="http://ipads.chat.gpt:3006/v1"
+                api_key = API_KEY,
+                base_url = BASE_URL
             )
             self.app_selection_model = "gemini-2.5-pro-preview-06-05"
             logger.info(f"已连接到应用选择模型服务: http://ipads.chat.gpt:3006/v1")
@@ -112,73 +130,58 @@ class BatchTaskExecutor:
                 logger.error(f"原始响应: {response_str}")
                 raise ValueError(f"无法解析JSON响应: {e}")
     
+    def parse_planner_response(self, response_str: str) -> dict:
+        """解析planner的响应JSON（参考mobiagent）
+        
+        Args:
+            response_str: 模型返回的响应字符串
+            
+        Returns:
+            解析后的JSON对象
+        """
+        # 尝试匹配 ```json ... ``` 代码块
+        pattern = re.compile(r"```json\s*(.*?)\s*```", re.DOTALL)
+        match = pattern.search(response_str)
 
-    def get_app_package_name_by_ai(self, task_description: str) -> str:
-        """使用AI根据任务描述获取应用包名
+        json_str = None
+        if match:
+            json_str = match.group(1)
+        else:
+            # 如果没有代码块，直接当成 JSON
+            json_str = response_str.strip()
+
+        try:
+            data = json.loads(json_str)
+            return data
+        except json.JSONDecodeError as e:
+            logger.error(f"解析 planner JSON 失败: {e}\n内容为:\n{json_str}")
+            return None
+    
+
+    def get_app_package_name_by_ai(self, task_description: str) -> tuple:
+        """使用AI结合经验检索和任务描述改写，获取应用包名和最终任务描述（参考mobiagent）
         
         Args:
             task_description: 任务描述
             
         Returns:
-            应用包名
+            (package_name, final_task_description) 元组
         """
         if not self.app_selection_client:
             logger.error("应用选择模型客户端未初始化")
-            return None
+            return None, task_description
         
-        # 从open_app.py复制的提示模板
-        app_selection_prompt_template = """
-## 角色定义
-你是一个智能手机应用选择助手，需要根据用户的任务描述选择最合适的应用。
+        # 本地检索经验（参考mobiagent逻辑）
+        search_engine = PromptTemplateSearch()
+        logger.info(f"Using template path: {self.default_template_path}")
+        experience_content = search_engine.get_experience(task_description, self.default_template_path, 1)
+        logger.info(f"检索到的相关经验:\n{experience_content}")
 
-## 任务描述
-用户想要完成的任务是："{task_description}"
-
-## 可用应用列表
-以下是可用的应用及其包名：
-- 微信: com.tencent.mm
-- QQ: com.tencent.mobileqq
-- 新浪微博: com.sina.weibo
-- 饿了么: me.ele
-- 美团: com.sankuai.meituan
-- bilibili: tv.danmaku.bili
-- 爱奇艺: com.qiyi.video
-- 腾讯视频: com.tencent.qqlive
-- 优酷: com.youku.phone
-- 淘宝: com.taobao.taobao
-- 京东: com.jingdong.app.mall
-- 携程: ctrip.android.view
-- 同城: com.tongcheng.android
-- 飞猪: com.taobao.trip
-- 去哪儿: com.Qunar
-- 华住会: com.htinns
-- 知乎: com.zhihu.android
-- 小红书: com.xingin.xhs
-- QQ音乐: com.tencent.qqmusic
-- 网易云音乐: com.netease.cloudmusic
-- 酷狗音乐: com.kugou.android
-- 高德: com.autonavi.minimap
-
-## 任务要求
-请分析任务描述，选择最合适的应用来完成该任务。
-
-## 输出格式
-请严格按照以下JSON格式输出：
-```json
-{{
-    "reasoning": "分析任务内容，说明为什么选择这个应用最合适",
-    "package_name": "选择的应用包名"
-}}
-```
-
-## 重要规则
-1. 只能从上述可用应用列表中选择
-2. 必须选择最符合任务需求的应用
-3. 如果任务涉及多个可能的应用，选择最主要和最常用的那个
-4. 包名必须完全匹配列表中的包名，不能修改
-"""
-        
-        app_selection_prompt = app_selection_prompt_template.format(task_description=task_description)
+        # 构建Prompt（使用planner_oneshot.md模板）
+        app_selection_prompt = self.planner_prompt_template.format(
+            task_description=task_description,
+            experience_content=experience_content
+        )
         
         max_retries = 3
         for attempt in range(max_retries):
@@ -193,26 +196,34 @@ class BatchTaskExecutor:
                     ]
                 ).choices[0].message.content
                 
-                logger.info(f"应用选择响应 (尝试 {attempt + 1}): \n{response_str}")
+                logger.info(f"Planner 响应 (尝试 {attempt + 1}): \n{response_str}")
                 
                 # 解析响应
-                response = self.parse_json_response(response_str)
-                package_name = response.get("package_name")
-                reasoning = response.get("reasoning")
+                response_json = self.parse_planner_response(response_str)
+                if response_json is None:
+                    logger.warning(f"无法解析 planner 响应为 JSON (尝试 {attempt + 1})")
+                    continue
+                
+                app_name = response_json.get("app_name")
+                package_name = response_json.get("package_name")
+                reasoning = response_json.get("reasoning")
+                final_task_description = response_json.get("final_task_description", task_description)
                 
                 if package_name:
                     logger.info(f"AI选择应用原因: {reasoning}")
+                    logger.info(f"AI选择的应用: {app_name}")
                     logger.info(f"AI选择的包名: {package_name}")
-                    return package_name
+                    logger.info(f"最终任务描述: {final_task_description}")
+                    return package_name, final_task_description
                 else:
-                    logger.warning(f"AI响应中没有包名信息: {response}")
+                    logger.warning(f"AI响应中没有包名信息: {response_json}")
                     
             except Exception as e:
                 logger.error(f"AI应用选择失败 (尝试 {attempt + 1}): {e}")
                 if attempt == max_retries - 1:
                     logger.error("AI应用选择最终失败")
                     
-        return None
+        return None, task_description
     
 
     def load_tasks(self, task_file: str) -> list:
@@ -233,39 +244,39 @@ class BatchTaskExecutor:
             logger.error(f"加载任务文件失败: {e}")
             raise
     
-    def get_package_name(self, app_name: str, task_description: str = None) -> str:
-        """根据应用名称获取包名，如果失败则使用AI分析任务描述
+    def get_package_name(self, app_name: str, task_description: str = None) -> tuple:
+        """根据应用名称获取包名，如果失败则使用AI分析任务描述并改写任务
         
         Args:
             app_name: 应用名称
             task_description: 任务描述（可选，用于AI分析）
             
         Returns:
-            应用包名
+            (package_name, final_task_description) 元组
         """
         # 首先尝试从预定义映射中查找
         package_name = self.app_packages.get(app_name)
         
         if package_name:
             logger.info(f"从预定义映射找到应用包名: {app_name} -> {package_name}")
-            return package_name
+            return package_name, task_description
         
         # 如果预定义映射中没有找到，且提供了任务描述，则使用AI分析
         if task_description and self.app_selection_client:
             logger.info(f"预定义映射中未找到应用 '{app_name}'，尝试使用AI分析任务描述")
-            ai_package_name = self.get_app_package_name_by_ai(task_description)
+            ai_package_name, final_task_description = self.get_app_package_name_by_ai(task_description)
             
             if ai_package_name:
                 logger.info(f"AI成功识别应用包名: {ai_package_name}")
                 # 将AI识别的结果添加到缓存中，避免重复查询
                 self.app_packages[app_name] = ai_package_name
-                return ai_package_name
+                return ai_package_name, final_task_description
             else:
                 logger.warning(f"AI也无法识别应用 '{app_name}' 的包名")
         
         # 所有方法都失败了
         logger.error(f"无法获取应用 '{app_name}' 的包名")
-        return None
+        return None, task_description
     
     def create_task_directory(self, app_name: str, task_type: str, task_index: int) -> str:
         """创建任务目录
@@ -293,7 +304,8 @@ class BatchTaskExecutor:
         try:
             # 构建task_data.json（保持原有格式）
             task_data = {
-                "task_description": task_info["task_description"],
+                "original_task_description": task_info.get("original_task_description", task_info["task_description"]),  # 保存原始任务描述
+                "task_description": task_info["task_description"],  # 保存最终执行的任务描述
                 "app_name": task_info["app_name"],
                 "task_type": task_info["task_type"],
                 "task_index": task_info["task_index"],
@@ -308,7 +320,8 @@ class BatchTaskExecutor:
             actions_data = {
                 "app_name": task_info["app_name"],
                 "task_type": task_info["task_type"],
-                "task_description": task_info["task_description"],
+                "original_task_description": task_info.get("original_task_description", task_info["task_description"]),  # 保存原始任务描述
+                "task_description": task_info["task_description"],  # 保存最终执行的任务描述
                 "action_count": execution_result.get("total_steps", 0),
                 "actions": []
             }
@@ -503,13 +516,15 @@ class BatchTaskExecutor:
             是否执行成功
         """
         logger.info(f"开始执行任务: {app_name} - {task_type} - 任务{task_index}")
-        logger.info(f"任务描述: {task_description}")
+        logger.info(f"原始任务描述: {task_description}")
         
-        # 获取包名
-        package_name = self.get_package_name(app_name, task_description)
+        # 获取包名和改写后的任务描述
+        package_name, final_task_description = self.get_package_name(app_name, task_description)
         if not package_name:
             logger.error(f"未找到应用 {app_name} 的包名")
             return False
+        
+        logger.info(f"最终执行任务描述: {final_task_description}")
         
         # 创建任务目录 - 直接使用目标格式：app名称/typex/任务序号
         task_dir = self.create_task_directory(app_name, task_type, task_index)
@@ -631,13 +646,14 @@ class BatchTaskExecutor:
             # 替换执行方法
             framework.execute_task = enhanced_execute_task
             
-            # 执行任务
-            success = framework.execute_task(task_description)
+            # 执行任务 - 使用改写后的任务描述
+            success = framework.execute_task(final_task_description)
             execution_result = framework.get_execution_summary()
             
             # 保存任务数据
             task_info = {
-                "task_description": task_description,
+                "original_task_description": task_description,  # 保存原始任务描述
+                "task_description": final_task_description,     # 保存最终执行的任务描述
                 "app_name": app_name,
                 "task_type": task_type,
                 "task_index": task_index,

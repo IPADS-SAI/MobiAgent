@@ -1,8 +1,14 @@
 from PIL import Image, ImageDraw, ImageFont
 import os
+from pathlib import Path
 
 # from parse_xml import extract_all_bounds
 from utils.parse_omni import extract_all_bounds
+
+# 获取项目根目录的字体文件路径
+current_file_path = Path(__file__).resolve()
+project_root = current_file_path.parent.parent.parent
+font_path = project_root / "msyh.ttf"
 
 def check_text_overlap(text_rect1, text_rect2):
     """检查两个文本矩形是否重叠"""
@@ -18,7 +24,12 @@ def assign_bounds_to_layers(folder_path, screenshot_path, bounds_list):
     """使用贪心算法将bounds分配到不同的图层，避免文本重叠"""
     image = Image.open(screenshot_path)
     draw = ImageDraw.Draw(image)
-    font = ImageFont.truetype("arial.ttf", 40)
+    
+    try:
+        font = ImageFont.truetype(str(font_path), 40)
+    except Exception:
+        # 如果找不到字体文件，使用默认字体
+        font = ImageFont.load_default()
     
     layers = []  # 每个元素是一个包含(index, bounds, text_rect)的列表
     
@@ -65,7 +76,12 @@ def draw_bounds_on_screenshot(screenshot_path, layer, output_path):
     try:
         image = Image.open(screenshot_path)
         draw = ImageDraw.Draw(image)
-        font = ImageFont.truetype("arial.ttf", 40)
+        
+        try:
+            font = ImageFont.truetype(str(font_path), 40)
+        except Exception:
+            # 如果找不到字体文件，使用默认字体
+            font = ImageFont.load_default()
         
         # 用红色绘制所有bounds并标记索引
         for index, bounds, text_rect in layer:
@@ -106,4 +122,4 @@ def process_folder(folder_path, need_clickable=False):
         
     except Exception as e:
         print(f"处理文件夹 {folder_path} 时出错: {str(e)}")
-        return 0
+        return 0, []  # 返回元组而不是单个整数

@@ -105,48 +105,93 @@ def handle_swipe(direction):
 
 
 from utils.load_md_prompt import load_prompt
-app_selection_prompt_template = load_prompt("planner.md")
+from utils.local_experience import PromptTemplateSearch 
+from pathlib import Path
+
+# 修改为使用planner_oneshot.md模板
+app_selection_prompt_template = load_prompt("planner_oneshot.md")
 decider_prompt_template = load_prompt("auto_decider.md")
 
+# 设置默认的模板路径
+current_file_path = Path(__file__).resolve()
+current_dir = current_file_path.parent
+default_template_path = current_dir.parent.parent / "utils" /"experience" / "templates-new.json"
+
+def parse_planner_response(response_str: str):
+    """解析planner的响应JSON"""
+    import re
+    import json
+    # 尝试匹配 ```json ... ``` 代码块
+    pattern = re.compile(r"```json\s*(.*?)\s*```", re.DOTALL)
+    match = pattern.search(response_str)
+
+    json_str = None
+    if match:
+        json_str = match.group(1)
+    else:
+        # 如果没有代码块，直接当成 JSON
+        json_str = response_str.strip()
+
+    try:
+        data = json.loads(json_str)
+        return data
+    except json.JSONDecodeError as e:
+        logger.error(f"解析 JSON 失败: {e}\n内容为:\n{json_str}")
+        return None
+
 def get_app_package_name(task_description):
-    """根据任务描述获取需要启动的app包名"""
-    app_selection_prompt = app_selection_prompt_template.format(task_description=task_description)
-    while True:
-        response_str = client.chat.completions.create(
-            model=model,
-            messages=[
-                {
-                    "role": "user",
-                    "content": app_selection_prompt
-                }
-            ]
-        ).choices[0].message.content
-        
-        logger.info(f"应用选择响应: \n{response_str}")
-        
-        # 解析JSON响应
-        pattern = re.compile(r"```json\n(.*)\n```", re.DOTALL)
-        match = pattern.search(response_str)
-        if match:
-            break
-        
-    response = json.loads(match.group(1))
-    package_name = response.get("package_name")
-    reasoning = response.get("reasoning")
-        
+    """结合经验检索和任务描述改写，获取应用包名和最终任务描述"""
+    # 本地检索经验
+    search_engine = PromptTemplateSearch()
+    logger.info(f"Using template path: {default_template_path}")
+    experience_content = search_engine.get_experience(task_description, default_template_path, 1)
+    logger.info(f"检索到的相关经验:\n{experience_content}")
+
+    # 构建Prompt
+    app_selection_prompt = app_selection_prompt_template.format(
+        task_description=task_description,
+        experience_content=experience_content
+    )
+    
+    # 调用模型
+    response_str = client.chat.completions.create(
+        model=model,
+        messages=[
+            {
+                "role": "user",
+                "content": app_selection_prompt
+            }
+        ]
+    ).choices[0].message.content
+    
+    logger.info(f"应用选择响应: \n{response_str}")
+    
+    # 解析JSON响应
+    response_json = parse_planner_response(response_str)
+    if response_json is None:
+        raise ValueError("无法解析模型响应为 JSON。")
+
+    app_name = response_json.get("app_name")
+    package_name = response_json.get("package_name")
+    reasoning = response_json.get("reasoning")
+    final_task_description = response_json.get("final_task_description", task_description)
+    
     logger.info(f"选择应用原因: {reasoning}")
+    logger.info(f"选择的应用: {app_name}")
     logger.info(f"选择的包名: {package_name}")
-        
-    return package_name
+    logger.info(f"最终任务描述: {final_task_description}")
+    
+    return package_name, final_task_description
 
 def do_task(task_description, data_dir):
     global logger
     
     logger.info(f"开始执行任务: {task_description}")
     
-    # 根据任务描述获取需要启动的应用包名
-    package_name = get_app_package_name(task_description)
+    # 根据任务描述获取需要启动的应用包名和改写后的任务描述
+    package_name, final_task_description = get_app_package_name(task_description)
     logger.info(f"选择启动应用: {package_name}")
+    logger.info(f"最终执行任务描述: {final_task_description}")
 
     device.app_start(package_name, stop=True)
     time.sleep(3) 
@@ -174,11 +219,16 @@ def do_task(task_description, data_dir):
         # 截图拉框
         # layer_count, bounds_list = process_folder(action_dir, need_clickable=True)
         layer_count, bounds_list = process_folder(action_dir)
+        
+        if layer_count == 0:
+            logger.error(f"处理 {action_dir} 失败，跳过此步骤")
+            continue
+            
         logger.info(f"已处理 {action_dir}，共绘制 {layer_count} 个图层")
 
-        # decider_prompt
+        # decider_prompt - 使用最终的任务描述
         decider_prompt = decider_prompt_template.format(
-            task_description = task_description,
+            task_description = final_task_description,  # 使用改写后的任务描述
             history = history,
             layer_count = layer_count
         )
@@ -312,7 +362,8 @@ def do_task(task_description, data_dir):
         time.sleep(2.5)
     
     data = {
-        "task_description": task_description,
+        "original_task_description": task_description,  # 保存原始任务描述
+        "task_description": final_task_description,     # 保存最终执行的任务描述
         "action_count": len(action_history),
         "actions": action_history,
     }

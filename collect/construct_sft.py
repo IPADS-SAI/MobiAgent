@@ -103,6 +103,22 @@ def resize_and_copy_image(part, img_path, data_path, out_path, factor, do_copy=F
     out_abspath = os.path.abspath(out_relpath)
     return out_abspath
 
+def validate_parameters(action_type, param):
+    param_name_mapping = {
+        "click": ["target_element"],
+        "input": ["text"],
+        "swipe": ["direction"],
+        "wait": [],
+        "done": []
+    }
+    valid_param_names = param_name_mapping.get(action_type, [])
+
+    if not isinstance(param, dict):
+        param = {}
+    
+    validated_param = {k: v for k, v in param.items() if k in valid_param_names}
+    return validated_param
+
 def construct_ss_data(single_step_data_path, out_path, factor=0.5, train_ratio=0.9):
     if not os.path.exists(single_step_data_path):
         return [], [], [], []
@@ -145,6 +161,7 @@ def construct_ss_data(single_step_data_path, out_path, factor=0.5, train_ratio=0
                 reasoning = react["reasoning"]
                 action = react["function"]["name"]
                 param = react["function"]["parameters"]
+                param = validate_parameters(action, param)
 
                 random_tasks = random.sample(tasks, 1)
 
@@ -265,6 +282,8 @@ def create_decider_entries_for_one_task(task, react_data, actions, root, data_pa
         reasoning = react["reasoning"]
         action_type = react["function"]["name"]
         param = react["function"]["parameters"]
+
+        param = validate_parameters(action_type, param)
         
         if e2e and action_type == "click":
             action = actions[i - 1]
@@ -324,7 +343,7 @@ def create_decider_entries_for_one_task(task, react_data, actions, root, data_pa
             terminate_output = json.dumps(terminate_output_dict, ensure_ascii=False)
 
             terminate_entries.extend(create_entries_for_one_step(
-                num_repeat=pos_num_repeat * reason_aug_num_repeat,
+                num_repeat=1, # 终止样本不需要重复
                 instruction=prompt_template.format(task=task, history=history_str(history)),
                 output=terminate_output,
                 image_path=random.choice(unexpected_img_safe_abspaths)
@@ -423,6 +442,12 @@ def construct_ds(data_path, single_step_data_path, unexpected_img_path, out_path
         # 后三个任务：去除标点
         # 中间：泛化任务
         tasks = [task_description[0]]
+
+        # 长度为11,则最后一个任务为指令遵循
+        if len(task_description) == 11:
+            tasks.append(task_description[-1])
+            task_description = task_description[:-1]
+            
         if len(task_description) >= 4:
             tasks += random.sample(task_description[-3:], 1)
         if len(task_description) > 4:

@@ -178,7 +178,14 @@ def add_bounds_to_action(root, actions):
             bounds_list = extract_all_bounds(img_path)
             if "bounds" in action and action["bounds"]:
                 bounds_list.append(action["bounds"])
-            actions[i]["bounds"] = find_clicked_element(bounds_list, action["position_x"], action["position_y"])
+            # 使用改进的find_clicked_element函数，增加容错参数
+            actions[i]["bounds"] = find_clicked_element(
+                bounds_list, 
+                action["position_x"], 
+                action["position_y"],
+                expand_ratio=0.15,  # 扩展15%的边界框范围
+                nearby_threshold=30  # 允许30像素的附近匹配
+            )
 
     return actions
 
@@ -355,7 +362,7 @@ def auto_annotate(root, chain, task_description, actions):
                 
                 # 在match中增加一个索引字段react_index，从1开始
                 for i, item in enumerate(match):
-                    item['react_index'] = i + 1 + batch_index * max_images_per_request
+                    item['action_index'] = i + 1 + batch_index * max_images_per_request
                 all_data.extend(match)  # 合并当前批次的结果
                 break
 
@@ -431,10 +438,10 @@ if __name__ == "__main__":
             actions = data.get("actions")
 
             # 不要随意开启这个，ocr有风险
-            # actions = add_bounds_to_action(root, actions)
-            # data["actions"] = actions
-            # with open(actions_json, 'w', encoding='utf-8') as file:
-            #     json.dump(data, file, ensure_ascii=False, indent=4)
+            actions = add_bounds_to_action(root, actions)
+            data["actions"] = actions
+            with open(actions_json, 'w', encoding='utf-8') as file:
+                json.dump(data, file, ensure_ascii=False, indent=4)
             
             visual_prompt(root, actions)
             auto_annotate(root, chain, task_description, actions)

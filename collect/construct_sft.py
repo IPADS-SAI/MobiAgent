@@ -54,6 +54,8 @@ class AlpacaImageEntry:
 
 grounder_prompt = load_prompt("grounder_coordinates.md")
 grounder_prompt_bbox = load_prompt("grounder_bbox.md")
+grounder_prompt_qwen3_coordinates = load_prompt("grounder_qwen3_coordinates.md")
+grounder_prompt_qwen3_bbox = load_prompt("grounder_qwen3_bbox.md")
 
 decider_prompt = load_prompt("decider.md")
 decider_prompt_no_history = load_prompt("decider_nohistory.md")
@@ -119,7 +121,7 @@ def validate_parameters(action_type, param):
     validated_param = {k: v for k, v in param.items() if k in valid_param_names}
     return validated_param
 
-def construct_ss_data(single_step_data_path, out_path, factor=0.5, train_ratio=0.9):
+def construct_ss_data(single_step_data_path, out_path, factor=0.5, train_ratio=0.9, do_copy=True, use_qwen3=False):
     if not os.path.exists(single_step_data_path):
         return [], [], [], []
 
@@ -156,7 +158,7 @@ def construct_ss_data(single_step_data_path, out_path, factor=0.5, train_ratio=0
                 augment_rule = augment_data(react, rules)
 
                 img_path = os.path.join(root, f"{i}.jpg")
-                out_abspath = resize_and_copy_image("ss", img_path, single_step_data_path, out_path, factor, do_copy=True)
+                out_abspath = resize_and_copy_image("ss", img_path, single_step_data_path, out_path, factor, do_copy=do_copy)
 
                 reasoning = react["reasoning"]
                 action = react["function"]["name"]
@@ -168,6 +170,10 @@ def construct_ss_data(single_step_data_path, out_path, factor=0.5, train_ratio=0
                 for task in random_tasks:
                     output_dict = dict(reasoning=reasoning, action=action, parameters=param)
                     output = json.dumps(output_dict, ensure_ascii=False)
+                    # if use_qwen3:
+                    #     output = f'```json\n{json.dumps(output_dict, ensure_ascii=False, indent=4)}\n```'
+                    # else:
+                    #     output = json.dumps(output_dict, ensure_ascii=False)
                     aug_num_repeat = augment_num_repeat("decider_no_history", augment_rule, is_train)
                     entries = create_entries_for_one_step(
                         num_repeat=aug_num_repeat,
@@ -198,7 +204,7 @@ def construct_ss_data(single_step_data_path, out_path, factor=0.5, train_ratio=0
                 augment_rule = augment_data(react, rules)
 
                 img_path = os.path.join(root, f"{i}.jpg")
-                out_abspath = resize_and_copy_image("ss", img_path, single_step_data_path, out_path, factor, do_copy=True)
+                out_abspath = resize_and_copy_image("ss", img_path, single_step_data_path, out_path, factor, do_copy=do_copy)
 
                 reasoning = react["reasoning"]
                 action = react["function"]["name"]
@@ -209,10 +215,16 @@ def construct_ss_data(single_step_data_path, out_path, factor=0.5, train_ratio=0
                     bbox = react["bbox"]
                     bbox = [int(x * factor) for x in bbox]
                     aug_num_repeat = augment_num_repeat("grounder", augment_rule, is_train)
+                    if use_qwen3:
+                        instruction = grounder_prompt_qwen3_bbox.format(reasoning=reasoning, description=param["target_element"])
+                        output = f'```json\n[\n    {json.dumps(dict(bbox_2d=bbox))}\n]\n```'
+                    else:
+                        instruction = grounder_prompt_bbox.format(reasoning=reasoning, description=param["target_element"])
+                        output = json.dumps(dict(bbox=bbox))
                     entries = create_entries_for_one_step(
                         num_repeat=aug_num_repeat,
-                        instruction=grounder_prompt_bbox.format(reasoning=reasoning, description=param["target_element"]),
-                        output=json.dumps(dict(bbox=bbox)),
+                        instruction=instruction,
+                        output=output,
                         image_path=out_abspath
                     )
                     if is_train:
@@ -222,7 +234,7 @@ def construct_ss_data(single_step_data_path, out_path, factor=0.5, train_ratio=0
 
     return decider_ss_entry_train, decider_ss_entry_val, grounder_ss_entry_train, grounder_ss_entry_val
 
-def create_grounder_entries_for_one_trace(react_data, actions, root, data_path, out_path, factor, rules, is_train, do_copy=False):
+def create_grounder_entries_for_one_trace(react_data, actions, root, data_path, out_path, factor, rules, is_train, do_copy=False, use_qwen3=False):
     grounder_entries = []
 
     for i, react in enumerate(react_data, 1):
@@ -238,27 +250,43 @@ def create_grounder_entries_for_one_trace(react_data, actions, root, data_path, 
 
         if action_type == "click":
             action = actions[i - 1]
-            coords = [int(action["position_x"]* factor), int(action["position_y"]* factor)]
-            bbox = action.get("bounds", None)
-
-            grounder_entries.extend(create_entries_for_one_step(
-                num_repeat=grounder_aug_num_repeat,
-                instruction=grounder_prompt.format(reasoning=reasoning, description=param["target_element"]),
-                output=json.dumps(dict(coordinates=coords)),
-                image_path=out_abspath
-            ))
-
-            if bbox:
-                bbox = [int(x * factor) for x in bbox]
+            if "position_x" in action and "position_y" in action:
+                coords = [int(action["position_x"]* factor), int(action["position_y"]* factor)]
+                if use_qwen3:
+                    instruction = grounder_prompt_qwen3_coordinates.format(reasoning=reasoning, description=param["target_element"])
+                    output = f'```json\n[\n    {json.dumps(dict(point_2d=coords))}\n]\n```'
+                else:
+                    instruction = grounder_prompt.format(reasoning=reasoning, description=param["target_element"])
+                    output = json.dumps(dict(coordinates=coords))
                 grounder_entries.extend(create_entries_for_one_step(
                     num_repeat=grounder_aug_num_repeat,
-                    instruction=grounder_prompt_bbox.format(reasoning=reasoning, description=param["target_element"]),
-                    output=json.dumps(dict(bbox=bbox)),
+                    instruction=instruction,
+                    output=output,
                     image_path=out_abspath
                 ))
+            else:
+                print(f"warning: action {i} has no position_x / y in {root}")
+
+            if "bounds" in action and isinstance(action["bounds"], list) and len(action["bounds"]) == 4:
+                bbox = action["bounds"]
+                bbox = [int(x * factor) for x in bbox]
+                if use_qwen3:
+                    instruction = grounder_prompt_qwen3_bbox.format(reasoning=reasoning, description=param["target_element"])
+                    output = f'```json\n[\n    {json.dumps(dict(bbox_2d=bbox))}\n]\n```'
+                else:
+                    instruction = grounder_prompt_bbox.format(reasoning=reasoning, description=param["target_element"])
+                    output = json.dumps(dict(bbox=bbox))
+                grounder_entries.extend(create_entries_for_one_step(
+                    num_repeat=grounder_aug_num_repeat,
+                    instruction=instruction,
+                    output=output,
+                    image_path=out_abspath
+                ))
+            else:
+                print(f"warning: action {i} has no valid bounds in {root}")
     return grounder_entries
 
-def create_decider_entries_for_one_task(task, react_data, actions, root, data_path, out_path, factor, rules, unexpected_img_safe_abspaths, is_train, do_copy=False, e2e=False):
+def create_decider_entries_for_one_task(task, react_data, actions, root, data_path, out_path, factor, rules, unexpected_img_safe_abspaths, is_train, do_copy=False, e2e=False, use_qwen3=False):
     # decider
     normal_entries = []
     no_history_entries = []
@@ -296,6 +324,10 @@ def create_decider_entries_for_one_task(task, react_data, actions, root, data_pa
 
         output_dict = dict(reasoning=reasoning, action=action_type, parameters=param)
         output = json.dumps(output_dict, ensure_ascii=False)
+        # if use_qwen3:
+        #     output = f'```json\n{json.dumps(output_dict, ensure_ascii=False, indent=4)}\n```'
+        # else:
+        #     output = json.dumps(output_dict, ensure_ascii=False)
 
         # partial_histories是当前action的前几个action
         # 对input类和done类型特殊处理
@@ -316,6 +348,10 @@ def create_decider_entries_for_one_task(task, react_data, actions, root, data_pa
             ))
 
         history.append(output)
+        # if use_qwen3:
+        #     history.append(reasoning)
+        # else:
+        #     history.append(output)
 
         synthesize_terminate = action_type != "wait" and action_type != "done" and action_type != "swipe"
         synthesize_terminate = synthesize_terminate and len(unexpected_img_safe_abspaths) > 0
@@ -361,7 +397,7 @@ def create_decider_entries_for_one_task(task, react_data, actions, root, data_pa
 
     return normal_entries, no_history_entries, terminate_entries
 
-def construct_ds(data_path, single_step_data_path, unexpected_img_path, out_path, factor=0.5, train_ratio=0.9, e2e=False):
+def construct_ds(data_path, single_step_data_path, unexpected_img_path, out_path, factor=0.5, train_ratio=0.9, e2e=False, do_copy=True, use_qwen3=False):
     os.makedirs(out_path, exist_ok=True)
     
     e2e_entries_train = []
@@ -408,12 +444,20 @@ def construct_ds(data_path, single_step_data_path, unexpected_img_path, out_path
 
         actions_json = os.path.join(root, "actions.json")
         with open(actions_json, 'r', encoding='utf-8') as file:
-            data = json.load(file)
+            try:
+                data = json.load(file)
+            except json.JSONDecodeError as e:
+                print(f"Error decoding JSON in {root}.")
+                raise e
         task_description = data.get("task_description")
         actions = data.get("actions")
         react_json = os.path.join(root, "react.json")
         with open(react_json, "r", encoding="UTF-8") as f:
-            react_data = json.load(f)
+            try:
+                react_data = json.load(f)
+            except json.JSONDecodeError as e:
+                print(f"Error decoding JSON in {root}.")
+                raise e
 
         # 多模式适配 将没有done的react补充done，目前全部修正带done
         index = 1
@@ -443,25 +487,29 @@ def construct_ds(data_path, single_step_data_path, unexpected_img_path, out_path
         # 中间：泛化任务
         tasks = [task_description[0]]
 
+        has_instruction_following = False
         # 长度为11,则最后一个任务为指令遵循
         if len(task_description) == 11:
-            tasks.append(task_description[-1])
+            has_instruction_following = True
+            if random.random() < 0.5:
+                tasks.append(task_description[-1])
             task_description = task_description[:-1]
             
         if len(task_description) >= 4:
             tasks += random.sample(task_description[-3:], 1)
         if len(task_description) > 4:
-            tasks += random.sample(task_description[1:-3], 1)
+            if (not has_instruction_following) or (random.random() < 0.5):
+                tasks += random.sample(task_description[1:-3], 1)
 
         is_train = random.random() < train_ratio
         for i, task in enumerate(tasks):
             normal_entries, no_history_entries, terminate_entries = create_decider_entries_for_one_task(
-                task, react_data, actions, root, data_path, out_path, factor, rules, unexpected_img_safe_abspaths, is_train, do_copy=(i == 0), e2e=False
+                task, react_data, actions, root, data_path, out_path, factor, rules, unexpected_img_safe_abspaths, is_train, do_copy=((i == 0) and do_copy), e2e=False, use_qwen3=use_qwen3
             )
             if i != 0:
-                normal_entries = random.sample(normal_entries, len(normal_entries) * 2 // 3 )
-                no_history_entries = random.sample(no_history_entries, len(no_history_entries) * 2 // 3)
-                terminate_entries = random.sample(terminate_entries, len(terminate_entries) * 2 // 3)
+                normal_entries = random.sample(normal_entries, len(normal_entries) // 2)
+                no_history_entries = random.sample(no_history_entries, len(no_history_entries) // 2)
+                terminate_entries = random.sample(terminate_entries, len(terminate_entries) // 2)
             if is_train:
                 decider_entries_train.extend(normal_entries)
                 decider_no_history_entries_train.extend(no_history_entries)
@@ -472,7 +520,7 @@ def construct_ds(data_path, single_step_data_path, unexpected_img_path, out_path
                 terminate_entries_val.extend(terminate_entries)
             if e2e:
                 e2e_normal_entries, e2e_history_entries, e2e_terminate_entries = create_decider_entries_for_one_task(
-                    task, react_data, actions, root, data_path, out_path, factor, rules, unexpected_img_safe_abspaths, is_train, do_copy=False, e2e=True
+                    task, react_data, actions, root, data_path, out_path, factor, rules, unexpected_img_safe_abspaths, is_train, do_copy=False, e2e=True, use_qwen3=use_qwen3
                 )
                 if is_train:
                     e2e_entries_train.extend(e2e_normal_entries)
@@ -483,13 +531,13 @@ def construct_ds(data_path, single_step_data_path, unexpected_img_path, out_path
                     e2e_no_history_entries_val.extend(e2e_history_entries)
                     e2e_terminate_entries_val.extend(e2e_terminate_entries)
 
-        grounder_entries = create_grounder_entries_for_one_trace(react_data, actions, root, data_path, out_path, factor, rules, is_train, do_copy=False)
+        grounder_entries = create_grounder_entries_for_one_trace(react_data, actions, root, data_path, out_path, factor, rules, is_train, do_copy=False, use_qwen3=use_qwen3)
         if is_train:
             grounder_entries_train.extend(grounder_entries)
         else:
             grounder_entries_val.extend(grounder_entries)
 
-    decider_ss_entry_train, decider_ss_entry_val, grounder_ss_entry_train, grounder_ss_entry_val = construct_ss_data(single_step_data_path, out_path, factor, train_ratio)
+    decider_ss_entry_train, decider_ss_entry_val, grounder_ss_entry_train, grounder_ss_entry_val = construct_ss_data(single_step_data_path, out_path, factor, train_ratio, do_copy=do_copy, use_qwen3=use_qwen3)
 
     # 合并训练集数据
     terminate_entries_train = random.sample(terminate_entries_train, min(len(decider_entries_train) // 75, len(terminate_entries_train)))
@@ -596,6 +644,8 @@ if __name__ == "__main__":
     parser.add_argument("--factor", type=float, default=0.5, help="resize factor for images (default: 0.5)")
     parser.add_argument("--train_ratio", type=float, default=0.9, help="ratio of training data (default: 0.9)")
     parser.add_argument('--e2e',action='store_true',help='construct e2e dataset')
+    parser.add_argument('--no_copy', action='store_true', help='do not copy images to the output path')
+    parser.add_argument('--use_qwen3', action='store_true', help='use qwen3-vl mobile agent format')
     args = parser.parse_args()
     construct_ds(
         data_path=args.data_path,
@@ -604,5 +654,7 @@ if __name__ == "__main__":
         out_path=args.out_path,
         factor=args.factor,
         train_ratio=args.train_ratio,
-        e2e=args.e2e
+        e2e=args.e2e,
+        do_copy=(not args.no_copy),
+        use_qwen3=args.use_qwen3
     )

@@ -1,4 +1,4 @@
-import os, itertools, json
+import os, itertools, json, copy
 
 def get_task_templates(raw_template):
     results = []
@@ -47,7 +47,7 @@ def get_trajectory(trajectory_template, fmt):
         trajectory.append(act)
     return trajectory
 
-def get_app_task_trajectories(domain_dir):
+def get_app_task_trajectories(domain_dir, include_alter=False):
     with open(os.path.join(domain_dir, "templates.json"), encoding='utf-8') as f:
         templates = json.load(f)
     print(f"Domain: {domain_dir}")
@@ -56,11 +56,40 @@ def get_app_task_trajectories(domain_dir):
         raw_task_template = template["task"]
         trajectory_template = template["trajectory"]
         task_templates = get_task_templates(raw_task_template)
+
+        if include_alter and "alter" in template and isinstance(template["alter"], list):
+            for alter in template["alter"]:
+                alter_task_templates = get_task_templates(alter)
+                task_templates.extend(alter_task_templates)
+
         candidates = template["candidates"]
         dependency = template.get("dependency", "no")
         keys = list(candidates.keys())
 
-        if dependency == "one-to-one":
+        if dependency.startswith("bind:"):
+            bind_keys = dependency[len("bind:"):].split(',')
+
+            if any([k not in keys for k in bind_keys]):
+                print(f"Unknown bind keys: {bind_keys}")
+                continue
+
+            bind_combinations = zip(*[candidates[k] for k in bind_keys])
+            bind_maps = [{k: bind_tuple[i] for i, k in enumerate(bind_keys)} for bind_tuple in bind_combinations]
+
+            other_keys = [k for k in keys if k not in bind_keys]
+            other_combinations = itertools.product(*[candidates[k] for k in other_keys])
+            other_maps = [{k: other_tuple[i] for i, k in enumerate(other_keys)} for other_tuple in other_combinations]
+
+            combinations = []
+            if len(other_keys) == 0:
+                combinations = [tuple(bind_map[k] for k in keys) for bind_map in bind_maps]
+            else:
+                for bind_map, other_map in itertools.product(bind_maps, other_maps):
+                    bind_map_copy = copy.deepcopy(bind_map)
+                    bind_map_copy.update(other_map)
+                    combinations.append(tuple(bind_map_copy[k] for k in keys))
+
+        elif dependency == "one-to-one":
             combinations = zip(*[candidates[k] for k in keys])
         elif dependency == "no":
             combinations = itertools.product(*[candidates[k] for k in keys])

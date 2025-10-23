@@ -45,6 +45,4 @@ Response format for every step:
 2) Action: a short imperative describing what to do in the UI.
 3) A single <tool_call>...</tool_call> block.
 
-Now your task is "{task}". Your action history is:
-{history}
-Output exactly in the order: Thought, Action, and <tool_call>.
+Now your task is "{task}". Output exactly in the order: Thought, Action, and <tool_call>.

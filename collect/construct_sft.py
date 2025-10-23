@@ -57,8 +57,14 @@ grounder_prompt_bbox = load_prompt("grounder_bbox.md")
 grounder_prompt_qwen3_coordinates = load_prompt("grounder_qwen3_coordinates.md")
 grounder_prompt_qwen3_bbox = load_prompt("grounder_qwen3_bbox.md")
 
-decider_prompt = load_prompt("decider.md")
-decider_prompt_no_history = load_prompt("decider_nohistory.md")
+# decider_prompt = load_prompt("decider.md")
+# decider_prompt_no_history = load_prompt("decider_nohistory.md")
+decider_prompt = load_prompt("decider_v2.md")
+decider_prompt_no_history = load_prompt("decider_nohistory_v2.md")
+# decider_prompt_qwen3 = load_prompt("decider_qwen3.md")
+# decider_prompt_qwen3_no_history = load_prompt("decider_qwen3_nohistory.md")
+decider_prompt_qwen3 = decider_prompt
+decider_prompt_qwen3_no_history = decider_prompt_no_history
 
 e2e_prompt = load_prompt("e2e.md")
 e2e_prompt_no_history = load_prompt("e2e_nohistory.md")
@@ -94,18 +100,24 @@ def resize_and_copy_image(part, img_path, data_path, out_path, factor, do_copy=F
     out_relpath = os.path.join(out_path, safe_filename)
 
     # Resize image并保存在同一目录下
+    pil_img = Image.open(img_path)
+    width, height = pil_img.size
+    new_width = int(width * factor)
+    new_height = int(height * factor)
     if do_copy:
-        pil_img = Image.open(img_path)
-        width, height = pil_img.size
-        new_width = int(width * factor)
-        new_height = int(height * factor)
         resized_img = pil_img.resize((new_width, new_height), Image.LANCZOS)
         resized_img.save(out_relpath)
 
     out_abspath = os.path.abspath(out_relpath)
-    return out_abspath
+    return out_abspath, new_width, new_height
 
-def validate_parameters(action_type, param):
+def validate_action(action_type, param):
+    if action_type == "done":
+        return "done", {"status": "success"}
+    elif action_type == "stop":
+        return "done", {"status": "suspended"}
+    elif action_type == "terminate":
+        return "done", {"status": "failed"}
     param_name_mapping = {
         "click": ["target_element"],
         "input": ["text"],
@@ -113,13 +125,74 @@ def validate_parameters(action_type, param):
         "wait": [],
         "done": []
     }
-    valid_param_names = param_name_mapping.get(action_type, [])
+    if action_type not in param_name_mapping:
+        raise ValueError(f"Unknown action type: {action_type}")
+    
+    valid_param_names = param_name_mapping[action_type]
 
     if not isinstance(param, dict):
         param = {}
     
     validated_param = {k: v for k, v in param.items() if k in valid_param_names}
-    return validated_param
+    return action_type, validated_param
+
+def format_qwen3_grounder_output(output_dict):
+    return f'```json\n[\n    {json.dumps(output_dict, ensure_ascii=False)}\n]\n```'
+
+def format_qwen3_decider_output(output_dict):
+    output_json = json.dumps(output_dict, ensure_ascii=False)
+    return output_json, output_json
+    fmt_str = 'Thought: {reasoning}\nAction: {brief_action}\n<tool_call>{tool_call}</tool_call>'
+    action_type = output_dict["action"]
+    tool_call_dict = {
+        "name": "mobile_use", 
+        "arguments": {
+            "action": action_type,
+        }
+    }
+
+    if action_type == "click":
+        target_element = output_dict["parameters"]["target_element"]
+        brief_action = f'点击{target_element}'
+        tool_call_dict["arguments"]["target_element"] = target_element
+    elif action_type == "input":
+        text = output_dict["parameters"]["text"]
+        brief_action = f'在文本框中输入"{text}"'
+        tool_call_dict["arguments"]["text"] = text
+    elif action_type == "swipe":
+        direction = output_dict["parameters"]["direction"]
+        direction_mapping = {
+            "UP": "上",
+            "DOWN": "下",
+            "LEFT": "左",
+            "RIGHT": "右"
+        }
+        brief_action = f'向{direction_mapping[direction]}滑动屏幕'
+        tool_call_dict["arguments"]["direction"] = direction
+    elif action_type == "wait":
+        brief_action = '等待页面加载'
+    elif action_type == "done":
+        brief_action = '任务已完成，结束操作'
+    
+    return fmt_str.format(
+        reasoning=output_dict["reasoning"],
+        brief_action=brief_action,
+        tool_call=json.dumps(tool_call_dict, ensure_ascii=False)
+    ), brief_action
+
+def relative_point(point, width, height):
+    x, y = point
+    rel_x = x / width * 1000
+    rel_y = y / height * 1000
+    return [int(rel_x), int(rel_y)]
+
+def relative_bbox(bbox, width, height):
+    x1, y1, x2, y2 = bbox
+    rel_x1 = x1 / width * 1000
+    rel_y1 = y1 / height * 1000
+    rel_x2 = x2 / width * 1000
+    rel_y2 = y2 / height * 1000
+    return [int(rel_x1), int(rel_y1), int(rel_x2), int(rel_y2)]
 
 def construct_ss_data(single_step_data_path, out_path, factor=0.5, train_ratio=0.9, do_copy=True, use_qwen3=False):
     if not os.path.exists(single_step_data_path):
@@ -158,26 +231,29 @@ def construct_ss_data(single_step_data_path, out_path, factor=0.5, train_ratio=0
                 augment_rule = augment_data(react, rules)
 
                 img_path = os.path.join(root, f"{i}.jpg")
-                out_abspath = resize_and_copy_image("ss", img_path, single_step_data_path, out_path, factor, do_copy=do_copy)
+                out_abspath, width, height = resize_and_copy_image("ss", img_path, single_step_data_path, out_path, factor, do_copy=do_copy)
 
                 reasoning = react["reasoning"]
-                action = react["function"]["name"]
+                action_type = react["function"]["name"]
                 param = react["function"]["parameters"]
-                param = validate_parameters(action, param)
+                
+                action_type, param = validate_action(action_type, param)
 
                 random_tasks = random.sample(tasks, 1)
 
                 for task in random_tasks:
-                    output_dict = dict(reasoning=reasoning, action=action, parameters=param)
-                    output = json.dumps(output_dict, ensure_ascii=False)
-                    # if use_qwen3:
-                    #     output = f'```json\n{json.dumps(output_dict, ensure_ascii=False, indent=4)}\n```'
-                    # else:
-                    #     output = json.dumps(output_dict, ensure_ascii=False)
+                    output_dict = dict(reasoning=reasoning, action=action_type, parameters=param)
+                    if use_qwen3:
+                        output, _ = format_qwen3_decider_output(output_dict)
+                        instruction = decider_prompt_qwen3_no_history.format(task=task)
+                    else:
+                        output = json.dumps(output_dict, ensure_ascii=False)
+                        instruction = decider_prompt_no_history.format(task=task)
+
                     aug_num_repeat = augment_num_repeat("decider_no_history", augment_rule, is_train)
                     entries = create_entries_for_one_step(
                         num_repeat=aug_num_repeat,
-                        instruction=decider_prompt_no_history.format(task=task),
+                        instruction=instruction,
                         output=output,
                         image_path=out_abspath
                     )
@@ -204,22 +280,24 @@ def construct_ss_data(single_step_data_path, out_path, factor=0.5, train_ratio=0
                 augment_rule = augment_data(react, rules)
 
                 img_path = os.path.join(root, f"{i}.jpg")
-                out_abspath = resize_and_copy_image("ss", img_path, single_step_data_path, out_path, factor, do_copy=do_copy)
+                out_abspath, width, height = resize_and_copy_image("ss", img_path, single_step_data_path, out_path, factor, do_copy=do_copy)
 
                 reasoning = react["reasoning"]
-                action = react["function"]["name"]
+                action_type = react["function"]["name"]
                 param = react["function"]["parameters"]
 
                 # grounder训练集
-                if action == "click":
+                if action_type == "click":
                     bbox = react["bbox"]
                     bbox = [int(x * factor) for x in bbox]
                     aug_num_repeat = augment_num_repeat("grounder", augment_rule, is_train)
+                    target_element = param["target_element"]
                     if use_qwen3:
-                        instruction = grounder_prompt_qwen3_bbox.format(reasoning=reasoning, description=param["target_element"])
-                        output = f'```json\n[\n    {json.dumps(dict(bbox_2d=bbox))}\n]\n```'
+                        instruction = grounder_prompt_qwen3_bbox.format(reasoning=reasoning, description=target_element)
+                        rel_bbox = relative_bbox(bbox, width, height)
+                        output = format_qwen3_grounder_output(dict(bbox_2d=rel_bbox, label=target_element))
                     else:
-                        instruction = grounder_prompt_bbox.format(reasoning=reasoning, description=param["target_element"])
+                        instruction = grounder_prompt_bbox.format(reasoning=reasoning, description=target_element)
                         output = json.dumps(dict(bbox=bbox))
                     entries = create_entries_for_one_step(
                         num_repeat=aug_num_repeat,
@@ -242,7 +320,7 @@ def create_grounder_entries_for_one_trace(react_data, actions, root, data_path, 
         grounder_aug_num_repeat = augment_num_repeat("grounder", augment_rule, is_train)
 
         img_path = os.path.join(root, f"{i}.jpg")
-        out_abspath = resize_and_copy_image("main", img_path, data_path, out_path, factor, do_copy)
+        out_abspath, width, height = resize_and_copy_image("main", img_path, data_path, out_path, factor, do_copy)
 
         reasoning = react["reasoning"]
         action_type = react["function"]["name"]
@@ -252,11 +330,13 @@ def create_grounder_entries_for_one_trace(react_data, actions, root, data_path, 
             action = actions[i - 1]
             if "position_x" in action and "position_y" in action:
                 coords = [int(action["position_x"]* factor), int(action["position_y"]* factor)]
+                target_element = param["target_element"]
                 if use_qwen3:
-                    instruction = grounder_prompt_qwen3_coordinates.format(reasoning=reasoning, description=param["target_element"])
-                    output = f'```json\n[\n    {json.dumps(dict(point_2d=coords))}\n]\n```'
+                    instruction = grounder_prompt_qwen3_coordinates.format(reasoning=reasoning, description=target_element)
+                    rel_point = relative_point(coords, width, height)
+                    output = format_qwen3_grounder_output(dict(point_2d=rel_point, label=target_element))
                 else:
-                    instruction = grounder_prompt.format(reasoning=reasoning, description=param["target_element"])
+                    instruction = grounder_prompt.format(reasoning=reasoning, description=target_element)
                     output = json.dumps(dict(coordinates=coords))
                 grounder_entries.extend(create_entries_for_one_step(
                     num_repeat=grounder_aug_num_repeat,
@@ -270,11 +350,13 @@ def create_grounder_entries_for_one_trace(react_data, actions, root, data_path, 
             if "bounds" in action and isinstance(action["bounds"], list) and len(action["bounds"]) == 4:
                 bbox = action["bounds"]
                 bbox = [int(x * factor) for x in bbox]
+                target_element = param["target_element"]
                 if use_qwen3:
-                    instruction = grounder_prompt_qwen3_bbox.format(reasoning=reasoning, description=param["target_element"])
-                    output = f'```json\n[\n    {json.dumps(dict(bbox_2d=bbox))}\n]\n```'
+                    instruction = grounder_prompt_qwen3_bbox.format(reasoning=reasoning, description=target_element)
+                    rel_bbox = relative_bbox(bbox, width, height)
+                    output = format_qwen3_grounder_output(dict(bbox_2d=rel_bbox, label=target_element))
                 else:
-                    instruction = grounder_prompt_bbox.format(reasoning=reasoning, description=param["target_element"])
+                    instruction = grounder_prompt_bbox.format(reasoning=reasoning, description=target_element)
                     output = json.dumps(dict(bbox=bbox))
                 grounder_entries.extend(create_entries_for_one_step(
                     num_repeat=grounder_aug_num_repeat,
@@ -294,8 +376,18 @@ def create_decider_entries_for_one_task(task, react_data, actions, root, data_pa
 
     history = []
 
-    prompt_template = e2e_prompt if e2e else decider_prompt
-    no_history_prompt_template = e2e_prompt_no_history if e2e else decider_prompt_no_history
+    if e2e and use_qwen3:
+        raise ValueError("qwen3 e2e is not supported")
+
+    if e2e:
+        prompt_template = e2e_prompt
+        no_history_prompt_template = e2e_prompt_no_history
+    elif use_qwen3:
+        prompt_template = decider_prompt_qwen3
+        no_history_prompt_template = decider_prompt_qwen3_no_history
+    else:
+        prompt_template = decider_prompt
+        no_history_prompt_template = decider_prompt_no_history
 
     for i, react in enumerate(react_data, 1):
         augment_rule = augment_data(react, rules)
@@ -304,14 +396,14 @@ def create_decider_entries_for_one_task(task, react_data, actions, root, data_pa
         reason_no_history_aug_num_repeat = augment_num_repeat("decider_no_history", augment_rule, is_train)
 
         img_path = os.path.join(root, f"{i}.jpg")
-        out_abspath = resize_and_copy_image("main", img_path, data_path, out_path, factor, do_copy)
+        out_abspath, width, height = resize_and_copy_image("main", img_path, data_path, out_path, factor, do_copy)
 
         # 获取相关参数
         reasoning = react["reasoning"]
         action_type = react["function"]["name"]
         param = react["function"]["parameters"]
 
-        param = validate_parameters(action_type, param)
+        action_type, param = validate_action(action_type, param)
         
         if e2e and action_type == "click":
             action = actions[i - 1]
@@ -323,15 +415,14 @@ def create_decider_entries_for_one_task(task, react_data, actions, root, data_pa
                 print(f"warning: action {i} has no bbox in {root}")
 
         output_dict = dict(reasoning=reasoning, action=action_type, parameters=param)
-        output = json.dumps(output_dict, ensure_ascii=False)
-        # if use_qwen3:
-        #     output = f'```json\n{json.dumps(output_dict, ensure_ascii=False, indent=4)}\n```'
-        # else:
-        #     output = json.dumps(output_dict, ensure_ascii=False)
+        if use_qwen3:
+            output, brief_action = format_qwen3_decider_output(output_dict)
+        else:
+            output = json.dumps(output_dict, ensure_ascii=False)
 
         # partial_histories是当前action的前几个action
         # 对input类和done类型特殊处理
-        if action_type == "input" or action_type == "done":
+        if action_type in ["input", "done"]:
             min_history_length = min(3, len(history))
             partial_histories = [history[i:] for i in range(len(history) + 1 - min_history_length)]
         else:
@@ -347,14 +438,12 @@ def create_decider_entries_for_one_task(task, react_data, actions, root, data_pa
                 image_path=out_abspath
             ))
 
-        history.append(output)
-        # if use_qwen3:
-        #     history.append(reasoning)
-        # else:
-        #     history.append(output)
+        if use_qwen3:
+            history.append(brief_action)
+        else:
+            history.append(output)
 
-        synthesize_terminate = action_type != "wait" and action_type != "done" and action_type != "swipe"
-        synthesize_terminate = synthesize_terminate and len(unexpected_img_safe_abspaths) > 0
+        synthesize_terminate = action_type == "click" and len(unexpected_img_safe_abspaths) > 0
         # synthesize terminate samples
         if synthesize_terminate:
             terminate_reasoning_part1 = [
@@ -375,8 +464,11 @@ def create_decider_entries_for_one_task(task, react_data, actions, root, data_pa
             ]
 
             terminate_reasoning = "，".join(map(random.choice, [terminate_reasoning_part1, terminate_reasoning_part2, terminate_reasoning_part3]))
-            terminate_output_dict = dict(reasoning=terminate_reasoning, action="done", parameters={})
-            terminate_output = json.dumps(terminate_output_dict, ensure_ascii=False)
+            terminate_output_dict = dict(reasoning=terminate_reasoning, action="done", parameters={"status": "failed"})
+            if use_qwen3:
+                terminate_output, _ = format_qwen3_decider_output(terminate_output_dict)
+            else:
+                terminate_output = json.dumps(terminate_output_dict, ensure_ascii=False)
 
             terminate_entries.extend(create_entries_for_one_step(
                 num_repeat=1, # 终止样本不需要重复
@@ -387,7 +479,7 @@ def create_decider_entries_for_one_task(task, react_data, actions, root, data_pa
 
         
         # 无历史action训练集 (input类型不生成no history数据)
-        if action_type != "done" and action_type != "input":
+        if action_type not in ["input", "done"]:
             no_history_entries.extend(create_entries_for_one_step(
                 num_repeat=pos_num_repeat * reason_no_history_aug_num_repeat,
                 instruction=no_history_prompt_template.format(task=task),
@@ -423,7 +515,6 @@ def construct_ds(data_path, single_step_data_path, unexpected_img_path, out_path
     augment_config_path = os.path.join(os.path.dirname(__file__), 'augment_config.json')
     rules = load_augmentation_rules(augment_config_path)
 
-    #TODO: unexpected_img_path 不存在情况
     if os.path.exists(unexpected_img_path):
         unexpected_img_dir = os.path.abspath(unexpected_img_path)
         unexpected_img_paths = os.listdir(unexpected_img_dir)
@@ -431,7 +522,7 @@ def construct_ds(data_path, single_step_data_path, unexpected_img_path, out_path
 
         unexpected_img_safe_abspaths = []
         for unexpected_img_path in unexpected_img_paths:
-            out_abspath = resize_and_copy_image("unexpected", unexpected_img_path, unexpected_img_dir, out_path, factor, do_copy=True)
+            out_abspath, width, height = resize_and_copy_image("unexpected", unexpected_img_path, unexpected_img_dir, out_path, factor, do_copy=True)
             unexpected_img_safe_abspaths.append(out_abspath)
     else:
         unexpected_img_safe_abspaths = []
@@ -471,7 +562,9 @@ def construct_ds(data_path, single_step_data_path, unexpected_img_path, out_path
                     "reasoning": done_reasoning,
                     "function": {
                         "name": "done",
-                        "parameters": {}
+                        "parameters": {
+                            "status": "success"
+                        }
                     }
                 }
             )

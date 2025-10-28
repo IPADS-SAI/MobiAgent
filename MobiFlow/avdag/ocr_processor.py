@@ -17,19 +17,15 @@ import threading
 
 from .logger import get_ocr_logger
 
-# 动态添加app_trajectory_analyzer路径
-def _add_ocr_path():
-    """添加OCR引擎路径到Python搜索路径"""
-    current_dir = os.path.dirname(__file__)
-    tools_dir = os.path.join(current_dir, "..", "tools", "app_trajectory_analyzer", "src")
-    if os.path.exists(tools_dir) and tools_dir not in sys.path:
-        sys.path.insert(0, tools_dir)
-
 # 尝试导入OCR引擎
-_add_ocr_path()
-
 try:
-    from analyzer.ocr_engine import OCREngine
+    # 添加utils路径
+    current_dir = os.path.dirname(__file__)
+    utils_dir = os.path.join(current_dir, "..", "..", "utils")
+    if os.path.exists(utils_dir) and utils_dir not in sys.path:
+        sys.path.insert(0, utils_dir)
+    
+    from ocr_engine import OCREngine
     _ocr_available = True
 except ImportError:
     _ocr_available = False

@@ -639,10 +639,11 @@ class IconsMatch(ConditionChecker):
                 # 延迟导入避免循环依赖
                 import sys
                 from pathlib import Path
-                project_root = Path(__file__).parent.parent
-                sys.path.insert(0, str(project_root))
+                project_root = Path(__file__).parent.parent.parent
+                utils_path = project_root / "utils"
+                sys.path.insert(0, str(utils_path))
                 
-                from tools.Icon_detection import get_icon_detection_service
+                from icon_detection import get_icon_detection_service
                 self._detection_service = get_icon_detection_service()
                 self._logger.debug("图标检测服务初始化成功")
             except Exception as e:

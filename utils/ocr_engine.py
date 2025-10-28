@@ -393,8 +393,17 @@ class OCREngine:
             except Exception as e:
                 logger.error(f"Tesseract识别失败: {e}")
         
-        # 3) 回退空结果
-        logger.warning("所有OCR引擎都无法识别，返回空结果")
+        # 3) 无可用引擎时返回空结果
+        available_engines = []
+        if self._paddle is not None:
+            available_engines.append("PaddleOCR")
+        if _has_tesseract and pytesseract is not None:
+            available_engines.append("Tesseract")
+            
+        if available_engines:
+            logger.warning(f"可用引擎 {available_engines} 识别失败，返回空结果")
+        else:
+            logger.warning("无可用OCR引擎，返回空结果")
         return OCRResult(words=[])
 
     @staticmethod

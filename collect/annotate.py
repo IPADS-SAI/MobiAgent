@@ -1,3 +1,4 @@
+import random
 from PIL import Image, ImageDraw, ImageFont
 import textwrap
 import cv2
@@ -376,6 +377,10 @@ def auto_annotate(root, chain, task_description, actions):
 
     print(f"[Reasoning] finished, saved to {react_json}")
 
+def remove_punct(task):
+    import string
+    return task.translate(str.maketrans('', '', string.punctuation + '，。！？；：“”‘’（）【】《》'))
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Auto annotation of GUI data')
     parser.add_argument('--data_path', type=str, default='data', help='root directory containing the data (default: data)')
@@ -426,7 +431,6 @@ if __name__ == "__main__":
             task_description = data.get("task_description")
             actions = data.get("actions")
 
-            # 不要随意开启这个，ocr有风险
             # actions = add_bounds_to_action(root, actions)
             # data["actions"] = actions
             # with open(actions_json, 'w', encoding='utf-8') as file:
@@ -437,11 +441,10 @@ if __name__ == "__main__":
 
             app_name = data.get("app_name")
             if(isinstance(task_description, str)):
-                # new_tasks = change_task_description(app_name, task_description)
-                new_tasks = task_description
-                data["task_description"] = new_tasks  # 不修改任务描述
-                # all_tasks = [task_description] + new_tasks
-                # data["task_description"] = all_tasks
+                new_tasks = change_task_description(app_name, task_description)
+                all_tasks = [task_description] + new_tasks
+                all_tasks += [remove_punct(t) for t in random.sample(new_tasks, min(3, len(new_tasks)))]
+                data["task_description"] = all_tasks
 
                 with open(actions_json, 'w', encoding='utf-8') as file:
                     json.dump(data, file, ensure_ascii=False, indent=4)

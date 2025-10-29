@@ -140,45 +140,47 @@ def format_qwen3_grounder_output(output_dict):
     return f'```json\n[\n    {json.dumps(output_dict, ensure_ascii=False)}\n]\n```'
 
 def format_qwen3_decider_output(output_dict):
+    # use the same format as qwen2.5 for now
     output_json = json.dumps(output_dict, ensure_ascii=False)
     return output_json, output_json
-    fmt_str = 'Thought: {reasoning}\nAction: {brief_action}\n<tool_call>{tool_call}</tool_call>'
-    action_type = output_dict["action"]
-    tool_call_dict = {
-        "name": "mobile_use", 
-        "arguments": {
-            "action": action_type,
-        }
-    }
+    # the following format has not been validated yet
+    # fmt_str = 'Thought: {reasoning}\nAction: {brief_action}\n<tool_call>{tool_call}</tool_call>'
+    # action_type = output_dict["action"]
+    # tool_call_dict = {
+    #     "name": "mobile_use", 
+    #     "arguments": {
+    #         "action": action_type,
+    #     }
+    # }
 
-    if action_type == "click":
-        target_element = output_dict["parameters"]["target_element"]
-        brief_action = f'点击{target_element}'
-        tool_call_dict["arguments"]["target_element"] = target_element
-    elif action_type == "input":
-        text = output_dict["parameters"]["text"]
-        brief_action = f'在文本框中输入"{text}"'
-        tool_call_dict["arguments"]["text"] = text
-    elif action_type == "swipe":
-        direction = output_dict["parameters"]["direction"]
-        direction_mapping = {
-            "UP": "上",
-            "DOWN": "下",
-            "LEFT": "左",
-            "RIGHT": "右"
-        }
-        brief_action = f'向{direction_mapping[direction]}滑动屏幕'
-        tool_call_dict["arguments"]["direction"] = direction
-    elif action_type == "wait":
-        brief_action = '等待页面加载'
-    elif action_type == "done":
-        brief_action = '任务已完成，结束操作'
+    # if action_type == "click":
+    #     target_element = output_dict["parameters"]["target_element"]
+    #     brief_action = f'点击{target_element}'
+    #     tool_call_dict["arguments"]["target_element"] = target_element
+    # elif action_type == "input":
+    #     text = output_dict["parameters"]["text"]
+    #     brief_action = f'在文本框中输入"{text}"'
+    #     tool_call_dict["arguments"]["text"] = text
+    # elif action_type == "swipe":
+    #     direction = output_dict["parameters"]["direction"]
+    #     direction_mapping = {
+    #         "UP": "上",
+    #         "DOWN": "下",
+    #         "LEFT": "左",
+    #         "RIGHT": "右"
+    #     }
+    #     brief_action = f'向{direction_mapping[direction]}滑动屏幕'
+    #     tool_call_dict["arguments"]["direction"] = direction
+    # elif action_type == "wait":
+    #     brief_action = '等待页面加载'
+    # elif action_type == "done":
+    #     brief_action = '任务已完成，结束操作'
     
-    return fmt_str.format(
-        reasoning=output_dict["reasoning"],
-        brief_action=brief_action,
-        tool_call=json.dumps(tool_call_dict, ensure_ascii=False)
-    ), brief_action
+    # return fmt_str.format(
+    #     reasoning=output_dict["reasoning"],
+    #     brief_action=brief_action,
+    #     tool_call=json.dumps(tool_call_dict, ensure_ascii=False)
+    # ), brief_action
 
 def relative_point(point, width, height):
     x, y = point

@@ -1,273 +1,250 @@
-# 数据收集标注工具
+# Data Collection and Annotation Tools
 
-[English](README_en.md) | [中文](README.md)
+**English** | [中文](README_zh.md)
 
-## 数据收集
+## Data Collection
 
-### 数据格式
+### Data Format
 
-通过人工/自动收集工具，收集每个action前的手机截图，并记录每个action的信息，并汇总到一个actions.json文件中。action格式如下：
-
+Using manual/automatic tools, capture a screenshot before each action and record action metadata in a single `actions.json`. The general action schema is as follows:
 ```
-{{
-    "app_name": str
-    "task_description": ["The description of the task list."],
-    "action_count": "The count of the actions.",
-    "actions": [
-        {{
-            "type": "The type of the action",
-            "parameters": "etc.",  
-        }},
-        {{
-            "type": "click",
-            "position_x": "x-coordinate of click",
-            "position_y": "y-coordinate of click action",
-            "bounds": "the bound of the clicked element",
-        }},
-        {{
-            "type": "swipe",
-            "press_position_x": "x-coordinate of press",
-            "press_position_y": "y-coordinate of press",
-            "release_position_x": "x-coordinate of release",
-            "release_position_y": "y-coordinate of release",
-            "direction": "The direction of the user's swipe gesture. UP: swipe finger upward to scroll content up and reveal content below. DOWN: swipe finger downward to scroll content down and reveal content above. LEFT: swipe finger leftward to scroll content left. RIGHT: swipe finger rightward to scroll content right."
-        }},
-        {{
-            "type": "input",
-            "text": "The text to input",
-        }},
-        {{
-            "type": "done"
-        }},
-        {{
-            "type": "wait"
-        }},
-    ]
-}}
+{
+  "app_name": string,
+  "task_description": ["The description of the task list."],
+  "action_count": "The count of the actions.",
+  "actions": [
+    {
+      "type": "The type of the action",
+      "parameters": "etc."
+    },
+    {
+      "type": "click",
+      "position_x": "x-coordinate of click",
+      "position_y": "y-coordinate of click action",
+      "bounds": "the bound of the clicked element"
+    },
+    {
+      "type": "swipe",
+      "press_position_x": "x-coordinate of press",
+      "press_position_y": "y-coordinate of press",
+      "release_position_x": "x-coordinate of release",
+      "release_position_y": "y-coordinate of release",
+      "direction": "The direction of the user's swipe gesture. UP: swipe finger upward to scroll content up and reveal content below. DOWN: swipe finger downward to scroll content down and reveal content above. LEFT: swipe finger leftward to scroll content left. RIGHT: swipe finger rightward to scroll content right."
+    },
+    {
+      "type": "input",
+      "text": "The text to input"
+    },
+    { "type": "done" },
+    { "type": "wait" }
+  ]
+}
 ```
 
-### 手动数据收集
+### Manual Data Collection
 
-**启动服务器**
-
+**Start server**
 ```bash
 python -m collect.manual.server
 ```
+After startup, open http://localhost:9000 to access the web UI.
 
-启动成功后，访问 http://localhost:9000 进入Web操作界面。
+**Steps**
+1. **Start Collection**: Click "Start Collection" in the web UI.
+2. **Configure App Info**: In the popup dialog, fill in:
+   - **App Name**: e.g., "Eleme", "WeChat", "Taobao"
+   - **Task Type**: e.g., "type1", "type2" (refer to your task doc)
+3. **Enter Task Description**: Describe the task clearly for later analysis and training.
+4. **Execute Actions** on the phone screenshot in the web UI:
+   - **Click**: click the target position directly
+   - **Swipe**: hold left mouse button and drag within screen area
+   - **Text Input**: click "Text Input" and enter text in the dialog
+5. **Save Data**:
+   - **Next Data**: continue collecting more samples of the same type
+   - **Finish**: end current session and save data
+   - **Delete Task**: discard current data (for mistakes or invalid samples)
 
-**操作步骤**
+**Data Storage Format**
 
-1. **开始收集**：在Web界面点击 **开始收集** 按钮
-2. **配置应用信息**：在弹出的 **应用信息配置** 窗口中填写：
-
-- **应用名称**：如 "饿了么"、"微信"、"淘宝" 等
-- **任务类型**：如 “tpye1”、 “tpye2” 等，具体参考收集任务文档
-
-3. **输入任务描述**
-
-   - 在 **任务描述** 窗口中详细描述当前要执行的具体任务
-   - 确保描述清晰明确，便于后续数据分析和模型训练
-4. **执行操作**
-
-   - 在Web界面的手机截图上进行以下操作：
-     - **点击操作**：直接点击截图上的目标位置
-     - **滑动操作**：按住鼠标左键拖拽到目标位置后松开（注意保持在屏幕范围内）
-     - **文本输入**：点击 **文本输入** 按钮，在弹出框中输入文本内容
-5. **保存数据**
-
-   - 完成一个任务序列后，根据需要选择：
-     - **下一条数据**：继续收集同类型任务的更多数据样本
-     - **结束收集**：完成当前收集会话并保存所有数据
-     - **删除任务**：丢弃当前数据（用于处理错误操作或无效数据）
-
-**数据存储格式**
-
-收集的数据自动保存到 `collect/manual/data/` 目录，按以下层级结构组织：
+Collected data is automatically saved to `collect/manual/data/` with the following structure:
 
 ```
 data/
-├── <应用名称>/
-│   ├── <任务类型>/
+├── <app_name>/
+│   ├── <task_type>/
 │   │   ├── 1/
-│   │   │   ├── 1.jpg          # 第1个操作前的截图
-│   │   │   ├── 2.jpg          # 第2个操作前的截图
+│   │   │   ├── 1.jpg          # screenshot before step 1
+│   │   │   ├── 2.jpg          # screenshot before step 2
 │   │   │   ├── ...
-│   │   │   └── actions.json   # 操作记录和任务信息
+│   │   │   └── actions.json   # action records and task info
 │   │   ├── 2/
-│   │   │   └── ...            # 第2条数据
+│   │   │   └── ...            # the second sample
 │   │   └── ...
-│   └── <其他任务类型>/
-└── <其他应用名称>/
+│   └── <other_task_type>/
+└── <other_app_name>/
 ```
 
-每个数据样本包含：
+Each sample includes:
+- **Screenshot sequence**: UI state before each step
+- **actions.json**: full action sequence, task description, and app info
 
-- **截图序列**：记录每个操作步骤前的界面状态
-- **actions.json**：包含完整的操作序列、任务描述和应用信息
+### Automatic Data Collection
 
-### 自动数据收集
-
-先在 `collect/auto/task.json` 写入需要完成的任务列表，格式为字符串数组：
-
+First write your task list in `collect/auto/task.json` as a string array:
 ```json
 [
-    "在淘宝搜索iPhone手机",
-    "在微信给张三发消息说你好",
-    "在b站关注up主李四"
+  "Search iPhone on Taobao",
+  "Send 'hello' to Zhang San on WeChat",
+  "Follow the uploader Li Si on Bilibili"
 ]
 ```
 
-运行自动数据收集程序：
-
+Run the automatic collector:
 ```bash
-python -m collect.auto.server --model <模型名称> --api_key <API密钥> --base_url <API基础URL> [--max_steps <最大步数>]
+python -m collect.auto.server --model <model_name> --api_key <API_key> --base_url <API_base_URL> [--max_steps <max_steps>]
 ```
 
-**必需参数：**
+**Required params:**
+- `--model`: LLM model name
+- `--api_key`: API key
+- `--base_url`: API base URL
 
-- `--model`：LLM模型名称
-- `--api_key`：API密钥
-- `--base_url`：API基础URL
+**Optional params:**
+- `--max_steps`: max execution steps per task (default: 15)
 
-**可选参数：**
+**Workflow:**
+1. Read tasks from `task.json`
+2. For each task:
+   - The agent chooses and launches the corresponding app
+   - Executes actions (click, swipe, input, etc.) automatically
+   - Takes a screenshot before every step and records metadata
+   - Stops upon reaching max steps or finishing the task
+3. Saves data automatically
 
-- `--max_steps`：每个任务的最大执行步数，默认为 15
+**Storage:**
+- Raw logs in `collect/auto/data_log/`
+- Normalized data in `collect/auto/data/`
+- Structure matches manual collection (screenshots + actions.json)
 
-**工作流程：**
+## Data Annotation
 
-1. 程序读取 `task.json` 中的任务列表
-2. 对每个任务：
-   - AI智能体根据任务描述自动选择并启动相应的应用
-   - 自动执行操作序列（点击、滑动、输入等）
-   - 每步操作前自动截图并记录操作信息
-   - 达到最大步数或任务完成时停止
-3. 自动保存数据到指定目录
+The annotation module converts raw action data into visually annotated data, providing richer context for LLMs to yield more accurate reasoning.
 
-**存储数据格式：**
+### Visual Annotation Format
 
-- 原始日志数据存储在 `collect/auto/data_log/`
-- 转换后的标准格式数据存储在 `collect/auto/data/`
-- 数据结构与手动收集保持一致，包含截图序列和 `actions.json` 文件
+**Operation annotation**
+- Each step's operation is labeled in red text at the top of the screenshot
+- Auxiliary overlays:
+  - **Click**: red circle at the click position
+  - **Swipe**: red arrow from start to end
 
-## 数据标注
-
-数据标注模块将原始的操作数据转换为带有视觉标注的数据，为通用AI模型提供更丰富的上下文信息，使得其能够提供更加准确的reasoning。
-
-### 视觉标注格式
-
-**操作标注**
-
-- 用户每个时间步的操作以 **红色字体** 标注在对应截图的顶部
-- 辅助信息同时在截图中进行可视化标注：
-  - **点击操作**：在操作位置标注 **红色圆圈**
-  - **滑动操作**：用 **红色箭头** 标示从起始位置到结束位置的方向
-
-**数据生成**
-系统将标注后的截图序列和任务描述发送给大模型，生成 `react.json` 文件，包含推理过程和操作决策：
+**Data generation**
+The annotated screenshots and task description are sent to the LLM to produce `react.json`, containing the reasoning and action decisions:
 
 ```json
 [
-    {
-        "reasoning": "选择此操作类型的推理过程和原因",
-        "function": {
-            "name": "click",
-            "parameters": {
-                "target_element": "点击目标的高级语义描述"
-            }
-        }
-    },
-    {
-        "reasoning": "滑动操作的推理过程",
-        "function": {
-            "name": "swipe",
-            "parameters": {
-                "direction": "UP, DOWN, LEFT, RIGHT"
-            }
-        }
-    },
-    {
-        "reasoning": "文本输入的推理过程",
-        "function": {
-            "name": "input",
-            "parameters": {
-                "text": "要输入的文本内容"
-            }
-        }
-    },
-    {
-        "reasoning": "任务完成的判断依据",
-        "function": {
-            "name": "done",
-            "parameters": {}
-        }
-    },
-    {
-        "reasoning": "等待操作的原因说明",
-        "function": {
-            "name": "wait",
-            "parameters": {}
-        }
+  {
+    "reasoning": "Reasoning for choosing this operation type",
+    "function": {
+      "name": "click",
+      "parameters": {
+        "target_element": "High-level semantic description of target"
+      }
     }
+  },
+  {
+    "reasoning": "Reasoning for swipe operation",
+    "function": {
+      "name": "swipe",
+      "parameters": {
+        "direction": "UP, DOWN, LEFT, RIGHT"
+      }
+    }
+  },
+  {
+    "reasoning": "Reasoning for text input",
+    "function": {
+      "name": "input",
+      "parameters": {
+        "text": "Text to input"
+      }
+    }
+  },
+  {
+    "reasoning": "Basis for task completion",
+    "function": {
+      "name": "done",
+      "parameters": {}
+    }
+  },
+  {
+    "reasoning": "Reason for waiting",
+    "function": {
+      "name": "wait",
+      "parameters": {}
+    }
+  }
 ]
 ```
 
-### 自动标注执行
+### Run Auto Annotation
 
-**启动命令**
-
+**Command**
 ```bash
-python -m collect.annotate --data_path <数据路径> --model <模型名称> --api_key <API密钥> --base_url <API基础URL>
+python -m collect.annotate --data_path <data_path> --model <model_name> --api_key <API_key> --base_url <API_base_URL>
 ```
 
-**参数说明**
+**Parameters**
+- `--data_path`: path to raw trajectory data (default: `data` under current dir)
+- `--model`: LLM model name (required)
+- `--api_key`: model service API key (required)
+- `--base_url`: model service base URL (required)
 
-- `--data_path`：原始轨迹数据存储路径（可选，默认为当前目录下的 `data` 目录）
-- `--model`：大语言模型名称（必需）
-- `--api_key`：模型服务API密钥（必需）
-- `--base_url`：模型服务基础URL（必需）
+**Process**
+1. Load screenshots and `actions.json` from the data directory
+2. Add visual annotations to screenshots per action info
+3. Send annotated data to the LLM for reasoning
+4. Generate `react.json` with step-by-step reasoning
+5. Save the complete annotated dataset for training
 
-**处理流程**
-
-1. 读取原始数据目录中的截图序列和 `actions.json` 文件
-2. 根据操作信息在截图上添加视觉标注
-3. 将标注后的数据发送给大模型进行推理分析
-4. 生成包含推理过程的 `react.json` 文件
-5. 保存完整的标注数据集，用于后续模型训练
-
-**数据存储格式**
-
-收集的数据自动保存到对应目录，最小的子目录有如下结构：
-
+**Storage:**
 ```
 dir/
-├── 1.jpg          # 第1个操作前的截图
-├── 2.jpg          # 第2个操作前的截图
+├── 1.jpg          # screenshot before step 1
+├── 2.jpg          # screenshot before step 2
 ├── ...
-└── actions.json   # 操作记录和任务信息
-└── react.json     # 标注数据
+└── actions.json   # action records and task info
+└── react.json     # annotated reasoning data
 ```
 
-## 数据构建
+## Data Construction
 
-数据构建模块将标注后的数据转换为适合模型训练的格式，支持监督微调（SFT）数据集的生成。
+The construction module converts annotated data into training-ready formats, supporting SFT dataset generation.
 
-### 启动命令
+### Command
 
 ```bash
-python -m collect.construct_sft --data_path <原始数据路径> --ss_data_path <单步数据路径> --unexpected_img_path <意外图片路径> --out_path <输出路径> [--factor <缩放因子>] [--train_ratio <训练比例>]
+python -m collect.construct_sft \
+    --data_path <raw_data_path> \
+    --ss_data_path <single_step_data_path> \
+    --unexpected_img_path <unexpected_img_path> \
+    --out_path <output_path> \
+    [--factor <scale_factor>] \
+    [--train_ratio <train_ratio>] \
+    [--use_qwen3]
 ```
 
-### 参数说明
+### Parameters
 
-- `--data_path`：原始轨迹数据存储路径（默认：`data`）
-- `--out_path`：训练数据集输出路径（默认：`output`）
-- `--ss_data_path`：单步数据存储路径（默认：`ss_data`）
-- `--unexpected_img_path`：意外图片数据路径（默认：`unexpected_img`）
-- `--factor`：图片缩放因子，用于减小图片尺寸（默认：`0.5`）
-- `--train_ratio`：训练集与验证集的划分比例（默认：`0.9`）
+- `--data_path`: raw trajectory data path (default: `data`)
+- `--out_path`: output path for training dataset (default: `output`)
+- `--ss_data_path`: single-step data path (default: `ss_data`)
+- `--unexpected_img_path`: unexpected image data path (default: `unexpected_img`)
+- `--factor`: image downscale factor (default: `0.5`)
+- `--train_ratio`: train/val split ratio (default: `0.9`)
+- `--use_qwen3`: whether to use qwen3-vl data format (in case your base model belongs to Qwen3-VL series)
 
-其中，`data_path`存放完整的、VLM标注后的操作轨迹，不可为空，示例目录结构为：
+Where `data_path` stores the complete, VLM-annotated action trajectories. Example directory structure is as follows:
 
 ```
 data/
@@ -285,9 +262,9 @@ data/
     `-- react.json
 ```
 
-`some-subpath`代表任意深度的路径，可根据数据组织的需要任意指定，一个最深的子目录包含 `n` 个屏幕截图，以及长度为 `n` 的动作列表 `react.json` + `actions.json`，动作和截图按照下标一一对应，且这 `n` 个截图-动作对构成一个任务的完整操作轨迹。
+`some-subpath` can be any depth, as needed. The deepest subdirectory contains `n` screenshots and action lists `react.json` + `actions.json` of length `n`, with actions and screenshots matched by index, forming a complete task operation trajectory.
 
-`ss_data_path`存放手动收集的单步动作数据，可为空，示例目录结构为：
+`ss_data_path` stores manually collected single-step action data and can be empty. Example directory structure is as follows:
 
 ```
 ss_data/
@@ -299,17 +276,17 @@ ss_data/
 |       |-- react.json
 |       `-- tasks.json
 `-- grounder
-    `-- some-subpath
-        |-- 1.jpg
-        |-- 2.jpg
-        |-- ...
-        `-- react.json
+  `-- some-subpath
+    |-- 1.jpg
+    |-- 2.jpg
+    |-- ...
+    `-- react.json
 ```
 
-`ss_data_path`内必须仅包含 `decider` 和 `grounder` 作为一级目录，分别代表用于训练 `decider` 和 `grounder` 模型的单步动作数据。`some-subpath` 的深度和命名均任意，一个最深的子目录包含 `n` 个屏幕截图，长度为 `n` 的动作列表 `react.json`，动作和截图按照下标一一对应，且这 `n` 个截图-动作对均为单步操作，彼此之间没有联系。子目录不包含 `actions.json`。
+`ss_data_path` must only contain `decider` and `grounder` as top-level directories, for training the respective models. `some-subpath` can be any depth or name. The deepest subdirectory contains `n` screenshots and action list `react.json` of length `n`, with actions and screenshots matched by index, and all pairs are single-step and independent. Subdirectories do not contain `actions.json`.
 
-* `ss_data/decider` 下的子目录还包含一个长度任意的任务列表 `tasks.json` ，构建训练数据集时会为每个截图-动作对，从列表中随机采样一个任务，用于填充训练时模型输入提示词中的任务描述部分
-* `ss_data/grounder` 下的子目录下的 `react.json` 中，每一个动作应为 `click`，且包含一个额外的 `bbox` 字段，代表此次点击的元素的边界框（绝对坐标），例如：
+* Subdirectories under `ss_data/decider` also contain a `tasks.json` list of arbitrary length. When constructing the training dataset, a random task is sampled from the list for each screenshot-action pair to fill the task description part of the training prompt.
+* Subdirectories under `ss_data/grounder` should have a `react.json` in which each item must be `click` action and include an additional `bbox` field representing the bounding box (absolute coordinates) of the target element, for example:
 
 ```json
 [
@@ -326,19 +303,19 @@ ss_data/
 ]
 ```
 
-`unexpected_img_path`目录下存放广告弹窗等agent遇到时，需要终止任务执行的截图，可为空。
+`unexpected_img_path` directory stores screenshots of ads or pop-ups that require the agent to terminate task execution when encountered, and can be empty.
 
-### 数据扩增（可选）
+### Data Augmentation (Optional)
 
-数据集构建过程中，支持通过 `augment_config.json` 配置文件，通过对每个动作（`react.json` 中的一项）进行正则表达式匹配，对数据分布进行重新调整。每条规则包含三个字段：
+The training dataset construction supports data augmentation based on predefined rules. You can modify the `augment_config.json` file to adjust data distribution by applying regex matching on each action (item in `react.json`). Each rule contains three fields:
 
-* `dir`：匹配目标的json字段路径
-* `pattern`：匹配目标的字段值（可用正则表达式匹配）
-* `multiplier`：扩增倍数，`decider`、`decider_no_history`、`grounder` 分别代表在对应数据集中扩增的倍数，`default` 代表默认扩增倍数（当某个数据集未指定时，使用该值）。
+* `dir`: the JSON field path to match
+* `pattern`: the field value to match (use regex)
+* `multiplier`: the augmentation multiplier, `decider`, `decider_no_history`, `grounder` represent the corresponding dataset's augmentation factor, `default` represents the default augmentation factor (when a dataset's augmentation factor is not specified).
 
-示例：
+Example:
 
-1. 将所有 `swipe` 动作，在 `decider` 训练集中扩增5倍
+1. Multiply `swipe` actions by 5x in the `decider` dataset
 
 ```json
 {
@@ -356,14 +333,14 @@ ss_data/
 }
 ```
 
-2. 将 `reasoning` 包含“删除”关键词的动作，在所有数据集中扩增3倍
+2. Multiply actions whose `reasoning` contains the keyword "delete" by 3x in all datasets
 
 ```json
 {
     "dir": [
         "reasoning"
     ],
-    "pattern": "删除",
+    "pattern": "delete",
     "multiplier": {
         "default": 3
     }

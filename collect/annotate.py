@@ -428,6 +428,7 @@ if __name__ == "__main__":
                 continue
             parse_error = os.path.join(root, "parse.error")
             if os.path.exists(parse_error):
+                print("parse.error exists, skip")
                 continue
         
             with open(actions_json, 'r', encoding='utf-8') as file:
@@ -449,8 +450,6 @@ if __name__ == "__main__":
             app_name = data.get("app_name")
             if(isinstance(task_description, str)):
                 new_tasks = change_task_description(app_name, task_description)
-                # new_tasks = task_description
-                data["task_description"] = new_tasks  # 不修改任务描述
                 all_tasks = [task_description] + new_tasks
                 data["task_description"] = all_tasks
 

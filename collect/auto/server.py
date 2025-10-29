@@ -144,7 +144,7 @@ def get_app_package_name(task_description):
     # 本地检索经验
     search_engine = PromptTemplateSearch()
     logger.info(f"Using template path: {default_template_path}")
-    experience_content = search_engine.get_experience(task_description, default_template_path, 1)
+    experience_content = search_engine.get_experience(task_description, 1)
     logger.info(f"检索到的相关经验:\n{experience_content}")
 
     # 构建Prompt

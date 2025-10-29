@@ -81,8 +81,6 @@ PLANNER_TASK_ANALYSIS_PROMPT = """
 
 用户任务描述：{task_description}
 
-相关经验参考：
-{experience_content}
 
 请分析这个任务并输出JSON格式的结果：
 
@@ -141,13 +139,16 @@ APP列表及其包名参考：
 }}
 
 注意：
-- 每个子任务应该是原子性的，在单个APP内可以完成
+- 任务要求：
+    - 每个子任务应该是原子性的，在单个APP内可以完成
+    - 浏览任务需要适当滑动以找到目标信息
+    - app_name和package_name必须从提供的APP列表中选择
 - artifact_schema定义需要从该子任务中提取的关键信息
 - depends_on指定该子任务依赖哪些前置子任务的输出
 """
 
 PLANNER_EXTRACT_ARTIFACT_PROMPT = """
-你是一个信息提取AI助手。一个子任务刚刚执行完毕，你需要从执行结果中提取结构化信息。
+你是一个信息提取AI助手。一个子任务刚刚执行完毕，你需要结合截图和提取的文崩从执行结果中提取结构化信息。
 
 子任务描述：{subtask_description}
 
@@ -156,6 +157,9 @@ PLANNER_EXTRACT_ARTIFACT_PROMPT = """
 
 执行历史：
 {execution_history}
+
+页面文本内容（OCR提取）：
+{ocr_text_section}
 
 请分析最后几步的截图和操作记录，提取出所需的结构化信息。
 
@@ -180,19 +184,19 @@ PLANNER_NEXT_STEP_PROMPT = """
 下一个待执行的子任务：
 {next_subtask_description}
 
-请基于已完成子任务的结果（artifacts），生成一个完整、详细的任务描述，用于执行下一个子任务。
+请基于已完成子任务的结果（artifacts），生成一个完整、详细的、口语化任务描述，用于执行下一个子任务。
 这个任务描述应该：
-1. 包含前置子任务提取的关键信息（如商品名称、价格、订单号等）
+1. 包含前置子任务提取的关键信息（如商品名称、价格、订单号等），替换占位符为具体内容
 2. 清晰描述在下一个APP中需要完成什么操作
 3. 确保任务可以在1个APP独立执行
 
 输出JSON格式：
 {{
-    "refined_description": "完善后的子任务描述，需要包含前置任务提取的具体数据值"
+    "refined_description": "完善后的子任务描述，需要包含前置任务提取的具体数据值，不含占位符和变量符号"
 }}
 
 示例：
-如果前置任务提取了：shirt_name="白衬衫", shirt_price="131"
+如果前置任务提取了：shirt_name="【免烫款】海澜之家白衬衫", shirt_price="131"
 下一个任务是：将商品信息发送给小赵
-则refined_description应该是："打开微信，找到联系人'小赵'，发送消息：'【免烫款】海澜之家 价格：131元'"
+则refined_description应该是："打开微信，找到联系人'小赵'，发送消息：'【免烫款】海澜之家白衬衫 价格：131元'"
 """

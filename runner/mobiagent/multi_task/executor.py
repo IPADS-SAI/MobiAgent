@@ -16,17 +16,31 @@ import cv2
 import numpy as np
 from openai import OpenAI
 
-from .models import ActionPlan, GroundResponse
-from .prompts import (
-    DECIDER_PROMPT_TEMPLATE,
-    GROUNDER_QWEN3_BBOX_PROMPT,
-    GROUNDER_PROMPT_NO_BBOX
-)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+try:
+    # 尝试相对导入（当作为模块运行时）
+    from .models import ActionPlan, GroundResponse
+    from .prompts import (
+        DECIDER_PROMPT_TEMPLATE,
+        GROUNDER_QWEN3_BBOX_PROMPT,
+        GROUNDER_PROMPT_BBOX,
+        GROUNDER_PROMPT_NO_BBOX
+    )
+except ImportError:
+    # 回退到绝对导入（当直接运行时）
+    from models import ActionPlan, GroundResponse
+    from prompts import (
+        DECIDER_PROMPT_TEMPLATE,
+        GROUNDER_QWEN3_BBOX_PROMPT,
+        GROUNDER_PROMPT_BBOX,
+        GROUNDER_PROMPT_NO_BBOX
+    )
 
 # 全局配置
 MAX_STEPS = 40
 screenshot_path = "screenshot.jpg"
-factor = 1.0
+factor = 0.5
 
 
 def parse_json_response(response_str: str) -> dict:
@@ -62,6 +76,30 @@ def get_screenshot(device):
     img.save(buffered, format="JPEG")
     screenshot = base64.b64encode(buffered.getvalue()).decode("utf-8")
     return screenshot
+
+
+def _save_execution_data(data_dir: str, app: str, old_task: str, task: str, actions: List, reacts: List):
+    """保存执行数据到JSON文件"""
+    # 保存actions.json
+    actions_data = {
+        "app_name": app,
+        "task_type": None,
+        "old_task_description": old_task,
+        "task_description": task,
+        "action_count": len(actions),
+        "actions": actions
+    }
+    
+    actions_path = os.path.join(data_dir, "actions.json")
+    with open(actions_path, "w", encoding='utf-8') as f:
+        json.dump(actions_data, f, ensure_ascii=False, indent=4)
+    
+    # 保存react.json
+    react_path = os.path.join(data_dir, "react.json")
+    with open(react_path, "w", encoding='utf-8') as f:
+        json.dump(reacts, f, ensure_ascii=False, indent=4)
+    
+    logging.info(f"Saved execution data to {data_dir}")
 
 
 def create_swipe_visualization(data_dir, image_index, direction):
@@ -162,9 +200,14 @@ def task_in_app(
     screenshots_base64 = []
     skip_temp = False
     
+    # 创建初始的空数据文件
+    _save_execution_data(data_dir, app, old_task, task, actions, reacts)
+    
     while True:
         if len(actions) >= MAX_STEPS:
             logging.info("Reached maximum steps, stopping the task.")
+            # 保存执行数据
+            _save_execution_data(data_dir, app, old_task, task, actions, reacts)
             break
         
         history_str = "(No history)" if len(history) == 0 else "\n".join(
@@ -242,6 +285,10 @@ def task_in_app(
         if action == "done":
             print("Task completed.")
             actions.append({"type": "done", "action_index": image_index})
+            
+            # 保存最终执行结果
+            _save_execution_data(data_dir, app, old_task, task, actions, reacts)
+            
             return {
                 "success": True,
                 "reacts": reacts,
@@ -284,7 +331,7 @@ def task_in_app(
             
             if bbox_flag:
                 bbox = grounder_response.get("bbox") or grounder_response.get("bbox_2d") or grounder_response.get("bbox-2d")
-                x1, y1, x2, y2 = [int(coord / factor) for coord in bbox]
+                x1, y1, x2, y2 = [int(coord) for coord in bbox]
                 
                 x1 = int(x1 / 1000 * img.width)
                 x2 = int(x2 / 1000 * img.width)
@@ -313,7 +360,9 @@ def task_in_app(
                 
             else:
                 coordinates = grounder_response["coordinates"]
-                x, y = [int(coord / factor) for coord in coordinates]
+                x, y = [int(coord) for coord in coordinates]
+                x = int(x / 1000 * img.width)
+                y = int(y / 1000 * img.height)
                 if not skip_temp:
                     device.click(x, y)
                     time.sleep(1)
@@ -325,6 +374,9 @@ def task_in_app(
                 })
             
             skip_temp = False
+            
+            # 保存当前执行状态
+            _save_execution_data(data_dir, app, old_task, task, actions, reacts)
         
         # 处理input动作
         elif action == "input":
@@ -332,6 +384,9 @@ def task_in_app(
             device.input(text)
             actions.append({"type": "input", "text": text, "action_index": image_index})
             history.append(decider_response_str)
+            
+            # 保存当前执行状态
+            _save_execution_data(data_dir, app, old_task, task, actions, reacts)
         
         # 处理swipe动作
         elif action == "swipe":
@@ -357,6 +412,9 @@ def task_in_app(
             history.append(decider_response_str)
             create_swipe_visualization(data_dir, image_index, direction.lower())
             
+            # 保存当前执行状态
+            _save_execution_data(data_dir, app, old_task, task, actions, reacts)
+            
             if direction == "DOWN":
                 continue
         
@@ -365,26 +423,18 @@ def task_in_app(
             print("Waiting for a while...")
             actions.append({"type": "wait", "action_index": image_index})
             history.append(decider_response_str)
+            
+            # 保存当前执行状态
+            _save_execution_data(data_dir, app, old_task, task, actions, reacts)
         
         else:
             raise ValueError(f"Unknown action: {action}")
         
         time.sleep(1)
     
-    # 保存执行结果
-    data = {
-        "app_name": app,
-        "task_type": None,
-        "old_task_description": old_task,
-        "task_description": task,
-        "action_count": len(actions),
-        "actions": actions
-    }
-    
-    with open(os.path.join(data_dir, "actions.json"), "w", encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=4)
-    with open(os.path.join(data_dir, "react.json"), "w", encoding='utf-8') as f:
-        json.dump(reacts, f, ensure_ascii=False, indent=4)
+    # 确保最终状态被保存（如果还没有保存的话）
+    if actions:  # 如果有执行过动作
+        _save_execution_data(data_dir, app, old_task, task, actions, reacts)
     
     return {
         "success": len(actions) < MAX_STEPS,

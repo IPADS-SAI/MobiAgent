@@ -6,17 +6,34 @@ Planner模块
 import json
 import logging
 import re
-from typing import Dict, Optional, Tuple
+import base64
+import os
+from typing import Dict, Optional, Tuple, List
 from pathlib import Path
 from openai import OpenAI
 
-from .models import Plan, Artifact
-from .prompts import (
-    PLANNER_TASK_ANALYSIS_PROMPT,
-    PLANNER_PLAN_GENERATION_PROMPT,
-    PLANNER_EXTRACT_ARTIFACT_PROMPT,
-    PLANNER_NEXT_STEP_PROMPT
-)
+
+try:
+    # 尝试相对导入（当作为模块运行时）
+    from .models import Plan, Artifact, ExtractArtifactConfig
+    from .prompts import (
+        PLANNER_TASK_ANALYSIS_PROMPT,
+        PLANNER_PLAN_GENERATION_PROMPT,
+        PLANNER_EXTRACT_ARTIFACT_PROMPT,
+        PLANNER_NEXT_STEP_PROMPT
+    )
+except ImportError:
+    # 回退到绝对导入（当直接运行时）
+    from models import Plan, Artifact, ExtractArtifactConfig
+    from prompts import (
+        PLANNER_TASK_ANALYSIS_PROMPT,
+        PLANNER_PLAN_GENERATION_PROMPT,
+        PLANNER_EXTRACT_ARTIFACT_PROMPT,
+        PLANNER_NEXT_STEP_PROMPT
+    )
+
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # 延迟导入，避免循环依赖
 try:
@@ -26,6 +43,39 @@ except ImportError:
     PromptTemplateSearch = None
     load_prompt = None
     logging.warning("无法导入经验检索模块，get_app_package_name 功能将受限")
+
+# 导入OCR模块
+try:
+    # 从utils目录导入新的OCR处理器
+    try:
+        # 相对导入 (用于作为模块运行)
+        from utils.advanced_ocr import AdvancedOCRProcessor, get_advanced_ocr_processor
+        OCR_AVAILABLE = True
+        logging.info("OCR模块加载成功 (相对导入)")
+    except ImportError:
+        try:
+            # 绝对导入 (用于直接脚本运行)
+            import sys
+            current_dir = Path(__file__).parent
+            project_root = current_dir.parent.parent.parent
+            utils_path = str(project_root / "utils")
+            if utils_path not in sys.path:
+                sys.path.insert(0, utils_path)
+            
+            from advanced_ocr import AdvancedOCRProcessor, get_advanced_ocr_processor
+            OCR_AVAILABLE = True
+            logging.info("OCR模块加载成功 (绝对导入)")
+        except Exception as e2:
+            AdvancedOCRProcessor = None
+            get_advanced_ocr_processor = None
+            OCR_AVAILABLE = False
+            logging.warning(f"OCR模块加载失败: {e2}")
+            
+except Exception as e:
+    AdvancedOCRProcessor = None
+    get_advanced_ocr_processor = None
+    OCR_AVAILABLE = False
+    logging.warning(f"OCR模块初始化失败: {e}")
 
 # 加载planner_oneshot.md prompt
 planner_prompt_template = None
@@ -39,6 +89,8 @@ if load_prompt:
 current_file_path = Path(__file__).resolve()
 current_dir = current_file_path.parent
 default_template_path = current_dir.parent.parent.parent / "utils" / "experience" / "templates-new.json"
+default_multistage_template_path = current_dir.parent.parent.parent / "utils" / "experience" / "templates-multistage.json"
+DEFAULT_MULTISTORAGE_STORAGE_DIR = current_dir.parent.parent.parent / "utils" / "experience" / "multistage_plans_storage"
 
 APP_LIST = {
     "携程": "ctrip.android.view",
@@ -71,7 +123,8 @@ APP_LIST = {
     "酷狗音乐": "com.kugou.android",
     "抖音": "com.ss.android.ugc.aweme",
     "高德地图": "com.autonavi.minimap",
-    "咸鱼": "com.taobao.idlefish"
+    "咸鱼": "com.taobao.idlefish",
+    "微软浏览器": "com.microsoft.emmx"
 }
 
 def get_app_package_name(
@@ -98,10 +151,10 @@ def get_app_package_name(
         logging.error("经验检索模块未正确加载")
         raise ValueError("经验检索模块未正确加载")
     
-    # 本地检索经验
-    search_engine = PromptTemplateSearch()
+    # 本地检索经验 - 单任务使用单任务经验
+    search_engine = PromptTemplateSearch(template_path=default_template_path)
     logging.info(f"Using template path: {default_template_path}")
-    experience_content = search_engine.get_experience(task_description, str(default_template_path), 1)
+    experience_content = search_engine.get_experience(task_description, 1)
     logging.info(f"检索到的相关经验:\n{experience_content}")
 
     # 构建Prompt
@@ -179,23 +232,10 @@ def analyze_task(
     Returns:
         (is_multi_stage, reason): (是否多阶段, 原因说明)
     """
-    # 如果有经验检索模块，尝试检索相关经验
-    if PromptTemplateSearch and default_template_path.exists():
-        try:
-            search_engine = PromptTemplateSearch()
-            experience_results = search_engine.get_experience(
-                task_description, 
-                str(default_template_path), 
-                2
-            )
-            logging.info(f"检索到的相关经验:\n{experience_results}")
-        except Exception as e:
-            logging.warning(f"经验检索失败: {e}")
-            experience_results = ""
-    
+
+    # 判断多任务、单任务较简单，不使用经验
     prompt = PLANNER_TASK_ANALYSIS_PROMPT.format(
-        task_description=task_description,
-        experience_content=experience_results or "无相关经验"
+        task_description=task_description
     )
     
     logging.info(f"任务分析prompt: \n{prompt}")
@@ -244,16 +284,15 @@ def generate_plan(
     Returns:
         Plan对象，生成失败返回None
     """
-    # 如果有经验检索模块，尝试检索相关经验
-    if PromptTemplateSearch and default_template_path.exists():
+    # 检索相关经验 - 多阶段任务使用多阶段模板
+    if PromptTemplateSearch and default_multistage_template_path.exists():
         try:
-            search_engine = PromptTemplateSearch()
+            search_engine = PromptTemplateSearch(template_path=default_multistage_template_path, storage_dir=DEFAULT_MULTISTORAGE_STORAGE_DIR)
             experience_results = search_engine.get_experience(
                 task_description, 
-                str(default_template_path), 
-                2
+                1  # 获取1个最相关经验用于多阶段任务规划
             )
-            logging.info(f"检索到的相关经验:\n{experience_results}")
+            logging.info(f"计划生成时检索到的相关经验:\n{experience_results}")
         except Exception as e:
             logging.warning(f"经验检索失败: {e}")
             experience_results = ""
@@ -292,6 +331,7 @@ def extract_artifact(
     subtask_output: Dict,
     planner_client: OpenAI,
     planner_model: str,
+    extract_config: Optional[ExtractArtifactConfig] = None,
     temperature: float = 0.0
 ) -> Optional[Artifact]:
     """
@@ -304,11 +344,15 @@ def extract_artifact(
         subtask_output: 子任务输出（包含actions、reacts等）
         planner_client: Planner客户端
         planner_model: Planner模型名称
+        extract_config: 提取配置
         temperature: 采样温度
     
     Returns:
         Artifact对象，提取失败返回None
     """
+    if extract_config is None:
+        extract_config = ExtractArtifactConfig()
+    
     # 提取执行历史
     execution_history = ""
     if subtask_output.get("reacts"):
@@ -324,31 +368,83 @@ def extract_artifact(
     if not schema_desc:
         schema_desc = "无特定字段要求"
     
-    # 提取最后一次截图
-    last_screenshot = ""
+    # 提取截图和OCR文本
+    screenshots = []
+    ocr_texts = []
+    
     if subtask_output.get("screenshots"):
-        last_screenshot = subtask_output["screenshots"][-1]
+        # 获取最后几张截图
+        num_screenshots = min(extract_config.num_screenshots, len(subtask_output["screenshots"]))
+        screenshots = subtask_output["screenshots"][-num_screenshots:]
+        
+        # 如果启用OCR，对每张截图进行文本提取
+        if extract_config.use_ocr and OCR_AVAILABLE:
+            try:
+                ocr_processor = get_advanced_ocr_processor(use_paddle=True, lang="chi_sim+eng")
+                for i, screenshot_b64 in enumerate(screenshots):
+                    try:
+                        # 将base64截图保存为临时文件
+                        import tempfile
+                        with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp_file:
+                            screenshot_data = base64.b64decode(screenshot_b64)
+                            tmp_file.write(screenshot_data)
+                            tmp_file_path = tmp_file.name
+                        # 使用新的OCR处理器提取文本
+                        ocr_text, backup_text = ocr_processor.extract_text_from_image(
+                            tmp_file_path, 
+                            enable_hybrid=extract_config.enable_hybrid_ocr
+                        )
+                        if ocr_text:
+                            ocr_texts.append(f"截图{i+1} OCR文本: {ocr_text}")
+                        if backup_text and backup_text != ocr_text:
+                            ocr_texts.append(f"截图{i+1} 备用OCR文本: {backup_text}")
+                            
+                        # 清理临时文件
+                        os.unlink(tmp_file_path)
+                        
+                    except Exception as e:
+                        logging.warning(f"处理截图{i+1} OCR失败: {e}")
+                        
+            except Exception as e:
+                logging.warning(f"OCR处理失败: {e}")
+    
+    # 构建提示词
+    ocr_text = ""
+    if ocr_texts:
+        ocr_text = f"\n\nOCR提取的页面文本信息：\n" + "\n".join(ocr_texts)
     
     prompt = PLANNER_EXTRACT_ARTIFACT_PROMPT.format(
         subtask_description=subtask_description,
         artifact_schema=schema_desc,
         execution_history=execution_history or "无执行历史",
-        subtask_id=subtask_id
+        subtask_id=subtask_id,
+        ocr_text_section = ocr_text if ocr_text else "提取工具提取失败"
     )
     
     logging.info(f"Artifact提取prompt: \n{prompt}")
     
-    messages = [{"role": "user", "content": prompt}]
-    
-    # 如果有截图，添加到消息中
-    if last_screenshot:
-        messages = [{
-            "role": "user",
-            "content": [
-                {"type": "text", "text": prompt},
-                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{last_screenshot}"}}
-            ]
-        }]
+    # 构建消息
+    if extract_config.use_text_with_image and screenshots:
+        # 文本+截图模式
+        content = [{"type": "text", "text": prompt}]
+        for i, screenshot in enumerate(screenshots):
+            content.append({
+                "type": "image_url", 
+                "image_url": {"url": f"data:image/jpeg;base64,{screenshot}"}
+            })
+        messages = [{"role": "user", "content": content}]
+    elif screenshots and not extract_config.use_text_with_image:
+        # 纯截图模式（提示词作为文本，截图作为图像）
+        content = [{"type": "text", "text": prompt}]
+        for i, screenshot in enumerate(screenshots):
+            content.append({
+                "type": "image_url", 
+                "image_url": {"url": f"data:image/jpeg;base64,{screenshot}"}
+            })
+        messages = [{"role": "user", "content": content}]
+    else:
+        # 纯文本模式
+        messages = [{"role": "user", "content": prompt}]
     
     response = planner_client.chat.completions.create(
         model=planner_model,
@@ -409,10 +505,29 @@ def refine_next_subtask_description(
     if not artifacts_desc:
         artifacts_desc = "暂无可用的前置任务结果"
     
+    # 检索单任务相关经验用于任务重写
+    experience_content = ""
+    if PromptTemplateSearch and default_template_path.exists():
+        try:
+            search_engine = PromptTemplateSearch()
+            # 构建包含artifacts信息的查询文本
+            search_query = f"{next_subtask_description} {artifacts_desc}"
+            experience_content = search_engine.get_experience(
+                search_query, 
+                2  # 获取相关经验
+            )
+            logging.info(f"任务重写时检索到的相关经验:\n{experience_content}")
+        except Exception as e:
+            logging.warning(f"经验检索失败: {e}")
+    
+    # 在提示词中包含单任务经验信息
     prompt = PLANNER_NEXT_STEP_PROMPT.format(
         next_subtask_description=next_subtask_description,
         artifacts_desc=artifacts_desc
     )
+    
+    if experience_content:
+        prompt += f"\n\n相关经验参考：\n{experience_content}\n\n请结合以上经验优化任务描述。"
     
     logging.info(f"子任务描述重写prompt: \n{prompt}")
     

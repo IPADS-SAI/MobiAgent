@@ -73,6 +73,14 @@ class Artifact(BaseModel):
     summary: str = Field(description="子任务执行的自然语言总结")
 
 
+class ExtractArtifactConfig(BaseModel):
+    """Artifact提取配置"""
+    use_ocr: bool = Field(default=True, description="是否使用OCR提取页面文本")
+    num_screenshots: int = Field(default=1, description="使用最后几张截图进行提取")
+    use_text_with_image: bool = Field(default=True, description="是否将文本和截图一起发送，False则只发送截图")
+    enable_hybrid_ocr: bool = Field(default=False, description="是否启用混合OCR识别（PaddleOCR + Tesseract）")
+
+
 class State(BaseModel):
     """维护整个任务执行过程中的状态"""
     task_description: str = Field(description="原始任务描述")
@@ -80,3 +88,4 @@ class State(BaseModel):
     current_subtask_index: int = Field(default=0, description="当前执行到的子任务索引")
     artifacts: Dict[str, Artifact] = Field(default_factory=dict, description="已收集的所有artifacts，key为subtask_id")
     completed_subtasks: List[int] = Field(default_factory=list, description="已完成的子任务ID列表")
+    extract_config: ExtractArtifactConfig = Field(default_factory=ExtractArtifactConfig, description="Artifact提取配置")

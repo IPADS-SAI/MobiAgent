@@ -9,6 +9,7 @@ import logging
 import time
 import os
 import argparse
+import tempfile
 from typing import Optional
 from abc import ABC, abstractmethod
 import uiautomator2 as u2
@@ -16,15 +17,28 @@ import base64
 from openai import OpenAI
 
 # 导入自定义模块
-from .models import Plan, Artifact, State, Subtask
-from .executor import task_in_app
-from .planner import (
-    analyze_task,
-    generate_plan,
-    extract_artifact,
-    refine_next_subtask_description,
-    get_app_package_name
-)
+try:
+    # 尝试相对导入（当作为模块运行时）
+    from .models import Plan, Artifact, State, Subtask, ExtractArtifactConfig
+    from .executor import task_in_app
+    from .planner import (
+        analyze_task,
+        generate_plan,
+        extract_artifact,
+        refine_next_subtask_description,
+        get_app_package_name
+    )
+except ImportError:
+    # 回退到绝对导入（当直接运行时）
+    from models import Plan, Artifact, State, Subtask, ExtractArtifactConfig
+    from executor import task_in_app
+    from planner import (
+        analyze_task,
+        generate_plan,
+        extract_artifact,
+        refine_next_subtask_description,
+        get_app_package_name
+    )
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -190,7 +204,7 @@ def load_state(state_dir: str) -> Optional[State]:
 
 # ==================== 任务执行 ====================
 
-def execute_task(task_description: str, device: Device, base_data_dir: str) -> dict:
+def execute_task(task_description: str, device: Device, base_data_dir: str, extract_config: Optional[ExtractArtifactConfig] = None) -> dict:
     """
     统一的任务执行入口
     自动分析任务类型并选择合适的执行策略
@@ -238,7 +252,7 @@ def execute_task(task_description: str, device: Device, base_data_dir: str) -> d
         logging.info("\n执行策略: 多阶段任务模式")
         logging.info(f"{'='*60}\n")
         
-        result = execute_multi_stage_task_internal(task_description, device, task_dir)
+        result = execute_multi_stage_task_internal(task_description, device, task_dir, extract_config)
         
         return {
             "task_description": task_description,
@@ -329,7 +343,7 @@ def execute_task(task_description: str, device: Device, base_data_dir: str) -> d
             }
 
 
-def execute_multi_stage_task_internal(task_description: str, device: Device, task_dir: str) -> dict:
+def execute_multi_stage_task_internal(task_description: str, device: Device, task_dir: str, extract_config: Optional[ExtractArtifactConfig] = None) -> dict:
     """
     内部函数：执行多阶段任务（不创建新的任务目录）
     
@@ -364,7 +378,8 @@ def execute_multi_stage_task_internal(task_description: str, device: Device, tas
         plan=plan,
         current_subtask_index=0,
         artifacts={},
-        completed_subtasks=[]
+        completed_subtasks=[],
+        extract_config=extract_config if extract_config else ExtractArtifactConfig()
     )
     
     # 保存Plan
@@ -437,14 +452,15 @@ def execute_multi_stage_task_internal(task_description: str, device: Device, tas
                 bbox_flag=True
             )
             
-            # 提取artifact
+            # 从结果中提取artifact
             artifact = extract_artifact(
                 subtask.subtask_id,
                 subtask.description,
                 subtask.artifact_schema,
                 execution_result,
                 planner_client,
-                planner_model
+                planner_model,
+                state.extract_config  # 传递配置
             )
             
             if artifact and artifact.success:
@@ -499,11 +515,27 @@ if __name__ == "__main__":
                        help="直接指定任务描述")
     parser.add_argument("--task_file", type=str, default="task.json", 
                        help="任务列表文件路径 (default: task.json)")
+    parser.add_argument("--use_ocr", action="store_true", default=True,
+                       help="是否使用OCR提取页面文本 (default: True)")
+    parser.add_argument("--num_screenshots", type=int, default=1,
+                       help="使用最后几张截图进行artifact提取 (default: 1)")
+    parser.add_argument("--use_text_with_image", action="store_true", default=True,
+                       help="是否将文本和截图一起发送给模型 (default: True)")
+    parser.add_argument("--enable_hybrid_ocr", action="store_true", default=True,
+                       help="是否启用混合OCR识别 (default: True)")
     
     args = parser.parse_args()
 
     # 使用命令行参数初始化
     init(args.service_ip, args.decider_port, args.grounder_port, args.planner_port)
+    
+    # 创建Artifact提取配置
+    extract_config = ExtractArtifactConfig(
+        use_ocr=args.use_ocr,
+        num_screenshots=args.num_screenshots,
+        use_text_with_image=args.use_text_with_image,
+        enable_hybrid_ocr=args.enable_hybrid_ocr
+    )
     
     device = AndroidDevice()
     logging.info("已连接到设备")
@@ -544,7 +576,7 @@ if __name__ == "__main__":
         
         try:
             # 使用统一入口执行任务
-            result = execute_task(task_description, device, data_base_dir)
+            result = execute_task(task_description, device, data_base_dir, extract_config)
             results.append(result)
             
             # 输出执行结果摘要

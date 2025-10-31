@@ -1,0 +1,8 @@
+OPENAI_API_KEY=your_openai_api_key
+OPENAI_BASE_URL=your_openai_base_url
+MILVUS_URL=http://localhost:19530
+EMBEDDING_MODEL=multi-qa-MiniLM-L6-cos-v1
+EMBEDDING_MODEL_DIMS=384
+NEO4J_URL=bolt://localhost:7687
+NEO4J_USERNAME=neo4j
+NEO4J_PASSWORD=neo4j123

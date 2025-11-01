@@ -1,3 +1,4 @@
+import random
 from PIL import Image, ImageDraw, ImageFont
 import textwrap
 import cv2
@@ -387,6 +388,10 @@ def auto_annotate(root, chain, task_description, actions):
 
     print(f"[Reasoning] finished, saved to {react_json}")
 
+def remove_punct(task):
+    import string
+    return task.translate(str.maketrans('', '', string.punctuation + '，。！？；：“”‘’（）【】《》'))
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Auto annotation of GUI data')
     parser.add_argument('--data_path', type=str, default='data', help='root directory containing the data (default: data)')
@@ -438,11 +443,10 @@ if __name__ == "__main__":
             task_description = data.get("task_description")
             actions = data.get("actions")
 
-            # 不要随意开启这个，ocr有风险
-            actions = add_bounds_to_action(root, actions)
-            data["actions"] = actions
-            with open(actions_json, 'w', encoding='utf-8') as file:
-                json.dump(data, file, ensure_ascii=False, indent=4)
+            # actions = add_bounds_to_action(root, actions)
+            # data["actions"] = actions
+            # with open(actions_json, 'w', encoding='utf-8') as file:
+            #     json.dump(data, file, ensure_ascii=False, indent=4)
             
             visual_prompt(root, actions)
             auto_annotate(root, chain, task_description, actions)

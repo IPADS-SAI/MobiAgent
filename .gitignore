@@ -18,3 +18,5 @@ runner/mobiagent/data-*
 runner/HarmonyOS-mobiagent/
 RAG/
 utils/experience/BAAI/
+
+output*/

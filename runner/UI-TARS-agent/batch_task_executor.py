@@ -457,7 +457,7 @@ class BatchTaskExecutor:
                 except Exception as e:
                     logger.warning(f"复制步骤资源失败 (step {i}): {e}")
 
-            reacts_path = os.path.join(task_dir, "reacts.json")
+            reacts_path = os.path.join(task_dir, "react.json")
             with open(reacts_path, 'w', encoding='utf-8') as f:
                 json.dump(reacts, f, ensure_ascii=False, indent=4)
 
@@ -601,7 +601,7 @@ class BatchTaskExecutor:
                             logger.warning(f"无法获取图片尺寸: {e}")
                         
                         thought, raw_action, parsed_action = ActionParser.parse_response(
-                            response, image_height, image_width
+                            response, image_height, image_width, model_name=framework.config.model_name
                         )
                         
                         logger.info(f"思考: {thought}")

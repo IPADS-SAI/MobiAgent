@@ -34,6 +34,14 @@
 - 酷狗音乐: com.kugou.android
 - 抖音: com.ss.android.ugc.aweme
 - 高德地图: com.autonavi.minimap
+- 咸鱼: com.taobao.idlefish
+- 华为商城：com.vmall.client
+- 华为音乐: com.huawei.music
+- 华为视频：com.huawei.himovie
+- 华为应用市场：com.huawei.appmarket
+- 拼多多：com.xunmeng.pinduoduo
+- 大众点评: com.dianping.v1
+- 浏览器: com.microsoft.emmx
 
 ## 任务要求
 1.  **选择应用**：根据用户任务描述，从“可用应用列表”中选择最合适的应用。

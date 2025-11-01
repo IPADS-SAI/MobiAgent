@@ -173,7 +173,7 @@ class UITarsAutomationFramework:
                         logger.warning(f"坐标可视化失败: {e}")
                 
                 # 执行点击操作（坐标已经是绝对坐标）
-                logger.info(f"设备点击坐标: ({x}, {y})")
+                logger.info(f"设备实际点击坐标: ({x}, {y})")
                 
                 # 确保坐标为整数
                 x, y = round(x), round(y)
@@ -208,7 +208,7 @@ class UITarsAutomationFramework:
                 return ActionResult(True, f"长按 ({x}, {y})")
             
             elif action_type == 'type':
-                # 使用ADB键盘进行输入
+                # 使用ADB键盘进行输入（参考app.py的实现）
                 text = params['text']
                 logger.info(f"输入文本: {text}")
                 
@@ -239,40 +239,52 @@ class UITarsAutomationFramework:
             elif action_type == 'scroll':
                 direction = params['direction'].lower()
                 
-                # 获取坐标，如果没有提供则使用屏幕中心
-                if 'x' in params and 'y' in params:
-                    x, y = params['x'], params['y']
-                else:
-                    # 使用设备屏幕中心作为滚动起点
-                    device_info = self.device.info
-                    x = device_info['displayWidth'] // 2
-                    y = device_info['displayHeight'] // 2
+                # # 获取坐标，如果没有提供则使用屏幕中心
+                # if 'x' in params and 'y' in params:
+                #     x, y = params['x'], params['y']
+                # else:
+                #     # 使用设备屏幕中心作为滚动起点
+                #     device_info = self.device.info
+                #     x = device_info['displayWidth'] // 2
+                #     y = device_info['displayHeight'] // 2
                 
-                # 坐标转换（仅当有原始坐标时）
-                if screenshot_path and 'x' in params and 'y' in params:
-                    try:
-                        img = Image.open(screenshot_path)
-                        width, height = img.size
-                        actual_x, actual_y = CoordinateProcessor.convert_model_coords_to_actual(
-                            params['x'], params['y'], width, height
-                        )
-                        x, y = actual_x, actual_y
-                    except Exception as e:
-                        logger.warning(f"坐标转换失败，使用原始坐标: {e}")
+                # # 坐标转换（仅当有原始坐标时）
+                # if screenshot_path and 'x' in params and 'y' in params:
+                #     try:
+                #         img = Image.open(screenshot_path)
+                #         width, height = img.size
+                #         actual_x, actual_y = CoordinateProcessor.convert_model_coords_to_actual(
+                #             params['x'], params['y'], width, height
+                #         )
+                #         x, y = actual_x, actual_y
+                #     except Exception as e:
+                #         logger.warning(f"坐标转换失败，使用原始坐标: {e}")
                 
-                logger.info(f"滚动操作: {direction} at ({x}, {y})")
-                x, y = round(x), round(y)
+                # logger.info(f"滚动操作: {direction} at ({x}, {y})")
+                # x, y = round(x), round(y)
                 
-                # 参考滚动实现，使用较短的duration
+                # # 参考app.py的滚动实现，使用较短的duration
+                # if direction == 'down':
+                #     self.device.swipe(x, y, x, y - 300, duration=0.1)
+                # elif direction == 'up':
+                #     self.device.swipe(x, y, x, y + 300, duration=0.1)
+                # elif direction == 'left':
+                #     self.device.swipe(x, y, x + 300, y, duration=0.1)
+                # elif direction == 'right':
+                #     self.device.swipe(x, y, x - 300, y, duration=0.1)
+                # logger.info(f"滚动完成: {direction}, 起点({x}, {y}), 终点根据方向变化")
                 if direction == 'down':
-                    self.device.swipe(x, y, x, y - 300, duration=0.1)
+                    self.device.swipe_ext(direction=direction, duration=0.1)
                 elif direction == 'up':
-                    self.device.swipe(x, y, x, y + 300, duration=0.1)
+                    self.device.swipe_ext(direction=direction, duration=0.1)
                 elif direction == 'left':
-                    self.device.swipe(x, y, x + 300, y, duration=0.1)
+                    self.device.swipe_ext(direction=direction, duration=0.1)
                 elif direction == 'right':
-                    self.device.swipe(x, y, x - 300, y, duration=0.1)
+                    self.device.swipe_ext(direction=direction, duration=0.1)
+                else:
+                    return ActionResult(False, f"未知滚动方向: {direction}")
                 
+                logger.info(f"已执行滚动: {direction}")
                 time.sleep(0.5)
                 return ActionResult(True, f"滚动 {direction}")
             
@@ -300,17 +312,17 @@ class UITarsAutomationFramework:
                 start_x, start_y = round(start_x), round(start_y)
                 end_x, end_y = round(end_x), round(end_y)
                 
-                # 参考拖拽实现
+                # 参考app.py的拖拽实现
                 self.device.swipe(start_x, start_y, end_x, end_y, duration=0.1)
                 time.sleep(0.5)
                 
                 return ActionResult(True, f"拖拽 ({start_x}, {start_y}) → ({end_x}, {end_y})")
             
-            elif action_type == 'press_home':
-                logger.info("按下Home键")
-                self.device.press("home")
-                time.sleep(0.5)
-                return ActionResult(True, "按下Home键")
+            # elif action_type == 'press_home':
+            #     logger.info("按下Home键")
+            #     self.device.press("home")
+            #     time.sleep(0.5)
+            #     return ActionResult(True, "按下Home键")
             
             elif action_type == 'press_back':
                 logger.info("按下返回键")
@@ -326,7 +338,7 @@ class UITarsAutomationFramework:
                 package_name = APP_PACKAGES.get(app_name)
                 if package_name:
                     try:
-                        # 使用device.app_start启动应用
+                        # 使用device.app_start启动应用（参考app.py）
                         self.device.app_start(package_name, stop=True)
                         time.sleep(2.0)  # 等待应用启动
                         logger.info(f"成功启动应用: {app_name} ({package_name})")
@@ -400,7 +412,7 @@ class UITarsAutomationFramework:
                         logger.warning(f"无法获取图片尺寸: {e}")
                 
                 thought, raw_action, parsed_action = ActionParser.parse_response(
-                    response, image_height, image_width
+                    response, image_height, image_width, model_name=self.config.model_name
                 )
                 
                 logger.info(f"思考: {thought}")

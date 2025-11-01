@@ -20,7 +20,7 @@ class ActionParser:
     
     @staticmethod
     def parse_response(response: str, image_height: Optional[int] = None, 
-                      image_width: Optional[int] = None, model_type: str = "qwen25vl") -> Tuple[str, str, Dict]:
+                      image_width: Optional[int] = None, model_name ="UI-TARS-7B", model_type: str = "qwen25vl" ) -> Tuple[str, str, Dict]:
         """
         解析模型响应，使用UI-TARS官方完整流程：
         1. parse_action_to_structure_output - 解析响应为结构化数据
@@ -49,6 +49,10 @@ class ActionParser:
             logger.debug(f"原始图像尺寸: {image_width}x{image_height}")
             logger.debug(f"Smart resize尺寸: {smart_width}x{smart_height}")
             logger.debug(f"模型响应: {response}")
+            # for debug
+            print(f"Original Image Size: {image_width}x{image_height}")
+            print(f"Smart Resize Size: {smart_width}x{smart_height}")
+            print(f"Model Response: {response}")
             
             # 步骤2: 使用官方parse_action_to_structure_output解析
             actions = ui_tars_parser.parse_action_to_structure_output(
@@ -64,7 +68,7 @@ class ActionParser:
             
             # 取第一个动作
             action = actions[0]
-            
+            print("Parsed action:", action)  # for debug
             # 提取thought和raw_action
             thought = action.get('thought', '')
             raw_action = ActionParser._extract_raw_action(response)
@@ -73,7 +77,6 @@ class ActionParser:
             pyautogui_code = ui_tars_parser.parsing_response_to_pyautogui_code(
                 action, image_height, image_width
             )
-            
             # 调试信息
             logger.debug(f"Action结构化输出: {action}")
             logger.info(f"PyAutoGUI代码: {pyautogui_code}")
@@ -87,55 +90,75 @@ class ActionParser:
             logger.info(f"最终解析结果: {parsed_action}")
             
             # 检查是否需要将相对坐标转换为绝对坐标
-            if parsed_action['action_type'] in ['click', 'double_click', 'right_click', 'hover']:
-                x = parsed_action['action_params'].get('x', 0)
-                y = parsed_action['action_params'].get('y', 0)
+            if model_name.startswith("UI-TARS-7B"):
+                print("Using UI-TARS-7B model coordinate adjustment")
+                # UI-TARS-7B模型默认输出相对坐标
+                if parsed_action['action_type'] in ['click', 'double_click', 'right_click', 'hover']:
+                    x = parsed_action['action_params'].get('x', 0)
+                    y = parsed_action['action_params'].get('y', 0)
+                    
+                    # 如果x,y的值在0-1区间，则判定为相对位置
+                    if 0 <= x <= 1 and 0 <= y <= 1:
+                        # 转换为绝对坐标
+                        parsed_action['action_params']['x'] = int(x * image_width)
+                        parsed_action['action_params']['y'] = int(y * image_height)
+                        logger.info(f"转换相对坐标({x:.3f}, {y:.3f})为绝对坐标: {parsed_action['action_params']}")
+                    else:
+                        # 确保坐标是整数
+                        parsed_action['action_params']['x'] = int(x)
+                        parsed_action['action_params']['y'] = int(y)
                 
-                # 如果x,y的值在0-1区间，则判定为相对位置
-                if 0 <= x <= 1 and 0 <= y <= 1:
-                    # 转换为绝对坐标
-                    parsed_action['action_params']['x'] = int(x * image_width)
-                    parsed_action['action_params']['y'] = int(y * image_height)
-                    logger.info(f"转换相对坐标({x:.3f}, {y:.3f})为绝对坐标: {parsed_action['action_params']}")
-                else:
-                    # 确保坐标是整数
-                    parsed_action['action_params']['x'] = int(x)
-                    parsed_action['action_params']['y'] = int(y)
-            
-            elif parsed_action['action_type'] == 'scroll' and 'x' in parsed_action['action_params']:
-                x = parsed_action['action_params'].get('x', 0)
-                y = parsed_action['action_params'].get('y', 0)
+                elif parsed_action['action_type'] == 'scroll' and 'x' in parsed_action['action_params']:
+                    x = parsed_action['action_params'].get('x', 0)
+                    y = parsed_action['action_params'].get('y', 0)
+                    
+                    if 0 <= x <= 1 and 0 <= y <= 1:
+                        parsed_action['action_params']['x'] = int(x * image_width)
+                        parsed_action['action_params']['y'] = int(y * image_height)
+                        logger.info(f"转换滚动相对坐标为绝对坐标: {parsed_action['action_params']}")
+                    else:
+                        parsed_action['action_params']['x'] = int(x)
+                        parsed_action['action_params']['y'] = int(y)
                 
-                if 0 <= x <= 1 and 0 <= y <= 1:
-                    parsed_action['action_params']['x'] = int(x * image_width)
-                    parsed_action['action_params']['y'] = int(y * image_height)
-                    logger.info(f"转换滚动相对坐标为绝对坐标: {parsed_action['action_params']}")
-                else:
-                    parsed_action['action_params']['x'] = int(x)
-                    parsed_action['action_params']['y'] = int(y)
-            
-            elif parsed_action['action_type'] == 'drag':
-                # 处理拖拽坐标
-                start_x = parsed_action['action_params'].get('start_x', 0)
-                start_y = parsed_action['action_params'].get('start_y', 0)
-                end_x = parsed_action['action_params'].get('end_x', 0)
-                end_y = parsed_action['action_params'].get('end_y', 0)
-                
-                if (0 <= start_x <= 1 and 0 <= start_y <= 1 and 
-                    0 <= end_x <= 1 and 0 <= end_y <= 1):
-                    parsed_action['action_params']['start_x'] = int(start_x * image_width)
-                    parsed_action['action_params']['start_y'] = int(start_y * image_height)
-                    parsed_action['action_params']['end_x'] = int(end_x * image_width)
-                    parsed_action['action_params']['end_y'] = int(end_y * image_height)
-                    logger.info(f"转换拖拽相对坐标为绝对坐标: {parsed_action['action_params']}")
-                else:
-                    parsed_action['action_params']['start_x'] = int(start_x)
-                    parsed_action['action_params']['start_y'] = int(start_y)
-                    parsed_action['action_params']['end_x'] = int(end_x)
-                    parsed_action['action_params']['end_y'] = int(end_y)
-            
+                elif parsed_action['action_type'] == 'drag':
+                    # 处理拖拽坐标
+                    start_x = parsed_action['action_params'].get('start_x', 0)
+                    start_y = parsed_action['action_params'].get('start_y', 0)
+                    end_x = parsed_action['action_params'].get('end_x', 0)
+                    end_y = parsed_action['action_params'].get('end_y', 0)
+                    
+                    if (0 <= start_x <= 1 and 0 <= start_y <= 1 and 
+                        0 <= end_x <= 1 and 0 <= end_y <= 1):
+                        parsed_action['action_params']['start_x'] = int(start_x * image_width)
+                        parsed_action['action_params']['start_y'] = int(start_y * image_height)
+                        parsed_action['action_params']['end_x'] = int(end_x * image_width)
+                        parsed_action['action_params']['end_y'] = int(end_y * image_height)
+                        logger.info(f"转换拖拽相对坐标为绝对坐标: {parsed_action['action_params']}")
+                    else:
+                        parsed_action['action_params']['start_x'] = int(start_x)
+                        parsed_action['action_params']['start_y'] = int(start_y)
+                        parsed_action['action_params']['end_x'] = int(end_x)
+                        parsed_action['action_params']['end_y'] = int(end_y)
+            elif model_name.startswith("UI-TARS-1.5"):
+                print("Using UI-TARS-1.5 model coordinate adjustment")
+                # UI-TARS-1.5模型默认输出绝对坐标
+                if parsed_action['action_type'] in ['click', 'double_click', 'right_click', 'hover']:
+                    parsed_action['action_params']['x'] = int(parsed_action['action_params'].get('x', 0) * 1000)
+                    parsed_action['action_params']['y'] = int(parsed_action['action_params'].get('y', 0) * 1000)
+                elif parsed_action['action_type'] == 'scroll' and 'x' in parsed_action['action_params']:
+                    parsed_action['action_params']['x'] = int(parsed_action['action_params'].get('x', 0) * 1000)
+                    parsed_action['action_params']['y'] = int(parsed_action['action_params'].get('y', 0) * 1000)
+                elif parsed_action['action_type'] == 'drag':
+                    parsed_action['action_params']['start_x'] = int(parsed_action['action_params'].get('start_x', 0) * 1000)
+                    parsed_action['action_params']['start_y'] = int(parsed_action['action_params'].get('start_y', 0) * 1000)
+                    parsed_action['action_params']['end_x'] = int(parsed_action['action_params'].get('end_x', 0) * 1000)
+                    parsed_action['action_params']['end_y'] = int(parsed_action['action_params'].get('end_y', 0) * 1000)
+            else:
+                print("Unknown model name, no coordinate adjustment applied.")
+                return thought, raw_action, parsed_action
+            # 成功完成所有坐标调整后，确保返回解析结果
             return thought, raw_action, parsed_action
-            
+
         except Exception as e:
             logger.error(f"UI-TARS官方解析失败: {e}")
             # 使用简单备用解析
@@ -180,7 +203,13 @@ class ActionParser:
             scroll_match = re.search(r'pyautogui\.scroll\((-?\d+)', pyautogui_code)
             if scroll_match:
                 scroll_value = int(scroll_match.group(1))
-                direction = 'up' if scroll_value > 0 else 'down'
+                # 滑动方向说明：
+                # UP表示向上滑动手指来向上滚动内容并显示下方内容；
+                # DOWN表示向下滑动手指来向下滚动内容并显示上方内容；
+                # LEFT表示向左滑动手指来向左滚动内容；
+                # RIGHT表示向右滑动手指来向右滚动内容。
+
+                direction = 'UP' if scroll_value < 0 else 'DOWN'
                 
                 # 检查是否有坐标
                 coord_match = re.search(r'x=(\d+(?:\.\d+)?), y=(\d+(?:\.\d+)?)', pyautogui_code)
@@ -188,7 +217,8 @@ class ActionParser:
                 if coord_match:
                     params['x'] = float(coord_match.group(1))
                     params['y'] = float(coord_match.group(2))
-                
+                #for debug
+                print("scroll params:", params)
                 return {'action_type': 'scroll', 'action_params': params}
         
         elif action_type in ["drag", "select"]:

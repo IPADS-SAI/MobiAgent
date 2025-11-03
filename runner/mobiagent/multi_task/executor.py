@@ -164,6 +164,34 @@ def robust_json_loads(s: str) -> dict:
 
 import io
 
+def convert_qwen3_coordinates_to_absolute(bbox_or_coords, img_width, img_height, is_bbox=True):
+    """
+    将 Qwen3 模型返回的相对坐标（0-1000范围）转换为绝对坐标
+    
+    Args:
+        bbox_or_coords: 相对坐标或边界框，范围为 0-1000
+        img_width: 图像宽度
+        img_height: 图像高度
+        is_bbox: 是否为边界框（True）或坐标点（False）
+        
+    Returns:
+        转换后的绝对坐标或边界框
+    """
+    if is_bbox:
+        # bbox: [x1, y1, x2, y2]
+        x1, y1, x2, y2 = bbox_or_coords
+        x1 = int(x1 / 1000 * img_width)
+        x2 = int(x2 / 1000 * img_width)
+        y1 = int(y1 / 1000 * img_height)
+        y2 = int(y2 / 1000 * img_height)
+        return [x1, y1, x2, y2]
+    else:
+        # coordinates: [x, y]
+        x, y = bbox_or_coords
+        x = int(x / 1000 * img_width)
+        y = int(y / 1000 * img_height)
+        return [x, y]
+
 def task_in_app(
     app: str,
     old_task: str,
@@ -174,7 +202,8 @@ def task_in_app(
     grounder_client: OpenAI,
     decider_model: str,
     grounder_model: str,
-    bbox_flag: bool = True
+    bbox_flag: bool = True,
+    use_qwen3: bool = True
 ) -> Dict:
     """
     执行单个子任务（在单个APP内）
@@ -190,6 +219,7 @@ def task_in_app(
         decider_model: Decider模型名称
         grounder_model: Grounder模型名称
         bbox_flag: 是否使用bbox模式
+        use_qwen3: 是否使用Qwen3模型进行坐标转换
     
     Returns:
         dict: 包含执行结果的字典
@@ -331,19 +361,20 @@ def task_in_app(
             
             if bbox_flag:
                 bbox = grounder_response.get("bbox") or grounder_response.get("bbox_2d") or grounder_response.get("bbox-2d")
-                x1, y1, x2, y2 = [int(coord) for coord in bbox]
-                
-                x1 = int(x1 / 1000 * img.width)
-                x2 = int(x2 / 1000 * img.width)
-                y1 = int(y1 / 1000 * img.height)
-                y2 = int(y2 / 1000 * img.height)
-                
+            
+                # 如果使用 Qwen3 模型，进行坐标转换
+                if use_qwen3:
+                    x1, y1, x2, y2 = [int(coord) for coord in bbox]
+                    bbox = convert_qwen3_coordinates_to_absolute(bbox, img.width, img.height, is_bbox=True)
+                    x1, y1, x2, y2 = bbox
+                else:
+                    x1, y1, x2, y2 = [int(coord / factor) for coord in bbox]
+
                 position_x = (x1 + x2) // 2
                 position_y = (y1 + y2) // 2
                 
                 if not skip_temp:
                     device.click(position_x, position_y)
-                    time.sleep(1)
                 
                 actions.append({
                     "type": "click",
@@ -360,12 +391,17 @@ def task_in_app(
                 
             else:
                 coordinates = grounder_response["coordinates"]
-                x, y = [int(coord) for coord in coordinates]
-                x = int(x / 1000 * img.width)
-                y = int(y / 1000 * img.height)
+
+                # 如果使用 Qwen3 模型，进行坐标转换
+                if use_qwen3:
+                    x, y = [int(coord) for coord in coordinates]
+                    coords = convert_qwen3_coordinates_to_absolute(coordinates, img.width, img.height, is_bbox=False)
+                    x, y = coords
+                else:
+                     x, y = [int(coord / factor) for coord in coordinates]
+                
                 if not skip_temp:
                     device.click(x, y)
-                    time.sleep(1)
                 actions.append({
                     "type": "click",
                     "position_x": x,
@@ -393,8 +429,7 @@ def task_in_app(
             direction = decider_response["parameters"]["direction"]
             
             if direction == "DOWN":
-                device.swipe(direction.lower(), 2)
-                time.sleep(1)
+                device.swipe(direction.lower(), 1)
             elif direction in ["UP", "LEFT", "RIGHT"]:
                 device.swipe(direction.lower())
             else:
@@ -429,9 +464,7 @@ def task_in_app(
         
         else:
             raise ValueError(f"Unknown action: {action}")
-        
-        time.sleep(1)
-    
+
     # 确保最终状态被保存（如果还没有保存的话）
     if actions:  # 如果有执行过动作
         _save_execution_data(data_dir, app, old_task, task, actions, reacts)

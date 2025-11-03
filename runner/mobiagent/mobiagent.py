@@ -14,6 +14,11 @@ from PIL import Image, ImageDraw, ImageFont
 import textwrap
 import cv2
 import numpy as np
+from utils.local_experience import PromptTemplateSearch 
+from pathlib import Path
+import sys
+from hmdriver2.driver import Driver
+from utils.load_md_prompt import load_prompt
 from dotenv import load_dotenv
 from utils.local_experience import PromptTemplateSearch 
 from pathlib import Path
@@ -24,13 +29,27 @@ from .user_preference_extractor import (
     combine_context
 )
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# 清除可能已存在的 handlers，避免重复配置
+for handler in logging.root.handlers[:]:
+    logging.root.removeHandler(handler)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    stream=sys.stdout,
+    force=True  # Python 3.8+ 支持 force=True，强制重置
+)
+# >>>>>>>>>> logging 配置结束 <<<<<<<<<<
 
 MAX_STEPS = 35
 
 class Device(ABC):
     @abstractmethod
     def start_app(self, app):
+        pass
+    
+    @abstractmethod
+    def app_stop(self, package_name):
         pass
 
     @abstractmethod
@@ -103,7 +122,10 @@ class AndroidDevice(Device):
         time.sleep(1)
         if not self.d.app_wait(package_name, timeout=10):
             raise RuntimeError(f"Failed to start package '{package_name}'")
-        
+
+    def app_stop(self, package_name):
+        self.d.app_stop(package_name)
+
     def screenshot(self, path):
         self.d.screenshot(path)
 
@@ -113,12 +135,12 @@ class AndroidDevice(Device):
     def input(self, text):
         current_ime = self.d.current_ime()
         self.d.shell(['settings', 'put', 'secure', 'default_input_method', 'com.android.adbkeyboard/.AdbIME'])
-        time.sleep(1)
+        time.sleep(0.5)
         charsb64 = base64.b64encode(text.encode('utf-8')).decode('utf-8')
         self.d.shell(['am', 'broadcast', '-a', 'ADB_INPUT_B64', '--es', 'msg', charsb64])
-        time.sleep(1)
+        time.sleep(0.5)
         self.d.shell(['settings', 'put', 'secure', 'default_input_method', current_ime])
-        time.sleep(1)
+        time.sleep(0.5)
 
     def swipe(self, direction, scale=0.5):
         # self.d.swipe_ext(direction, scale)
@@ -126,6 +148,87 @@ class AndroidDevice(Device):
 
     def keyevent(self, key):
         self.d.keyevent(key)
+
+    def dump_hierarchy(self):
+        return self.d.dump_hierarchy()
+
+class HarmonyDevice(Device):
+    def __init__(self):
+        super().__init__()
+        self.d = Driver()
+        self.app_package_names = {
+            "携程": "com.ctrip.harmonynext",
+            "飞猪": "com.fliggy.hmos",
+            "IntelliOS": "ohos.hongmeng.intellios",
+            "同城": "com.tongcheng.hmos",
+            "携程旅行": "com.ctrip.harmonynext",
+            "饿了么": "me.ele.eleme",
+            "知乎": "com.zhihu.hmos",
+            "哔哩哔哩": "yylx.danmaku.bili",
+            "微信": "com.tencent.wechat",
+            "小红书": "com.xingin.xhs_hos",
+            "QQ音乐": "com.tencent.hm.qqmusic",
+            "高德地图": "com.amap.hmapp",
+            "淘宝": "com.taobao.taobao4hmos",
+            "微博": "com.sina.weibo.stage",
+            "京东": "com.jd.hm.mall",
+            "飞猪旅行": "com.fliggy.hmos",
+            "天气": "com.huawei.hmsapp.totemweather",
+            "什么值得买": "com.smzdm.client.hmos",
+            "闲鱼": "com.taobao.idlefish4ohos",
+            "慧通差旅": "com.smartcom.itravelhm",
+            "PowerAgent": "com.example.osagent",
+            "航旅纵横": "com.umetrip.hm.app",
+            "滴滴出行": "com.sdu.didi.hmos.psnger",
+            "电子邮件": "com.huawei.hmos.email",
+            "图库": "com.huawei.hmos.photos",
+            "日历": "com.huawei.hmos.calendar",
+            "心声社区": "com.huawei.it.hmxinsheng",
+            "信息": "com.ohos.mms",
+            "文件管理": "com.huawei.hmos.files",
+            "运动健康": "com.huawei.hmos.health",
+            "智慧生活": "com.huawei.hmos.ailife",
+            "豆包": "com.larus.nova.hm",
+            "WeLink": "com.huawei.it.welink",
+            "设置": "com.huawei.hmos.settings",
+            "懂车帝": "com.ss.dcar.auto",
+            "美团外卖": "com.meituan.takeaway",
+            "大众点评": "com.sankuai.dianping",
+            "美团": "com.sankuai.hmeituan",
+            "浏览器": "com.huawei.hmos.browser",
+            "微博": "com.sina.weibo.stage",
+            "饿了么": "me.ele.eleme",
+            "拼多多": "com.xunmeng.pinduoduo.hos"
+        }
+
+    def start_app(self, app):
+        package_name = self.app_package_names.get(app)
+        if not package_name:
+            raise ValueError(f"App '{app}' is not registered with a package name.")
+        self.d.start_app(package_name)
+        time.sleep(1.5)
+
+    def app_start(self, package_name):
+        self.d.start_app(package_name)
+        time.sleep(1.5)
+
+    def app_stop(self, package_name):
+        self.d.stop_app(package_name)
+
+    def screenshot(self, path):
+        self.d.screenshot(path)
+
+    def click(self, x, y):
+        self.d.click(x, y)
+
+    def input(self, text):
+        self.d.input_text(text)
+
+    def swipe(self, direction, scale=0.5):
+        self.d.swipe_ext(direction, scale=scale)
+
+    def keyevent(self, key):
+        self.d.press_key(key)
 
     def dump_hierarchy(self):
         return self.d.dump_hierarchy()
@@ -177,7 +280,10 @@ Your action space includes:
 - Name: wait, Parameters: (no parameters, will wait for 1 second).
 - Name: done, Parameters: (no parameters).
 Your output should be a JSON object with the following format:
-{{"reasoning": "Your reasoning here", "action": "The next action (one of click, input, swipe, done)", "parameters": {{"param1": "value1", ...}}}}"""
+{{"reasoning": "Your reasoning here", "action": "The next action (one of click, input, swipe, done)", "parameters": {{"param1": "value1", ...}}}}
+
+Remember your task is "{task}".
+"""
 
 grounder_prompt_template_no_bbox = '''
 Based on the screenshot, user's intent and the description of the target UI element, provide the coordinates of the element using **absolute coordinates**.
@@ -227,8 +333,7 @@ grounder_prompt_template_bbox_zh = """"
 你的输出应该是一个如下格式的JSON对象：
 {{"bbox": [x1, y1, x2, y2]}}"""
 
-screenshot_path = "screenshot.jpg"
-factor = 1.0
+factor = 0.5
 
 prices = {}
 
@@ -270,8 +375,6 @@ class ActionPlan(BaseModel):
 
 # 2. 从 Pydantic 模型生成 JSON Schema
 json_schema = ActionPlan.model_json_schema()
-
-print(ActionPlan.model_json_schema())
 
 class GroundResponse(BaseModel):
     coordinates: list[int] = Field(
@@ -321,7 +424,23 @@ def parse_json_response(response_str: str) -> dict:
                 logging.error(f"原始响应: {response_str}")
                 raise ValueError(f"无法解析JSON响应: {e}")
 
-def get_screenshot(device):
+def get_screenshot(device, device_type="Android"):
+    """
+    获取设备截图并编码为base64
+    
+    Args:
+        device: 设备对象
+        device_type: 设备类型，"Android" 或 "Harmony"
+        
+    Returns:
+        Base64编码的截图字符串
+    """
+    # 根据设备类型使用不同的截图路径，避免冲突
+    if device_type == "Android":
+        screenshot_path = "screenshot-Android.jpg"
+    else:
+        screenshot_path = "screenshot-Harmony.jpg"
+    
     device.screenshot(screenshot_path)
     # resize the screenshot to reduce the size for processing
     img = Image.open(screenshot_path)
@@ -330,6 +449,34 @@ def get_screenshot(device):
     img.save(buffered, format="JPEG")
     screenshot = base64.b64encode(buffered.getvalue()).decode("utf-8")
     return screenshot
+
+def convert_qwen3_coordinates_to_absolute(bbox_or_coords, img_width, img_height, is_bbox=True):
+    """
+    将 Qwen3 模型返回的相对坐标（0-1000范围）转换为绝对坐标
+    
+    Args:
+        bbox_or_coords: 相对坐标或边界框，范围为 0-1000
+        img_width: 图像宽度
+        img_height: 图像高度
+        is_bbox: 是否为边界框（True）或坐标点（False）
+        
+    Returns:
+        转换后的绝对坐标或边界框
+    """
+    if is_bbox:
+        # bbox: [x1, y1, x2, y2]
+        x1, y1, x2, y2 = bbox_or_coords
+        x1 = int(x1 / 1000 * img_width)
+        x2 = int(x2 / 1000 * img_width)
+        y1 = int(y1 / 1000 * img_height)
+        y2 = int(y2 / 1000 * img_height)
+        return [x1, y1, x2, y2]
+    else:
+        # coordinates: [x, y]
+        x, y = bbox_or_coords
+        x = int(x / 1000 * img_width)
+        y = int(y / 1000 * img_height)
+        return [x, y]
 
 def create_swipe_visualization(data_dir, image_index, direction):
     """为滑动动作创建可视化图像"""
@@ -383,7 +530,7 @@ def create_swipe_visualization(data_dir, image_index, direction):
         logging.warning(f"Failed to create swipe visualization: {e}")
 
 
-def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True):
+def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3=True, device_type="Android"):
     history = []
     actions = []
     reacts = []
@@ -397,8 +544,8 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True):
         else:
             history_str = "\n".join(f"{idx}. {h}" for idx, h in enumerate(history, 1))
 
-        screenshot_resize = get_screenshot(device)
-
+        screenshot_resize = get_screenshot(device, device_type)
+        
         decider_prompt = decider_prompt_template.format(
             task=task,
             history=history_str
@@ -433,7 +580,6 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True):
         logging.info(f"Decider response: \n{decider_response_str}")
         # 使用 ActionPlan 解析返回的 JSON 字符串
         parsed_plan = ActionPlan.model_validate_json(decider_response_str)
-        logging.info(f"Parsed plan: {parsed_plan}")
 
         # 预处理 decider_response_str，增强健壮性
         def robust_json_loads(s):
@@ -468,8 +614,15 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True):
         # compute image index for this loop iteration (1-based)
         image_index = len(actions) + 1
         current_dir = os.getcwd()
-        img_path = os.path.join(current_dir, f"screenshot.jpg")
-        save_path = os.path.join(data_dir, f"{image_index}.jpg")
+        current_image = ""
+        if device_type == "Android":
+            img_path = os.path.join(current_dir, f"screenshot-Android.jpg")
+            save_path = os.path.join(data_dir, f"{image_index}.jpg")
+            current_image = f"screenshot-Android.jpg"
+        else:
+            img_path = os.path.join(current_dir, f"screenshot-Harmony.jpg")
+            save_path = os.path.join(data_dir, f"{image_index}.jpg")
+            current_image = f"screenshot-Harmony.jpg"
         img = Image.open(img_path)
         img.save(save_path)
 
@@ -480,10 +633,31 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True):
             except Exception:
                 pass
 
-        hierarchy_path = os.path.join(data_dir, f"{image_index}.xml")
+        # 根据设备类型保存hierarchy
         hierarchy = device.dump_hierarchy()
-        with open(hierarchy_path, "w", encoding="utf-8") as f:
-            f.write(hierarchy)
+        # print(hierarchy)
+        
+        if device_type == "Android":
+            # Android设备保存为XML格式
+            hierarchy_path = os.path.join(data_dir, f"{image_index}.xml")
+            with open(hierarchy_path, "w", encoding="utf-8") as f:
+                f.write(hierarchy)
+        else:
+            # Harmony设备保存为JSON格式
+            hierarchy_path = os.path.join(data_dir, f"{image_index}.json")
+            try:
+                # 尝试将hierarchy解析为JSON（如果已是JSON字符串）
+                if isinstance(hierarchy, str):
+                    hierarchy_json = json.loads(hierarchy)
+                else:
+                    hierarchy_json = hierarchy
+                with open(hierarchy_path, "w", encoding="utf-8") as f:
+                    json.dump(hierarchy_json, f, ensure_ascii=False, indent=2)
+            except (json.JSONDecodeError, TypeError):
+                # 如果解析失败，直接保存为字符串
+                logging.warning(f"Failed to parse hierarchy as JSON, saving as plain text")
+                with open(hierarchy_path, "w", encoding="utf-8") as f:
+                    f.write(str(hierarchy))
         
         if action == "done":
             print("Task completed.")
@@ -529,15 +703,20 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True):
                 if bbox_2d is not None:
                     bbox = bbox_2d
 
-                x1, y1, x2, y2 = [int(coord) for coord in bbox]
-                x1 = int(x1 /1000 * img.width)
-                x2 = int(x2 /1000 * img.width)
-                y1 = int(y1 /1000 * img.height)
-                y2 = int(y2 /1000 * img.height)
+                # 如果使用 Qwen3 模型，进行坐标转换
+                if use_qwen3:
+                    bbox = convert_qwen3_coordinates_to_absolute(bbox, img.width, img.height, is_bbox=True)
+                    x1, y1, x2, y2 = bbox
+                else:
+                    x1, y1, x2, y2 = [int(coord/factor) for coord in bbox]
+
+                
+                print(f"Clicking on bbox: [{x1}, {y1}, {x2}, {y2}]")
+                print(f"Image size: width={img.width}, height={img.height}")
+                print(f"Adjusted bbox: [{x1}, {y1}, {x2}, {y2}]")
                 position_x = (x1 + x2) // 2
                 position_y = (y1 + y2) // 2
                 device.click(position_x, position_y)
-                time.sleep(0.5)
                 # save action (record index only)
                 actions.append({
                     "type": "click",
@@ -549,7 +728,7 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True):
                 history.append(decider_response_str)
 
                 current_dir = os.getcwd()
-                img_path = os.path.join(current_dir, f"screenshot.jpg")
+                img_path = os.path.join(current_dir, current_image)
                 save_path = os.path.join(data_dir, f"{image_index}_highlighted.jpg")
                 img = Image.open(img_path)
                 draw = ImageDraw.Draw(img)
@@ -578,9 +757,12 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True):
 
             else:
                 coordinates = grounder_response["coordinates"]
-                x, y = [int(coord) for coord in coordinates]
+                if use_qwen3:
+                    coordinates = convert_qwen3_coordinates_to_absolute(coordinates, img.width, img.height, is_bbox=False)
+                    x, y = coordinates
+                else:
+                    x, y = [int(coord / factor) for coord in coordinates]
                 device.click(x, y)
-                time.sleep(0.5)
                 actions.append({
                     "type": "click",
                     "position_x": x,
@@ -605,7 +787,6 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True):
 
             if direction == "DOWN":
                 device.swipe(direction.lower(), 2)
-                time.sleep(1)
                 # record the swipe as an action (index only)
                 actions.append({
                     "type": "swipe",
@@ -646,10 +827,10 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True):
                 "type": "wait",
                 "action_index": image_index
             })
+            history.append(decider_response_str)
         else:
             raise ValueError(f"Unknown action: {action}")
         
-        time.sleep(1)
     
     data = {
         "app_name": app,
@@ -676,12 +857,7 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True):
         preference_extractor.extract_async(task_data)
         logging.info("Submitted preference extraction task")
 
-from utils.load_md_prompt import load_prompt
-planner_prompt_template = load_prompt("planner_oneshot.md")
 
-current_file_path = Path(__file__).resolve()
-current_dir = current_file_path.parent
-default_template_path = current_dir.parent.parent / "utils" /"experience" / "templates-new.json"
 
 def parse_planner_response(response_str: str):
 
@@ -703,14 +879,22 @@ def parse_planner_response(response_str: str):
         logging.error(f"解析 JSON 失败: {e}\n内容为:\n{json_str}")
         return None
 
-def get_app_package_name(task_description, use_graphrag=False):
+def get_app_package_name(task_description, use_graphrag=False, device_type="Android"):
     """单阶段：本地检索经验，调用模型完成应用选择和任务描述生成。"""
-    # 本地检索经验
-    search_engine = PromptTemplateSearch()
-    print("Using template path:", default_template_path)
-    experience_content = search_engine.get_experience(task_description, 1)
-    print(f"检索到的相关经验:\n{experience_content}")
+    current_file_path = Path(__file__).resolve()
+    current_dir = current_file_path.parent
+    default_template_path = current_dir.parent.parent / "utils" /"experience" / "templates-new.json"
+    logging.debug("Using template path: %s", default_template_path)
 
+    # 本地检索经验
+    search_engine = PromptTemplateSearch(default_template_path)
+    experience_content = search_engine.get_experience(task_description, 1)
+    logging.debug("检索到的相关经验:\n%s", experience_content)
+    if device_type == "Android":
+        planner_prompt_template = load_prompt("planner_oneshot.md")
+    elif device_type == "Harmony":
+        planner_prompt_template = load_prompt("planner_oneshot_harmony.md")
+    
     # 检索用户偏好
     user_preferences = {}
     if preference_extractor and preference_extractor.mem:
@@ -742,6 +926,8 @@ def get_app_package_name(task_description, use_graphrag=False):
     logging.info(f"Planner 响应: \n{response_str}")
     response_json = parse_planner_response(response_str)
     if response_json is None:
+        logging.error("无法解析模型响应为 JSON。")
+        logging.error(f"原始响应内容: {response_str}")
         raise ValueError("无法解析模型响应为 JSON。")
     app_name = response_json.get("app_name")
     package_name = response_json.get("package_name")
@@ -759,6 +945,11 @@ if __name__ == "__main__":
     parser.add_argument("--user_profile", choices=["on", "off"], default="on", help="Enable user profile memory (on/off). Default: on")
     parser.add_argument("--use_graphrag", choices=["on", "off"], default="off", help="Use GraphRAG for user profile preference memory (on/off). Default: off")
     parser.add_argument("--clear_memory", action="store_true", help="Force clear all stored user memories and exit")
+    parser.add_argument("--device", type=str, default="Android", choices=["Android", "Harmony"], help="Device type: Android or Harmony (default: Android)")
+    parser.add_argument("--use_qwen3", action="store_true", default=True, help="Whether to use Qwen3 model (default: False)")
+    parser.add_argument("--use_experience", action="store_true", default=False, help="Whether to use experience (use planner for task rewriting) (default: False)")
+    parser.add_argument("--data_dir", type=str, default=None, help="Directory to save data (default: ./data relative to script location)")
+    parser.add_argument("--task_file", type=str, default=None, help="Path to task.json file (default: ./task.json relative to script location)")
     args = parser.parse_args()
 
     # 使用命令行参数初始化
@@ -779,15 +970,41 @@ if __name__ == "__main__":
             print("User profile is disabled or memory client not initialized; nothing to clear.")
         raise SystemExit(0)
 
-    device = AndroidDevice()
-    print(f"connect to device")
-
-    data_base_dir = os.path.join(os.path.dirname(__file__), 'data')
+    # 根据 --device 参数选择设备类型
+    if args.device == "Android":
+        device = AndroidDevice()
+        logging.info("Using AndroidDevice")
+    elif args.device == "Harmony":
+        device = HarmonyDevice()
+        logging.info("Using HarmonyDevice")
+    else:
+        raise ValueError(f"Unknown device type: {args.device}")
+    
+    logging.info(f"Connected to device: {args.device}")
+    use_qwen3_model = args.use_qwen3
+    use_experience = args.use_experience
+    current_device_type = args.device  # 保存设备类型用于后续使用
+    logging.info(f"Use Qwen3 model: {use_qwen3_model}")
+    logging.info(f"Use experience (planner task rewriting): {use_experience}")
+    logging.info(f"Device type: {current_device_type}")
+    # 配置数据保存目录
+    if args.data_dir:
+        data_base_dir = args.data_dir
+        logging.info(f"Using custom data directory: {data_base_dir}")
+    else:
+        data_base_dir = os.path.join(os.path.dirname(__file__), 'data')
+        logging.info(f"Using default data directory: {data_base_dir}")
+    
     if not os.path.exists(data_base_dir):
         os.makedirs(data_base_dir)
+        logging.info(f"Created data directory: {data_base_dir}")
 
     # 读取任务列表
-    task_json_path = os.path.join(os.path.dirname(__file__), "task.json")
+    if args.task_file:
+        task_json_path = args.task_file
+        logging.info(f"Using custom task file: {task_json_path}")
+    else:
+        task_json_path = os.path.join(os.path.dirname(__file__), "task.json")
     with open(task_json_path, "r", encoding="utf-8") as f:
         task_list = json.load(f)
     
@@ -803,11 +1020,26 @@ if __name__ == "__main__":
         os.makedirs(data_dir)
 
         task_description = task
-        app_name, package_name, new_task_description = get_app_package_name(task_description, use_graphrag=use_graphrag)
+        
+        # 调用 planner 获取应用名称和包名
+        logging.info(f"Calling planner to get app_name and package_name")
+        app_name, package_name, planner_task_description = get_app_package_name(task_description, use_graphrag=use_graphrag, device_type=current_device_type)
+        logging.info(f"Planner result - App: {app_name}, Package: {package_name}")
+        
+        # 根据 use_experience 参数决定是否使用 planner 改写的任务描述
+        if use_experience == True:
+            logging.info(f"Using experience: using planner-rewritten task description")
+            new_task_description = planner_task_description
+            logging.info(f"New task description: {new_task_description}")
+        else:
+            logging.info(f"Not using experience: using original task description")
+            new_task_description = task_description
+            
+        logging.info(f"Starting task in app: {app_name} (package: {package_name})")
         device.app_start(package_name)
-        print(f"Starting task '{new_task_description}' in app '{app_name}'")
-        task_in_app(app_name, task_description, new_task_description, device, data_dir, True)
-    
+        task_in_app(app_name, task_description, new_task_description, device, data_dir, True, use_qwen3_model, current_device_type)
+        logging.info(f"Stopping app: {app_name} (package: {package_name})")
+        device.app_stop(package_name)
     # 等待所有偏好提取任务完成
     if preference_extractor and hasattr(preference_extractor, 'executor'):
         logging.info("Waiting for all preference extraction tasks to complete...")

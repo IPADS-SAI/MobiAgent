@@ -116,13 +116,13 @@ class AndroidDevice(Device):
         if not package_name:
             raise ValueError(f"App '{app}' is not registered with a package name.")
         self.d.app_start(package_name, stop=True)
-        time.sleep(1)
+        time.sleep(0.5)
         if not self.d.app_wait(package_name, timeout=10):
             raise RuntimeError(f"Failed to start app '{app}' with package '{package_name}'")
     
     def app_start(self, package_name):
         self.d.app_start(package_name, stop=True)
-        time.sleep(1)
+        time.sleep(0.5)
         if not self.d.app_wait(package_name, timeout=10):
             raise RuntimeError(f"Failed to start package '{package_name}'")
         
@@ -131,16 +131,17 @@ class AndroidDevice(Device):
 
     def click(self, x, y):
         self.d.click(x, y)
+        time.sleep(0.5)
 
     def input(self, text):
         current_ime = self.d.current_ime()
         self.d.shell(['settings', 'put', 'secure', 'default_input_method', 'com.android.adbkeyboard/.AdbIME'])
-        time.sleep(1)
+        time.sleep(0.5)
         charsb64 = base64.b64encode(text.encode('utf-8')).decode('utf-8')
         self.d.shell(['am', 'broadcast', '-a', 'ADB_INPUT_B64', '--es', 'msg', charsb64])
-        time.sleep(1)
+        time.sleep(0.5)
         self.d.shell(['settings', 'put', 'secure', 'default_input_method', current_ime])
-        time.sleep(1)
+        time.sleep(0.5)
 
     def swipe(self, direction, scale=0.5):
         self.d.swipe_ext(direction=direction, scale=scale)
@@ -204,7 +205,7 @@ def load_state(state_dir: str) -> Optional[State]:
 
 # ==================== 任务执行 ====================
 
-def execute_task(task_description: str, device: Device, base_data_dir: str, extract_config: Optional[ExtractArtifactConfig] = None) -> dict:
+def execute_task(task_description: str, device: Device, base_data_dir: str, extract_config: Optional[ExtractArtifactConfig] = None, use_qwen3=False, use_experience=False) -> dict:
     """
     统一的任务执行入口
     自动分析任务类型并选择合适的执行策略
@@ -213,6 +214,9 @@ def execute_task(task_description: str, device: Device, base_data_dir: str, extr
         task_description: 用户的原始任务描述
         device: 设备对象
         base_data_dir: 数据存储基础目录
+        extract_config: Artifact提取配置
+        use_qwen3: 是否使用Qwen3模型
+        use_experience: 是否使用经验进行任务改写
     
     Returns:
         dict: 执行结果
@@ -251,8 +255,9 @@ def execute_task(task_description: str, device: Device, base_data_dir: str, extr
     if is_multi_stage:
         logging.info("\n执行策略: 多阶段任务模式")
         logging.info(f"{'='*60}\n")
+        logging.info(f"使用Qwen3: {use_qwen3}")
         
-        result = execute_multi_stage_task_internal(task_description, device, task_dir, extract_config)
+        result = execute_multi_stage_task_internal(task_description, device, task_dir, extract_config, use_qwen3=use_qwen3)
         
         return {
             "task_description": task_description,
@@ -264,6 +269,8 @@ def execute_task(task_description: str, device: Device, base_data_dir: str, extr
     else:
         logging.info("\n执行策略: 单阶段任务模式")
         logging.info(f"{'='*60}\n")
+        logging.info(f"使用经验: {use_experience}")
+        logging.info(f"使用Qwen3: {use_qwen3}")
         
         # 获取APP信息（调用Planner进行经验检索和任务重写）
         try:
@@ -293,6 +300,16 @@ def execute_task(task_description: str, device: Device, base_data_dir: str, extr
         logging.info(f"应用: {app_name} ({package_name})")
         logging.info(f"重写后的任务描述: {refined_description}")
         
+        # 根据 use_experience 参数决定是否使用 planner 改写的任务描述
+        if use_experience:
+            logging.info("使用经验: 使用Planner重写后的任务描述")
+            final_task_description = refined_description
+        else:
+            logging.info("不使用经验: 使用原始任务描述")
+            final_task_description = task_description
+        
+        logging.info(f"最终任务描述: {final_task_description}")
+        
         # 启动APP
         try:
             device.app_start(package_name)
@@ -311,14 +328,15 @@ def execute_task(task_description: str, device: Device, base_data_dir: str, extr
             execution_result = task_in_app(
                 app=app_name,
                 old_task=task_description,
-                task=refined_description,  # 使用重写后的任务描述
+                task=final_task_description,  # 使用根据use_experience选择的任务描述
                 device=device,
                 data_dir=task_dir,
                 decider_client=decider_client,
                 grounder_client=grounder_client,
                 decider_model=decider_model,
                 grounder_model=grounder_model,
-                bbox_flag=True
+                bbox_flag=True,
+                use_qwen3=use_qwen3  # 传递 use_qwen3 参数
             )
             
             return {
@@ -343,7 +361,7 @@ def execute_task(task_description: str, device: Device, base_data_dir: str, extr
             }
 
 
-def execute_multi_stage_task_internal(task_description: str, device: Device, task_dir: str, extract_config: Optional[ExtractArtifactConfig] = None) -> dict:
+def execute_multi_stage_task_internal(task_description: str, device: Device, task_dir: str, extract_config: Optional[ExtractArtifactConfig] = None, use_qwen3=False) -> dict:
     """
     内部函数：执行多阶段任务（不创建新的任务目录）
     
@@ -351,6 +369,8 @@ def execute_multi_stage_task_internal(task_description: str, device: Device, tas
         task_description: 任务描述
         device: 设备对象
         task_dir: 任务目录（已创建）
+        extract_config: Artifact提取配置
+        use_qwen3: 是否使用Qwen3模型
     
     Returns:
         dict: 执行结果
@@ -449,7 +469,8 @@ def execute_multi_stage_task_internal(task_description: str, device: Device, tas
                 grounder_client=grounder_client,
                 decider_model=decider_model,
                 grounder_model=grounder_model,
-                bbox_flag=True
+                bbox_flag=True,
+                use_qwen3=use_qwen3  # 传递 use_qwen3 参数
             )
             
             # 从结果中提取artifact
@@ -523,6 +544,10 @@ if __name__ == "__main__":
                        help="是否将文本和截图一起发送给模型 (default: True)")
     parser.add_argument("--enable_hybrid_ocr", action="store_true", default=True,
                        help="是否启用混合OCR识别 (default: True)")
+    parser.add_argument("--use_qwen3", action="store_true", default=True,
+                       help="是否使用Qwen3模型 (default: True)")
+    parser.add_argument("--use_experience", action="store_true", default=False,
+                       help="是否使用经验进行任务改写 (default: False)")
     
     args = parser.parse_args()
 
@@ -548,6 +573,13 @@ if __name__ == "__main__":
     logging.info("MobiAgent 智能任务执行系统")
     logging.info("每个任务将由Planner自动分析并选择最优执行策略")
     logging.info("=" * 60)
+    
+    # 记录执行配置
+    logging.info(f"\n执行配置:")
+    logging.info(f"  - 使用Qwen3模型: {args.use_qwen3}")
+    logging.info(f"  - 使用经验进行任务改写: {args.use_experience}")
+    logging.info(f"  - 使用OCR: {args.use_ocr}")
+    logging.info(f"  - 启用混合OCR: {args.enable_hybrid_ocr}\n")
     
     task_list = []
     
@@ -575,8 +607,15 @@ if __name__ == "__main__":
         logging.info(f"{'#'*60}\n")
         
         try:
-            # 使用统一入口执行任务
-            result = execute_task(task_description, device, data_base_dir, extract_config)
+            # 使用统一入口执行任务，传递 use_qwen3 和 use_experience 参数
+            result = execute_task(
+                task_description, 
+                device, 
+                data_base_dir, 
+                extract_config,
+                use_qwen3=args.use_qwen3,
+                use_experience=args.use_experience
+            )
             results.append(result)
             
             # 输出执行结果摘要

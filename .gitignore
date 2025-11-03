@@ -1,5 +1,5 @@
 # 忽略特定文件
-screenshot.jpg
+screenshot*.jpg
 list.error
 tasks.json
 
@@ -20,3 +20,5 @@ RAG/
 utils/experience/BAAI/
 
 output*/
+utils/experience/multistage_plans_storage
+utils/experience/singletask_storage

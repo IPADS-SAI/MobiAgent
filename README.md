@@ -35,6 +35,7 @@ MobiAgent: A Systematic Framework for Customizable Mobile Agents
 </div>
 
 ## News
+- `[2025.11.03]` ✅ Added multi-task execution module support and user preference support. For details about multi-task usage and configuration, see [here](runner/mobiagent/multi_task/README.md).
 - `[2025.10.31]` 🔥We've updated the MobiMind-Mixed model based on Qwen3-VL-4B-Instruct! Download it at [MobiMind-Mixed-4B-1031](https://huggingface.co/IPADS-SAI/MobiMind-Mixed-4B-1031), and add `--use_qwen3` flag when running dataset creation and agent runner scripts.
 - `[2025.9.30]` 🚀 added a local experience retrieval module, supporting experience query based on task description, enhancing the intelligence and efficiency of task planning!
 - `[2025.9.29]` We've open-sourced a mixed version of MobiMind, capable of handling **both Decider and Grounder tasks**! Feel free to download and try it at [MobiMind-Mixed-7B](https://huggingface.co/IPADS-SAI/MobiMind-Mixed-7B).
@@ -58,14 +59,21 @@ MobiAgent: A Systematic Framework for Customizable Mobile Agents
 
 ## Demo
 
-Mobile App Demo:
+**Mobile App Demo**:
 <div align="center">
   <video src="https://github.com/user-attachments/assets/3a6539ea-34a5-4073-93aa-18986ca065ff"/>
 </div>
 
-AgentRR Demo (Left: first task; Right: subsequent task)
+**AgentRR Demo** (Left: first task; Right: subsequent task)
 <div align="center">
   <video src="https://github.com/user-attachments/assets/ef5268a2-2e9c-489c-b8a7-828f00ec3ed1"/>
+</div>
+
+**Multi Task Demo**
+
+task: `帮我在小红书找一下推荐的最畅销的男士牛仔裤，然后在淘宝搜这一款裤子，把淘宝中裤子品牌、名称和价格用微信发给小赵`
+<div align="center">
+  <video src="https://github.com/user-attachments/assets/316ef35e-20c6-4cfa-a363-49661da2bc8e"/>
 </div>
 
 ## Project Structure

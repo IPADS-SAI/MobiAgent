@@ -179,7 +179,14 @@ def add_bounds_to_action(root, actions):
             bounds_list = extract_all_bounds(img_path)
             if "bounds" in action and action["bounds"]:
                 bounds_list.append(action["bounds"])
-            actions[i]["bounds"] = find_clicked_element(bounds_list, action["position_x"], action["position_y"])
+            # 使用改进的find_clicked_element函数，增加容错参数
+            actions[i]["bounds"] = find_clicked_element(
+                bounds_list, 
+                action["position_x"], 
+                action["position_y"],
+                expand_ratio=0.15,  # 扩展15%的边界框范围
+                nearby_threshold=30  # 允许30像素的附近匹配
+            )
 
     return actions
 
@@ -222,6 +229,8 @@ def visual_prompt(root, actions):
             text = f"LONG PRESS [{int(action['position_x'])}, {int(action['position_y'])}]"
         elif action["type"] == "open_app":
             text = f"OPEN APP {action['app_name']}"
+        elif action["type"] == "wait":
+            text = f"WAIT 1 s"
         else:
             raise Exception(f"[Visual Prompt] Unknown action type: {action['type']}")
         
@@ -351,8 +360,10 @@ def auto_annotate(root, chain, task_description, actions):
                 if match is None:
                     print(f"[Reasoning] Batch {batch_index + 1}, Attempt {attempt + 1} failed, no JSON found in response.")
                     continue
-
-
+                
+                # 在match中增加一个索引字段react_index，从1开始
+                for i, item in enumerate(match):
+                    item['action_index'] = i + 1 + batch_index * max_images_per_request
                 all_data.extend(match)  # 合并当前批次的结果
                 break
 
@@ -366,7 +377,7 @@ def auto_annotate(root, chain, task_description, actions):
 
     temp_json_path = os.path.join(root, "temp.json")
     with open(temp_json_path, "w", encoding="UTF-8") as temp_file:
-        json.dump(match, temp_file, ensure_ascii=False, indent=4)
+        json.dump(all_data, temp_file, ensure_ascii=False, indent=4)
     print(f"[Debug] Saved temp JSON to {temp_json_path}")
     
     compare_actions(actions, all_data)
@@ -422,6 +433,7 @@ if __name__ == "__main__":
                 continue
             parse_error = os.path.join(root, "parse.error")
             if os.path.exists(parse_error):
+                print("parse.error exists, skip")
                 continue
         
             with open(actions_json, 'r', encoding='utf-8') as file:
@@ -443,7 +455,6 @@ if __name__ == "__main__":
             if(isinstance(task_description, str)):
                 new_tasks = change_task_description(app_name, task_description)
                 all_tasks = [task_description] + new_tasks
-                all_tasks += [remove_punct(t) for t in random.sample(new_tasks, min(3, len(new_tasks)))]
                 data["task_description"] = all_tasks
 
                 with open(actions_json, 'w', encoding='utf-8') as file:

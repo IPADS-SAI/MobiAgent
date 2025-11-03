@@ -1,0 +1,350 @@
+[
+    {
+        "description": "预订机票并发送航班信息",
+        "task_description": "在携程上预订一张明天从{{出发地}}到{{目的地}}的机票，并将航班信息和订单号通过微信发送给{{联系人姓名}}。",
+        "subtasks": [
+            {
+                "subtask_id": 1,
+                "app_name": "携程旅行",
+                "package_name": "ctrip.android.view",
+                "description": "打开携程App，搜索并预订一张明天从{{出发地}}飞往{{目的地}}的单程机票。预订完成后，停留在订单详情页，提取航班号、出发时间和订单号。",
+                "artifact_schema": {
+                    "flight_number": "预订成功的航班号",
+                    "departure_time": "航班的起飞时间",
+                    "booking_reference": "携程订单号"
+                },
+                "depends_on": []
+            },
+            {
+                "subtask_id": 2,
+                "app_name": "微信",
+                "package_name": "com.tencent.mm",
+                "description": "打开微信App，找到联系人“{{联系人姓名}}”。发送消息：我已预订明天去{{目的地}}的机票，航班号：{{flight_number}}，起飞时间：{{departure_time}}，订单号：{{booking_reference}}。",
+                "artifact_schema": {
+                    "message_sent_status": "消息发送状态（成功/失败）"
+                },
+                "depends_on": [
+                    1
+                ]
+            }
+        ]
+    },
+    {
+        "description": "查找附近高分餐厅并打开点餐页面",
+        "task_description": "在小红书上查找{{当前位置}}附近推荐的{{食物类型}}，找到评分最高的店，然后在饿了么上搜索这家店并打开它的点餐页面。",
+        "subtasks": [
+            {
+                "subtask_id": 1,
+                "app_name": "小红书",
+                "package_name": "com.xingin.xhs",
+                "description": "打开小红书App，搜索“{{当前位置}} {{食物类型}} 推荐”。浏览搜索结果，找出笔记中提到最多或评分最高的餐厅名称。",
+                "artifact_schema": {
+                    "top_rated_restaurant_name": "找到的评分最高的餐厅名称"
+                },
+                "depends_on": []
+            },
+            {
+                "subtask_id": 2,
+                "app_name": "饿了么",
+                "package_name": "me.ele",
+                "description": "打开饿了么App，在首页的搜索框中输入从子任务1获取的餐厅名称“{{top_rated_restaurant_name}}”，并点击搜索。在搜索结果中找到匹配的商家，点击进入其店铺点餐页面。",
+                "artifact_schema": {
+                    "restaurant_page_opened_status": "是否成功打开餐厅点餐页（是/否）"
+                },
+                "depends_on": [
+                    1
+                ]
+            }
+        ]
+    },
+    {
+        "description": "查询汇率并通过微信发送给同事",
+        "task_description": "使用浏览器搜索“{{查询内容}}”，复制搜索到的汇率信息，并通过微信发送给{{同事姓名}}。",
+        "subtasks": [
+            {
+                "subtask_id": 1,
+                "app_name": "浏览器",
+                "package_name": "com.android.chrome",
+                "description": "打开浏览器App，在搜索框中输入“{{查询内容}}”并搜索。从搜索结果中找到关键信息（例如：1美元 = x.xx人民币），并提取该文本。",
+                "artifact_schema": {
+                    "search_result_text": "搜索到的关键信息文本"
+                },
+                "depends_on": []
+            },
+            {
+                "subtask_id": 2,
+                "app_name": "微信",
+                "package_name": "com.tencent.mm",
+                "description": "打开微信App，进入“消息”页面，搜索并打开与“{{同事姓名}}”的聊天窗口。在输入框中粘贴从子任务1获取的信息“{{search_result_text}}”并发送。",
+                "artifact_schema": {
+                    "message_sent_status": "微信消息发送状态（成功/失败）"
+                },
+                "depends_on": [
+                    1
+                ]
+            }
+        ]
+    },
+    {
+        "description": "分享网易云音乐歌曲到微信好友",
+        "task_description": "在网易云音乐里搜索{{歌曲名称}}（歌手{{歌手}}），然后把这首歌分享给微信好友{{好友姓名}}。",
+        "subtasks": [
+            {
+                "subtask_id": 1,
+                "app_name": "网易云音乐",
+                "package_name": "com.netease.cloudmusic",
+                "description": "打开网易云音乐App，在顶部搜索框输入“{{歌曲名称}} {{歌手}}”并搜索。在结果中找到目标歌曲，点击进入播放页，然后点击“分享”按钮，在分享菜单中提取歌曲的分享链接或卡片信息。",
+                "artifact_schema": {
+                    "song_name": "歌曲的准确名称",
+                    "song_artist": "歌曲的艺术家",
+                    "song_share_link": "歌曲的分享链接（如果可提取）"
+                },
+                "depends_on": []
+            },
+            {
+                "subtask_id": 2,
+                "app_name": "微信",
+                "package_name": "com.tencent.mm",
+                "description": "打开微信App，在通讯录中搜索并打开与“{{好友姓名}}”的聊天窗口。发送从子任务1中获取的歌曲信息（例如：分享“{{song_name}} - {{song_artist}}”：{{song_share_link}}），并点击发送。",
+                "artifact_schema": {
+                    "message_sent_status": "消息发送状态（成功/失败）"
+                },
+                "depends_on": [
+                    1
+                ]
+            }
+        ]
+    },
+    {
+        "description": "将微信会议通知添加到日历",
+        "task_description": "在微信上收到了{{同事姓名}}发来的会议通知：‘{{会议主题}}’，时间是{{会议日期}}下午{{会议开始时间}}在{{会议地点}}。请把这个会议添加到我的日历中。",
+        "subtasks": [
+            {
+                "subtask_id": 1,
+                "app_name": "微信",
+                "package_name": "com.tencent.mm",
+                "description": "打开微信App，进入与“{{同事姓名}}”的聊天窗口。定位到包含会议信息的最新消息，提取会议主题、日期、开始时间和地点。",
+                "artifact_schema": {
+                    "meeting_title": "会议主题",
+                    "meeting_date": "会议日期",
+                    "meeting_start_time": "会议开始时间",
+                    "meeting_location": "会议地点"
+                },
+                "depends_on": []
+            },
+            {
+                "subtask_id": 2,
+                "app_name": "日历",
+                "package_name": "com.android.calendar",
+                "description": "打开系统“日历”App。创建一个新事件，将标题设置为“{{meeting_title}}”，将开始日期和时间设置为“{{meeting_date}} {{meeting_start_time}}”，将地点设置为“{{meeting_location}}”。保存该日程事件。",
+                "artifact_schema": {
+                    "calendar_event_created_status": "日历事件是否创建成功（是/否）"
+                },
+                "depends_on": [
+                    1
+                ]
+            }
+        ]
+    },
+    {
+        "description": "查询天气并发送给联系人",
+        "task_description": "帮我查一下{{城市}}明天的天气怎么样，然后把天气预报通过微信发给{{联系人姓名}}。",
+        "subtasks": [
+            {
+                "subtask_id": 1,
+                "app_name": "天气",
+                "package_name": "com.android.weather",
+                "description": "打开系统天气App，搜索或切换到城市“{{城市}}”。查看明天的天气详情，提取关键预报信息（例如：温度范围、天气状况）。",
+                "artifact_schema": {
+                    "weather_forecast_summary": "明天的天气概况（例如：15-25°C，晴转多云）"
+                },
+                "depends_on": []
+            },
+            {
+                "subtask_id": 2,
+                "app_name": "微信",
+                "package_name": "com.tencent.mm",
+                "description": "打开微信App，找到联系人“{{联系人姓名}}”。发送消息：“{{城市}}”明天的天气是：{{weather_forecast_summary}}。",
+                "artifact_schema": {
+                    "message_sent_status": "消息发送状态（成功/失败）"
+                },
+                "depends_on": [
+                    1
+                ]
+            }
+        ]
+    },
+    {
+        "description": "在淘宝和京东比价后发送给好友",
+        "task_description": "在淘宝上搜索商品“{{商品名称}}”，记下价格。然后再去京东搜索同一款商品，记下价格。最后把两个价格通过微信发给{{联系人姓名}}。",
+        "subtasks": [
+            {
+                "subtask_id": 1,
+                "app_name": "淘宝",
+                "package_name": "com.taobao.taobao",
+                "description": "打开淘宝App，在首页搜索框输入“{{商品名称}}”并搜索。在搜索结果列表页，找到最相关的商品，提取其价格。",
+                "artifact_schema": {
+                    "taobao_item_name": "淘宝商品的准确名称",
+                    "taobao_price": "淘宝商品的价格"
+                },
+                "depends_on": []
+            },
+            {
+                "subtask_id": 2,
+                "app_name": "京东",
+                "package_name": "com.jingdong.app.mall",
+                "description": "打开京东App，在首页搜索框输入“{{taobao_item_name}}”（使用淘宝获取的准确名称以确保可比性）并搜索。找到对应商品，提取其价格。",
+                "artifact_schema": {
+                    "jd_item_name": "京东商品的准确名称",
+                    "jd_price": "京东商品的价格"
+                },
+                "depends_on": [
+                    1
+                ]
+            },
+            {
+                "subtask_id": 3,
+                "app_name": "微信",
+                "package_name": "com.tencent.mm",
+                "description": "打开微信App，找到联系人“{{联系人姓名}}”。发送消息：关于“{{taobao_item_name}}”的比价结果：淘宝价 {{taobao_price}}，京东价 {{jd_price}}。",
+                "artifact_schema": {
+                    "message_sent_status": "消息发送状态（成功/失败）"
+                },
+                "depends_on": [
+                    1,
+                    2
+                ]
+            }
+        ]
+    },
+    {
+        "description": "购买团购券并设置到期提醒",
+        "task_description": "在美团上购买一张“{{商家名称}}”的“{{团购券名称}}”，然后在我日历的{{提醒日期}}（例如：到期前一天）设置一个提醒。",
+        "subtasks": [
+            {
+                "subtask_id": 1,
+                "app_name": "美团",
+                "package_name": "com.sankuai.meituan",
+                "description": "打开美团App，搜索“{{商家名称}}”，进入店铺页面，找到并购买“{{团购券名称}}”。购买成功后，进入“我的订单”或“卡券包”，查看该券的有效期。",
+                "artifact_schema": {
+                    "voucher_name": "购买的团购券准确名称",
+                    "voucher_expiry_date": "团购券的到期日期"
+                },
+                "depends_on": []
+            },
+            {
+                "subtask_id": 2,
+                "app_name": "日历",
+                "package_name": "com.android.calendar",
+                "description": "打开系统“日历”App。在“{{提醒日期}}”（例如 {{voucher_expiry_date}} 的前一天）创建一个新事件，将标题设置为“即将过期：{{voucher_name}}”，并保存。",
+                "artifact_schema": {
+                    "calendar_event_created_status": "日历提醒是否创建成功（是/否）"
+                },
+                "depends_on": [
+                    1
+                ]
+            }
+        ]
+    },
+    {
+        "description": "在小红书查找推荐后去咸鱼搜二手",
+        "task_description": "在小红书上搜索“{{物品关键词}}”的测评，看看大家推荐的具体型号，然后用这个型号去咸鱼上搜索二手的。",
+        "subtasks": [
+            {
+                "subtask_id": 1,
+                "app_name": "小红书",
+                "package_name": "com.xingin.xhs",
+                "description": "打开小红书App，在顶部搜索框输入“{{物品关键词}} 测评”。浏览搜索结果，从热门笔记中找到提及最多的推荐型号名称。",
+                "artifact_schema": {
+                    "recommended_model_name": "小红书上推荐的具体型号"
+                },
+                "depends_on": []
+            },
+            {
+                "subtask_id": 2,
+                "app_name": "咸鱼",
+                "package_name": "com.taobao.idlefish",
+                "description": "打开咸鱼App，在首页搜索框中输入从子任务1获取的型号“{{recommended_model_name}}”，并点击搜索，浏览二手商品列表。",
+                "artifact_schema": {
+                    "search_executed_status": "是否成功执行搜索（是/否）"
+                },
+                "depends_on": [
+                    1
+                ]
+            }
+        ]
+    },
+    {
+        "description": "在B站找教程并发送到微信文件助手",
+        "task_description": "在Bilibili上搜索“{{教程关键词}}”，找到播放量最高的那个视频，把它的链接通过微信发给“文件传输助手”。",
+        "subtasks": [
+            {
+                "subtask_id": 1,
+                "app_name": "bilibili",
+                "package_name": "tv.danmaku.bili",
+                "description": "打开Bilibili App，点击顶部搜索框输入“{{教程关键词}}”并搜索。在搜索结果中，按“播放最多”排序，点击第一个视频进入播放页，然后点击“分享”按钮，提取分享链接。",
+                "artifact_schema": {
+                    "video_title": "视频的标题",
+                    "video_share_link": "视频的分享链接"
+                },
+                "depends_on": []
+            },
+            {
+                "subtask_id": 2,
+                "app_name": "微信",
+                "package_name": "com.tencent.mm",
+                "description": "打开微信App，在消息列表顶部搜索“文件传输助手”并进入聊天。发送消息：稍后学习-{{video_title}}：{{video_share_link}}。",
+                "artifact_schema": {
+                    "message_sent_status": "消息发送状态（成功/失败）"
+                },
+                "depends_on": [
+                    1
+                ]
+            }
+        ]
+    },
+    {
+        "description": "订机票、预约接机并通知家人",
+        "task_description": "用携程订一张{{日期}}下午{{航班起飞时间}}从{{出发地}}到{{目的地}}的机票。然后用滴滴预约一辆车，在航班落地（假设{{航班降落时间}}）时去{{目的地}}机场接我。最后把航班号和滴滴的预约信息发微信给{{联系人姓名}}。",
+        "subtasks": [
+            {
+                "subtask_id": 1,
+                "app_name": "携程",
+                "package_name": "ctrip.android.view",
+                "description": "打开携程App，预订一张{{日期}} {{航班起飞时间}} 从{{出发地}}到{{目的地}}的机票。预订成功后，提取航班号、准确的降落时间和降落机场名称。",
+                "artifact_schema": {
+                    "flight_number": "预订成功的航班号",
+                    "arrival_time": "航班的准确降落时间",
+                    "arrival_airport_name": "降落机场的名称"
+                },
+                "depends_on": []
+            },
+            {
+                "subtask_id": 2,
+                "app_name": "滴滴出行",
+                "package_name": "com.sdu.didi.psnger",
+                "description": "打开滴滴出行App，选择“专车”或“快车”的“预约”功能。设置上车地点为“{{arrival_airport_name}}”（例如：T3航站楼到达口），设置预约出发时间为“{{arrival_time}}”，并完成预约。",
+                "artifact_schema": {
+                    "didi_booking_details": "滴滴预约成功信息（例如：已预约，车牌信息）",
+                    "didi_pickup_time": "滴滴预约的上车时间"
+                },
+                "depends_on": [
+                    1
+                ]
+            },
+            {
+                "subtask_id": 3,
+                "app_name": "微信",
+                "package_name": "com.tencent.mm",
+                "description": "打开微信App，找到联系人“{{联系人姓名}}”。发送消息：我已订好{{日期}}的行程，航班号{{flight_number}}，预计{{arrival_time}}到达。我约了滴滴在{{didi_pickup_time}}接我，{{didi_booking_details}}。",
+                "artifact_schema": {
+                    "message_sent_status": "消息发送状态（成功/失败）"
+                },
+                "depends_on": [
+                    1,
+                    2
+                ]
+            }
+        ]
+    }
+]

@@ -79,6 +79,14 @@ class AndroidDevice(Device):
             "微信": "com.tencent.mm",
             "微博": "com.sina.weibo",
             "携程": "ctrip.android.view",
+            "华为商城": "com.vmall.client",
+            "华为视频": "com.huawei.himovie",
+            "华为音乐": "com.huawei.music",
+            "华为应用市场": "com.huawei.appmarket",
+            "拼多多": "com.xunmeng.pinduoduo",
+            "大众点评": "com.dianping.v1",
+            "小红书": "com.xingin.xhs",
+            "浏览器": "com.microsoft.emmx"
         }
 
     def start_app(self, app):
@@ -185,6 +193,12 @@ Target element's description: {description}
 Your output should be a JSON object with the following format:
 {{"bbox": [x1, y1, x2, y2]}}'''
 
+grounder_qwen3_bbox_prompt = '''
+Based on user's intent and the description of the target UI element, locate the element in the screenshot.
+User's intent: {reasoning}
+Target element's description: {description}
+Report the bbox coordinates in JSON format.'''
+
 decider_prompt_template_zh = """
 你是一个手机使用AI代理。现在你的任务是“{task}”。
 你的操作历史如下：
@@ -218,6 +232,94 @@ factor = 1.0
 
 prices = {}
 
+from pydantic import BaseModel, Field
+from typing import Literal, Dict
+from enum import Enum
+
+# 1. 使用 Enum 定义固定的动作类型
+class ActionType(str, Enum):
+    """
+    定义了所有可能的用户界面动作。
+    """
+    CLICK = "click"
+    INPUT = "input"
+    SWIPE = "swipe"
+    DONE = "done"
+    STOP = "stop"
+    TERMINATE = "terminate"
+    WAIT = "wait"
+
+# 2. 编写 ActionPlan 模型
+class ActionPlan(BaseModel):
+    """
+    定义一个包含推理、动作和参数的结构化计划。
+    """
+    reasoning: str = Field(
+        description="描述执行此动作的思考过程和理由。"
+    )
+    
+    action: ActionType = Field(
+        description="要执行的下一个动作。"
+    )
+    
+    parameters: Dict[str, str] = Field(
+        description="执行动作所需要的参数，以键值对形式提供。",
+        default_factory=dict  # 如果没有参数，默认为空字典
+    )
+
+
+# 2. 从 Pydantic 模型生成 JSON Schema
+json_schema = ActionPlan.model_json_schema()
+
+print(ActionPlan.model_json_schema())
+
+class GroundResponse(BaseModel):
+    coordinates: list[int] = Field(
+        description="点击坐标 [x, y]",
+        default=None
+    )
+    bbox: list[int] = Field(
+        description="边界框 [x1, y1, x2, y2]",
+        default=None
+    )
+    bbox_2d: list[int] = Field(description="边界框 [x1, y1, x2, y2]",
+        default=None
+    )
+
+json_schema_ground = GroundResponse.model_json_schema()
+
+
+def parse_json_response(response_str: str) -> dict:
+        """解析JSON响应
+        
+        Args:
+            response_str: 模型返回的响应字符串
+            
+        Returns:
+            解析后的JSON对象
+        """
+        print("Parsing JSON response...")
+        try:
+            # 尝试直接解析JSON
+            return json.loads(response_str)
+        except json.JSONDecodeError:
+            # 如果直接解析失败，尝试提取JSON部分
+            try:
+                # 查找JSON代码块
+                json_match = re.search(r'```json\s*(\{.*?\})\s*```', response_str, re.DOTALL)
+                if json_match:
+                    return json.loads(json_match.group(1))
+                
+                # 查找花括号包围的JSON
+                json_match = re.search(r'(\{.*?\})', response_str, re.DOTALL)
+                if json_match:
+                    return json.loads(json_match.group(1))
+                
+                raise ValueError("无法在响应中找到有效的JSON")
+            except Exception as e:
+                logging.error(f"JSON解析失败: {e}")
+                logging.error(f"原始响应: {response_str}")
+                raise ValueError(f"无法解析JSON响应: {e}")
 
 def get_screenshot(device):
     device.screenshot(screenshot_path)
@@ -295,32 +397,43 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True):
         else:
             history_str = "\n".join(f"{idx}. {h}" for idx, h in enumerate(history, 1))
 
-        screenshot = get_screenshot(device)
-        # for debug: 查看history
-        # print("Current History:")
-        # print(history_str)
-
+        screenshot_resize = get_screenshot(device)
 
         decider_prompt = decider_prompt_template.format(
             task=task,
             history=history_str
         )
-        # logging.info(f"Decider prompt: \n{decider_prompt}")
+        logging.info(f"Decider prompt: \n{decider_prompt}")
+
+        decider_start_time = time.time()
+        # --- 修改 API 调用 ---
+        # vLLM 将会强制输出一个符合 ActionPlan 结构的 JSON 字符串
         decider_response_str = decider_client.chat.completions.create(
-            model="",
+            model=decider_model,
             messages=[
                 {
                     "role": "user",
                     "content": [
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{screenshot}"}},
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{screenshot_resize}"}},
                         {"type": "text", "text": decider_prompt},
                     ]
                 }
             ],
-            temperature=0
+            temperature=0,
+            # 核心改动：指定 response_format 并传入 schema
+            response_format={
+                "type": "json_object",
+                "schema": ActionPlan.model_json_schema()
+            }
+            # extra_body={"guided_json": json_schema}
         ).choices[0].message.content
 
+        decider_end_time = time.time()
+        logging.info(f"Decider time taken: {decider_end_time - decider_start_time} seconds")
         logging.info(f"Decider response: \n{decider_response_str}")
+        # 使用 ActionPlan 解析返回的 JSON 字符串
+        parsed_plan = ActionPlan.model_validate_json(decider_response_str)
+        logging.info(f"Parsed plan: {parsed_plan}")
 
         # 预处理 decider_response_str，增强健壮性
         def robust_json_loads(s):
@@ -382,63 +495,49 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True):
         if action == "click":
             reasoning = decider_response["reasoning"]
             target_element = decider_response["parameters"]["target_element"]
-            grounder_prompt = (grounder_prompt_template_bbox if bbox_flag else grounder_prompt_template_no_bbox).format(reasoning=reasoning, description=target_element)
+            grounder_prompt = (grounder_qwen3_bbox_prompt if bbox_flag else grounder_prompt_template_no_bbox).format(reasoning=reasoning, description=target_element)
             # logging.info(f"Grounder prompt: \n{grounder_prompt}")
-            
+            # 记录一下grounder开始时间,s 为单位
+            grounder_start_time = time.time()
             grounder_response_str = grounder_client.chat.completions.create(
-                model="",
+                model= grounder_model,
                 messages=[
                     {
                         "role": "user",
                         "content": [
-                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{screenshot}"}},
+                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{screenshot_resize}"}},
                             {"type": "text", "text": grounder_prompt},
                         ]
                     }
                 ],
-                temperature=0
+                temperature=0,
+
             ).choices[0].message.content
+                # response_format={
+                #     "type": "json_object",
+                #     "schema": json_schema_ground
+                # }
+            grounder_end_time = time.time()
+            logging.info(f"Grounder time taken: {grounder_end_time - grounder_start_time} seconds")
             logging.info(f"Grounder response: \n{grounder_response_str}")
-            
-            # 增强 JSON 解析，处理数组格式响应
-            def robust_grounder_json_loads(s):
-                s = s.strip()
-                # 提取 ```json ... ``` 代码块
-                codeblock = re.search(r"```json(.*?)```", s, re.DOTALL)
-                if codeblock:
-                    s = codeblock.group(1).strip()
-                # 替换中文省略号为英文 ...
-                s = s.replace("…", "...")
-                # 去除多余换行
-                s = s.replace("\r", "").replace("\n", " ")
-                
-                try:
-                    parsed = json.loads(s)
-                    # 如果是数组格式，取第一个元素
-                    if isinstance(parsed, list) and len(parsed) > 0:
-                        return parsed[0]
-                    # 如果是对象格式，直接返回
-                    elif isinstance(parsed, dict):
-                        return parsed
-                    else:
-                        raise ValueError(f"Unexpected response format: {type(parsed)}")
-                except Exception as e:
-                    logging.error(f"解析 grounder_response_str 失败: {e}\n原始内容: {s}")
-                    raise
-            
-            grounder_response = robust_grounder_json_loads(grounder_response_str)
+            # grounder_response = json.loads(grounder_response_str)
+            grounder_response = parse_json_response(grounder_response_str)
             if(bbox_flag):
-                bbox = grounder_response["bbox"]
+                bbox = grounder_response["bbox"] if "bbox" in grounder_response else None
+                bbox_2d = grounder_response["bbox_2d"] if "bbox_2d" in grounder_response else None
+                bbox_2d_ = grounder_response.get("bbox-2d", None)
+                if bbox_2d is not None:
+                    bbox = bbox_2d
 
-                bbox[0] = bbox[0] / 1000 * img.width
-                bbox[2] = bbox[2] / 1000 * img.width
-                bbox[1] = bbox[1] / 1000 * img.height
-                bbox[3] = bbox[3] / 1000 * img.height
-
-                x1, y1, x2, y2 = [int(coord / factor) for coord in bbox]
+                x1, y1, x2, y2 = [int(coord) for coord in bbox]
+                x1 = int(x1 /1000 * img.width)
+                x2 = int(x2 /1000 * img.width)
+                y1 = int(y1 /1000 * img.height)
+                y2 = int(y2 /1000 * img.height)
                 position_x = (x1 + x2) // 2
                 position_y = (y1 + y2) // 2
                 device.click(position_x, position_y)
+                time.sleep(0.5)
                 # save action (record index only)
                 actions.append({
                     "type": "click",
@@ -479,8 +578,9 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True):
 
             else:
                 coordinates = grounder_response["coordinates"]
-                x, y = [int(coord / factor) for coord in coordinates]
+                x, y = [int(coord) for coord in coordinates]
                 device.click(x, y)
+                time.sleep(0.5)
                 actions.append({
                     "type": "click",
                     "position_x": x,
@@ -608,7 +708,7 @@ def get_app_package_name(task_description, use_graphrag=False):
     # 本地检索经验
     search_engine = PromptTemplateSearch()
     print("Using template path:", default_template_path)
-    experience_content = search_engine.get_experience(task_description, default_template_path, 1)
+    experience_content = search_engine.get_experience(task_description, 1)
     print(f"检索到的相关经验:\n{experience_content}")
 
     # 检索用户偏好

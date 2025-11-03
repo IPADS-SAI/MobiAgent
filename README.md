@@ -35,8 +35,9 @@ MobiAgent: A Systematic Framework for Customizable Mobile Agents
 </div>
 
 ## News
+- `[2025.10.31]` 🔥We've updated the MobiMind-Mixed model based on Qwen3-VL-4B-Instruct! Download it at [MobiMind-Mixed-4B-1031](https://huggingface.co/IPADS-SAI/MobiMind-Mixed-4B-1031), and add `--use_qwen3` flag when running dataset creation and agent runner scripts.
 - `[2025.9.30]` 🚀 added a local experience retrieval module, supporting experience query based on task description, enhancing the intelligence and efficiency of task planning!
-- `[2025.9.29]` 🔥We've open-sourced a mixed version of MobiMind, capable of handling **both Decider and Grounder tasks**! Feel free to download and try it at [MobiMind-Mixed-7B](https://huggingface.co/IPADS-SAI/MobiMind-Mixed-7B).
+- `[2025.9.29]` We've open-sourced a mixed version of MobiMind, capable of handling **both Decider and Grounder tasks**! Feel free to download and try it at [MobiMind-Mixed-7B](https://huggingface.co/IPADS-SAI/MobiMind-Mixed-7B).
 - `[2025.8.30]` We've open-sourced the MobiAgent!
 
 ## Evaluation Results

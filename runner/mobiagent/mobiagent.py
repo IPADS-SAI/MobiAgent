@@ -14,8 +14,15 @@ from PIL import Image, ImageDraw, ImageFont
 import textwrap
 import cv2
 import numpy as np
+from dotenv import load_dotenv
 from utils.local_experience import PromptTemplateSearch 
 from pathlib import Path
+from .user_preference_extractor import (
+    PreferenceExtractor, 
+    retrieve_user_preferences, 
+    should_extract_preferences,
+    combine_context
+)
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -130,8 +137,15 @@ planner_client = None
 planner_model = ""
 decider_model = ""
 grounder_model = ""
-def init(service_ip, decider_port, grounder_port, planner_port):
-    global decider_client, grounder_client, planner_client, general_client, general_model, apps
+
+# 全局偏好提取器
+preference_extractor = None
+def init(service_ip, decider_port, grounder_port, planner_port, enable_user_profile=False, use_graphrag=False):
+    global decider_client, grounder_client, planner_client, general_client, general_model, apps, preference_extractor
+    
+    # 加载环境变量
+    env_path = Path(__file__).parent / ".env"
+    load_dotenv(env_path)
     decider_client = OpenAI(
         api_key = "0",
         base_url = f"http://{service_ip}:{decider_port}/v1",
@@ -144,6 +158,12 @@ def init(service_ip, decider_port, grounder_port, planner_port):
         api_key = "0",
         base_url = f"http://{service_ip}:{planner_port}/v1",
     )
+    
+    # 初始化偏好提取器（可由命令行开关控制）
+    if enable_user_profile:
+        preference_extractor = PreferenceExtractor(planner_client, planner_model, use_graphrag=use_graphrag)
+    else:
+        preference_extractor = None
 
 decider_prompt_template = """
 You are a phone-use AI agent. Now your task is "{task}".
@@ -208,7 +228,7 @@ grounder_prompt_template_bbox_zh = """"
 {{"bbox": [x1, y1, x2, y2]}}"""
 
 screenshot_path = "screenshot.jpg"
-factor = 0.5
+factor = 1.0
 
 prices = {}
 
@@ -567,6 +587,7 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True):
                     "position_y": y,
                     "action_index": image_index
                 })
+                history.append(decider_response_str)
           
 
         elif action == "input":
@@ -643,6 +664,17 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True):
         json.dump(data, f, ensure_ascii=False, indent=4)
     with open(os.path.join(data_dir, "react.json"), "w", encoding='utf-8') as f:
         json.dump(reacts, f, ensure_ascii=False, indent=4)
+    
+    # 任务完成后，异步提取用户偏好
+    if preference_extractor and should_extract_preferences(data):
+        task_data = {
+            'task_description': task,
+            'actions': actions,
+            'reacts': reacts,
+            'app_name': app
+        }
+        preference_extractor.extract_async(task_data)
+        logging.info("Submitted preference extraction task")
 
 from utils.load_md_prompt import load_prompt
 planner_prompt_template = load_prompt("planner_oneshot.md")
@@ -671,7 +703,7 @@ def parse_planner_response(response_str: str):
         logging.error(f"解析 JSON 失败: {e}\n内容为:\n{json_str}")
         return None
 
-def get_app_package_name(task_description):
+def get_app_package_name(task_description, use_graphrag=False):
     """单阶段：本地检索经验，调用模型完成应用选择和任务描述生成。"""
     # 本地检索经验
     search_engine = PromptTemplateSearch()
@@ -679,14 +711,25 @@ def get_app_package_name(task_description):
     experience_content = search_engine.get_experience(task_description, 1)
     print(f"检索到的相关经验:\n{experience_content}")
 
+    # 检索用户偏好
+    user_preferences = {}
+    if preference_extractor and preference_extractor.mem:
+        user_preferences = retrieve_user_preferences(
+            task_description,
+            preference_extractor.mem,
+            use_graphrag=use_graphrag
+        )
+        if user_preferences:
+            print(f"检索到的用户偏好 (使用{'GraphRAG' if use_graphrag else '向量检索'}):\n{user_preferences}")
+        else:
+            print("未找到相关用户偏好")
+    # 结合上下文
+    enhanced_context = combine_context(experience_content, user_preferences)
     # 构建Prompt
     prompt = planner_prompt_template.format(
         task_description=task_description,
-        experience_content=experience_content
+        experience_content=enhanced_context
     )
-    
-    # 调用模型
-    # while True:
     response_str = planner_client.chat.completions.create(
         model = planner_model,
         messages=[
@@ -694,18 +737,15 @@ def get_app_package_name(task_description):
                 "role": "user",
                 "content": [{"type": "text", "text": prompt}],
             }
-        ]
+        ],
     ).choices[0].message.content
     logging.info(f"Planner 响应: \n{response_str}")
-    
     response_json = parse_planner_response(response_str)
     if response_json is None:
         raise ValueError("无法解析模型响应为 JSON。")
-
     app_name = response_json.get("app_name")
     package_name = response_json.get("package_name")
     final_desc = response_json.get("final_task_description", task_description)
-    
     return app_name, package_name, final_desc
 
 # for testing purposes
@@ -716,11 +756,28 @@ if __name__ == "__main__":
     parser.add_argument("--decider_port", type=int, default=8000, help="Port for decider service (default: 8000)")
     parser.add_argument("--grounder_port", type=int, default=8001, help="Port for grounder service (default: 8001)")
     parser.add_argument("--planner_port", type=int, default=8002, help="Port for planner service (default: 8002)")
-    
+    parser.add_argument("--user_profile", choices=["on", "off"], default="on", help="Enable user profile memory (on/off). Default: on")
+    parser.add_argument("--use_graphrag", choices=["on", "off"], default="off", help="Use GraphRAG for user profile preference memory (on/off). Default: off")
+    parser.add_argument("--clear_memory", action="store_true", help="Force clear all stored user memories and exit")
     args = parser.parse_args()
 
     # 使用命令行参数初始化
-    init(args.service_ip, args.decider_port, args.grounder_port, args.planner_port)
+    enable_user_profile = (args.user_profile == "on")
+    use_graphrag = (args.use_graphrag == "on")
+    init(args.service_ip, args.decider_port, args.grounder_port, args.planner_port,
+        enable_user_profile=enable_user_profile, use_graphrag=use_graphrag)
+
+    # 如果需要清除记忆，优先执行并退出
+    if args.clear_memory:
+        if enable_user_profile and preference_extractor and getattr(preference_extractor, 'mem', None):
+            try:
+                count = preference_extractor.clear_all_memories()
+                print(f"Memory cleared. Deleted {count} item(s).")
+            except Exception as e:
+                print(f"Failed to clear memory: {e}")
+        else:
+            print("User profile is disabled or memory client not initialized; nothing to clear.")
+        raise SystemExit(0)
 
     device = AndroidDevice()
     print(f"connect to device")
@@ -746,7 +803,13 @@ if __name__ == "__main__":
         os.makedirs(data_dir)
 
         task_description = task
-        app_name, package_name, new_task_description = get_app_package_name(task_description)
+        app_name, package_name, new_task_description = get_app_package_name(task_description, use_graphrag=use_graphrag)
         device.app_start(package_name)
         print(f"Starting task '{new_task_description}' in app '{app_name}'")
         task_in_app(app_name, task_description, new_task_description, device, data_dir, True)
+    
+    # 等待所有偏好提取任务完成
+    if preference_extractor and hasattr(preference_extractor, 'executor'):
+        logging.info("Waiting for all preference extraction tasks to complete...")
+        preference_extractor.executor.shutdown(wait=True)
+        logging.info("All preference extraction tasks completed")

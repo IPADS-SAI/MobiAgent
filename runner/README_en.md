@@ -73,6 +73,101 @@ Parameters
 - `--grounder_port`: Grounder service port (default: `8001`)
 - `--planner_port`: Planner service port (default: `8002`)
 
+### User Profile & Preference Memory (Mem0/GraphRAG)
+
+MobiAgent integrates a user preference memory system (Mem0) to provide personalized context for planning.
+
+- Switches and modes:
+  - `--user_profile on|off`: enable/disable user profile memory (default on).
+  - `--use_graphrag on|off`: enable GraphRAG retrieval (default off). This is the single source of truth; do not rely on env/config to toggle this.
+  - `--clear_memory`: clear all memories for the current user (`default_user`) and exit.
+
+- Behavior:
+  - Preference extraction runs asynchronously after a successful task; preferences are stored as natural-language texts in Mem0.
+  - Retrieval returns a list of raw preference texts (no local regex/struct parsing). These texts are appended to experience templates via `combine_context(...)` as enhanced context for the LLM.
+
+- Required .env (for underlying components):
+  - LLM (OpenAI-compatible gateway)
+    - `OPENAI_API_KEY`
+    - `OPENAI_BASE_URL` (e.g., your vLLM/OpenRouter-compatible endpoint)
+  - GraphRAG (Neo4j)
+    - `NEO4J_URL` (e.g., `neo4j+s://<host>:<port>` or `neo4j://localhost:7687`)
+    - `NEO4J_USERNAME`
+    - `NEO4J_PASSWORD`
+  - Vector store / Embedding (used by Mem0 components)
+    - `EMBEDDING_MODEL` (e.g., `BAAI/bge-small-zh`)
+    - `EMBEDDING_MODEL_DIMS` (must match the model, e.g., `384`)
+    - `MILVUS_URL` (e.g., `http://localhost:19530`)
+
+### Environment Setup (Milvus + Neo4j)
+
+This project supports two preference backends:
+- Vector search (Milvus)
+- GraphRAG (Neo4j)
+
+You can deploy either or both. Whether to use GraphRAG is decided by `--use_graphrag`.
+
+#### 1) Milvus (Vector DB)
+
+Use the official embedded startup script for a standalone Docker deployment:
+```bash
+# Download the script
+curl -sfL https://raw.githubusercontent.com/milvus-io/milvus/master/scripts/standalone_embed.sh -o standalone_embed.sh
+# Start the container
+bash standalone_embed.sh start
+```
+
+Required .env:
+```bash
+MILVUS_URL=http://localhost:19530
+EMBEDDING_MODEL=BAAI/bge-small-zh  # download from Hugging Face
+EMBEDDING_MODEL_DIMS=384           # must match the model
+```
+
+#### 2) Neo4j (GraphRAG)
+
+Minimal local start (official image):
+```bash
+docker run -d --name neo4j \
+  -p 7474:7474 -p 7687:7687 \
+  -e NEO4J_AUTH=neo4j/testpassword \
+  neo4j:5.23.0
+```
+
+Web console: open http://localhost:7474 (user `neo4j`, password `testpassword`).
+
+Required .env:
+```bash
+NEO4J_URL=neo4j://localhost:7687
+NEO4J_USERNAME=neo4j
+NEO4J_PASSWORD=testpassword
+```
+
+> For Neo4j Aura or TLS endpoints, use `neo4j+s://<your-host>` and ensure connectivity and certificates are properly configured.
+
+### Enable & Verify
+
+Vector retrieval (Milvus):
+```bash
+python -m runner.mobiagent.mobiagent \
+  --service_ip 127.0.0.1 --decider_port 8000 --grounder_port 8000 --planner_port 8080 \
+  --user_profile on --use_graphrag off
+```
+
+GraphRAG (Neo4j):
+```bash
+python -m runner.mobiagent.mobiagent \
+  --service_ip 127.0.0.1 --decider_port 8000 --grounder_port 8000 --planner_port 8080 \
+  --user_profile on --use_graphrag on
+```
+
+Clear all memories and exit:
+```bash
+python -m runner.mobiagent.mobiagent \
+  --service_ip 127.0.0.1 --decider_port 8000 --grounder_port 8000 --planner_port 8080 \
+  --user_profile on --use_graphrag on --clear_memory
+```
+
 ## UI-TARS Runner
 
 This section is based on `runner/UI-TARS-agent` in the repo. It integrates the UI-TARS model into the MobiAgent framework, providing consistent quick start, model deployment, real-device connection, and data collection.

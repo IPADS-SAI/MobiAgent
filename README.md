@@ -35,7 +35,8 @@ MobiAgent: A Systematic Framework for Customizable Mobile Agents
 </div>
 
 ## News
-- `[2025.11.03]` ✅ Added multi-task execution module support and user preference support. For details about multi-task usage and configuration, see [here](runner/mobiagent/multi_task/README.md).
+- `[2025.11.03]` ✅ Added multi-task execution module support and user preference support. For details about multi-task usage and configuration, see [here](runner/mobiagent/multi_task/README.md). 
+- `[2025.11.03]` 🧠 Introduced a user profile memory system: async preference extraction with LLM, raw-text preference storage and retrieval, optional GraphRAG via Neo4j. Preferences are retrieved as original texts and appended to experience prompts to personalize planning, see [here](runner/mobiagent/README.md).
 - `[2025.10.31]` 🔥We've updated the MobiMind-Mixed model based on Qwen3-VL-4B-Instruct! Download it at [MobiMind-Mixed-4B-1031](https://huggingface.co/IPADS-SAI/MobiMind-Mixed-4B-1031), and add `--use_qwen3` flag when running dataset creation and agent runner scripts.
 - `[2025.9.30]` 🚀 added a local experience retrieval module, supporting experience query based on task description, enhancing the intelligence and efficiency of task planning!
 - `[2025.9.29]` We've open-sourced a mixed version of MobiMind, capable of handling **both Decider and Grounder tasks**! Feel free to download and try it at [MobiMind-Mixed-7B](https://huggingface.co/IPADS-SAI/MobiMind-Mixed-7B).

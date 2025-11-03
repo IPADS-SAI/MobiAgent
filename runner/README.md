@@ -71,6 +71,123 @@ python -m runner.mobiagent.mobiagent --service_ip <服务IP> --decider_port <决
 - `--grounder_port`：定位服务端口（默认：`8001`）
 - `--planner_port`：规划服务端口（默认：`8002`）
 
+### 用户画像与偏好记忆（Mem0/GraphRAG）
+
+MobiAgent 集成了用户偏好记忆系统（Mem0），用于在规划阶段为 LLM 提供个性化上下文。
+
+- 开关与模式：
+  - `--user_profile on|off`：是否启用用户画像（默认 on）。
+  - `--use_graphrag on|off`：是否使用 GraphRAG 检索（默认 off）。该参数为单一真相源，优先级最高；不再读取环境变量或配置文件来决定是否启用 GraphRAG。
+  - `--clear_memory`：启动后立即清空当前用户（`default_user`）的所有记忆并退出。
+
+- 使用示例：
+  - 仅使用向量检索：
+    ```bash
+    python -m runner.mobiagent.mobiagent \
+      --service_ip 123.60.91.241 --decider_port 8000 --grounder_port 8000 --planner_port 8080 \
+      --user_profile on --use_graphrag off
+    ```
+  - 使用 GraphRAG（Neo4j）：
+    ```bash
+    python -m runner.mobiagent.mobiagent \
+      --service_ip 123.60.91.241 --decider_port 8000 --grounder_port 8000 --planner_port 8080 \
+      --user_profile on --use_graphrag on
+    ```
+  - 清空记忆并退出：
+    ```bash
+    python -m runner.mobiagent.mobiagent \
+      --service_ip 123.60.91.241 --decider_port 8000 --grounder_port 8000 --planner_port 8080 \
+      --user_profile on --use_graphrag on --clear_memory
+    ```
+
+- 行为说明：
+  - 偏好“提取”在任务成功完成后异步进行（使用当前 planner LLM 进行语义分析），将偏好以自然语言形式写入 Mem0。
+  - 偏好“检索”阶段不再做本地正则/结构化解析，直接返回检索到的“原始文本列表”。
+  - 在 `mobiagent.py` 中，这些原文偏好通过 `combine_context(...)` 直接附加到经验模板后，作为 LLM 的增强上下文。
+
+- .env 关键变量（用于底层组件初始化）：
+  - LLM（OpenAI 兼容网关）
+    - `OPENAI_API_KEY`
+    - `OPENAI_BASE_URL`（如使用自建网关/OpenRouter 兼容端点）
+  - GraphRAG（Neo4j）
+    - `NEO4J_URL`（例如：`neo4j+s://<host>:<port>`）
+    - `NEO4J_USERNAME`
+    - `NEO4J_PASSWORD`
+  - 向量存储/Embedding（Mem0 组件使用）
+    - `EMBEDDING_MODEL`（如：`BAAI/bge-small-zh`）
+    - `EMBEDDING_MODEL_DIMS`（与模型维度一致，如：`384`）
+    - `MILVUS_URL`（如：`http://localhost:19530`）
+
+### 环境准备（Milvus + Neo4j）
+
+本项目支持两种偏好检索后端：
+- 向量检索（Milvus）
+- GraphRAG（Neo4j）
+
+两者可以独立或同时部署。是否启用 GraphRAG 由命令行 `--use_graphrag` 决定。
+
+#### 1) Milvus（矢量数据库）
+
+```bash
+# Download the installation script
+curl -sfL https://raw.githubusercontent.com/milvus-io/milvus/master/scripts/standalone_embed.sh -o standalone_embed.sh
+# Start the Docker container
+bash standalone_embed.sh start
+```
+
+必需的 .env：
+```bash
+MILVUS_URL=http://localhost:19530
+EMBEDDING_MODEL=BAAI/bge-small-zh(从huggingface下载)
+EMBEDDING_MODEL_DIMS=384(与模型维度一致)
+```
+
+> 说明：`EMBEDDING_MODEL` 与 `EMBEDDING_MODEL_DIMS` 必须匹配；如更换模型，请同步修改维度。
+
+#### 2) Neo4j（GraphRAG）
+
+最简本地启动（官方镜像）：
+```bash
+docker run -d --name neo4j \
+  -p 7474:7474 -p 7687:7687 \
+  -e NEO4J_AUTH=neo4j/testpassword \
+  neo4j:5.23.0
+```
+
+Web 控制台：访问 http://localhost:7474 （默认用户 `neo4j`，密码 `testpassword`）。
+
+必需的 .env：
+```bash
+NEO4J_URL=neo4j://localhost:7687
+NEO4J_USERNAME=neo4j
+NEO4J_PASSWORD=testpassword
+```
+
+> 如使用 Neo4j Aura 或自签名证书，请将 `NEO4J_URL` 改为 `neo4j+s://<your-host>`，并确保网络连通与证书策略匹配。
+
+### 启用与验证
+
+向量检索（Milvus）：
+```bash
+python -m runner.mobiagent.mobiagent \
+  --service_ip 127.0.0.1 --decider_port 8000 --grounder_port 8000 --planner_port 8080 \
+  --user_profile on --use_graphrag off
+```
+
+GraphRAG（Neo4j）：
+```bash
+python -m runner.mobiagent.mobiagent \
+  --service_ip 127.0.0.1 --decider_port 8000 --grounder_port 8000 --planner_port 8080 \
+  --user_profile on --use_graphrag on
+```
+
+清空记忆：
+```bash
+python -m runner.mobiagent.mobiagent \
+  --service_ip 127.0.0.1 --decider_port 8000 --grounder_port 8000 --planner_port 8080 \
+  --user_profile on --use_graphrag on --clear_memory
+```
+
 ## UI-TARS Runner
 
 本节基于仓内 `runner/UI-TARS-agent`进行介绍，支持将UI-TARS模型接入MobiAgent框架，提供一致的快速启动、模型部署、真实移动端设备接入与数据收集。

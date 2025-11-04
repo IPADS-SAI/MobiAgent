@@ -131,6 +131,7 @@ class AndroidDevice(Device):
 
     def click(self, x, y):
         self.d.click(x, y)
+        time.sleep(0.5)
 
     def input(self, text):
         current_ime = self.d.current_ime()
@@ -209,7 +210,8 @@ class HarmonyDevice(Device):
         time.sleep(1.5)
 
     def app_start(self, package_name):
-        self.d.start_app(package_name)
+        # self.d.start_app(package_name)
+        self.d.force_start_app(package_name)
         time.sleep(1.5)
 
     def app_stop(self, package_name):
@@ -220,6 +222,7 @@ class HarmonyDevice(Device):
 
     def click(self, x, y):
         self.d.click(x, y)
+        time.sleep(0.5)
 
     def input(self, text):
         self.d.input_text(text)
@@ -267,75 +270,10 @@ def init(service_ip, decider_port, grounder_port, planner_port, enable_user_prof
         preference_extractor = PreferenceExtractor(planner_client, planner_model, use_graphrag=use_graphrag)
     else:
         preference_extractor = None
-
-decider_prompt_template = """
-You are a phone-use AI agent. Now your task is "{task}".
-Your action history is:
-{history}
-Please provide the next action based on the screenshot and your action history. You should do careful reasoning before providing the action.
-Your action space includes:
-- Name: click, Parameters: target_element (a high-level description of the UI element to click).
-- Name: swipe, Parameters: direction (one of UP, DOWN, LEFT, RIGHT).
-- Name: input, Parameters: text (the text to input).
-- Name: wait, Parameters: (no parameters, will wait for 1 second).
-- Name: done, Parameters: (no parameters).
-Your output should be a JSON object with the following format:
-{{"reasoning": "Your reasoning here", "action": "The next action (one of click, input, swipe, done)", "parameters": {{"param1": "value1", ...}}}}
-
-Remember your task is "{task}".
-"""
-
-grounder_prompt_template_no_bbox = '''
-Based on the screenshot, user's intent and the description of the target UI element, provide the coordinates of the element using **absolute coordinates**.
-User's intent: {reasoning}
-Target element's description: {description}
-Your output should be a JSON object with the following format:
-{{"coordinates": [x, y]}}'''
-
-grounder_prompt_template_bbox = '''
-Based on the screenshot, user's intent and the description of the target UI element, provide the bounding box of the element using **absolute coordinates**.
-User's intent: {reasoning}
-Target element's description: {description}
-Your output should be a JSON object with the following format:
-{{"bbox": [x1, y1, x2, y2]}}'''
-
-grounder_qwen3_bbox_prompt = '''
-Based on user's intent and the description of the target UI element, locate the element in the screenshot.
-User's intent: {reasoning}
-Target element's description: {description}
-Report the bbox coordinates in JSON format.'''
-
-decider_prompt_template_zh = """
-你是一个手机使用AI代理。现在你的任务是“{task}”。
-你的操作历史如下：
-{history}
-请根据截图和你的操作历史提供下一步操作。在提供操作之前，你需要进行仔细的推理。
-你的操作范围包括：
-- 名称：点击（click），参数：目标元素（target_element，对要点击的UI元素的高级描述）。
-- 名称：滑动（swipe），参数：方向（direction，UP、DOWN、LEFT、RIGHT中的一个）。
-- 名称：输入（input），参数：文本（text，要输入的文本）。
-- 名称：等待（wait），参数：（无参数，将等待1秒）。
-- 名称：完成（done），参数：（无参数）。
-你的输出应该是一个如下格式的JSON对象：
-{{"reasoning": "你的推理分析过程在此", "action": "下一步操作（click、input、swipe、done中的一个）", "parameters": {{"param1": "value1", ...}}}}"""
-
-grounder_prompt_template_no_bbox_zh = """
-根据截图、用户意图和目标UI元素的描述，使用**绝对坐标**提供该元素的坐标。
-用户意图：{reasoning}
-目标元素描述：{description}
-你的输出应该是一个如下格式的JSON对象：
-{{"coordinates": [x, y]}}"""
-
-grounder_prompt_template_bbox_zh = """"
-根据截图、用户意图和目标UI元素的描述，使用**绝对坐标**提供该元素的边界框。
-用户意图：{reasoning}
-目标元素描述：{description}
-你的输出应该是一个如下格式的JSON对象：
-{{"bbox": [x1, y1, x2, y2]}}"""
-
+    
+# 截图缩放比例
 factor = 0.5
 
-prices = {}
 
 from pydantic import BaseModel, Field
 from typing import Literal, Dict
@@ -534,6 +472,16 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3
     history = []
     actions = []
     reacts = []
+
+    if use_qwen3:
+        grounder_prompt_template_bbox = load_prompt("grounder_qwen3_bbox.md")
+        grounder_prompt_template_no_bbox = load_prompt("grounder_qwen3_coordinates.md")
+        # decider_prompt_template = load_prompt("decider_qwen3.md")
+        decider_prompt_template = load_prompt("decider_v2.md")
+    else:
+        grounder_prompt_template_bbox = load_prompt("grounder_bbox.md")
+        grounder_prompt_template_no_bbox = load_prompt("grounder_coordinates.md")
+        decider_prompt_template = load_prompt("decider_v2.md")
     while True:     
         if len(actions) >= MAX_STEPS:
             logging.info("Reached maximum steps, stopping the task.")
@@ -543,8 +491,8 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3
             history_str = "(No history)"
         else:
             history_str = "\n".join(f"{idx}. {h}" for idx, h in enumerate(history, 1))
-
         screenshot_resize = get_screenshot(device, device_type)
+
         
         decider_prompt = decider_prompt_template.format(
             task=task,
@@ -578,8 +526,8 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3
         decider_end_time = time.time()
         logging.info(f"Decider time taken: {decider_end_time - decider_start_time} seconds")
         logging.info(f"Decider response: \n{decider_response_str}")
-        # 使用 ActionPlan 解析返回的 JSON 字符串
-        parsed_plan = ActionPlan.model_validate_json(decider_response_str)
+        # # 使用 ActionPlan 解析返回的 JSON 字符串
+        # parsed_plan = ActionPlan.model_validate_json(decider_response_str)
 
         # 预处理 decider_response_str，增强健壮性
         def robust_json_loads(s):
@@ -669,7 +617,7 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3
         if action == "click":
             reasoning = decider_response["reasoning"]
             target_element = decider_response["parameters"]["target_element"]
-            grounder_prompt = (grounder_qwen3_bbox_prompt if bbox_flag else grounder_prompt_template_no_bbox).format(reasoning=reasoning, description=target_element)
+            grounder_prompt = (grounder_prompt_template_bbox if bbox_flag else grounder_prompt_template_no_bbox).format(reasoning=reasoning, description=target_element)
             # logging.info(f"Grounder prompt: \n{grounder_prompt}")
             # 记录一下grounder开始时间,s 为单位
             grounder_start_time = time.time()
@@ -700,6 +648,11 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3
                 bbox = grounder_response["bbox"] if "bbox" in grounder_response else None
                 bbox_2d = grounder_response["bbox_2d"] if "bbox_2d" in grounder_response else None
                 bbox_2d_ = grounder_response.get("bbox-2d", None)
+                bbox_2D = grounder_response.get("bbox_2D", None)
+                if bbox_2D is not None:
+                    bbox = bbox_2D
+                if bbox_2d_ is not None:
+                    bbox = bbox_2d_
                 if bbox_2d is not None:
                     bbox = bbox_2d
 
@@ -786,7 +739,7 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3
             direction = decider_response["parameters"]["direction"]
 
             if direction == "DOWN":
-                device.swipe(direction.lower(), 2)
+                device.swipe(direction.lower(), 0.6)
                 # record the swipe as an action (index only)
                 actions.append({
                     "type": "swipe",
@@ -804,7 +757,7 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3
                 continue
 
             if direction in ["UP", "LEFT", "RIGHT"]:
-                device.swipe(direction.lower())
+                device.swipe(direction.lower(), 0.6)
                 actions.append({
                     "type": "swipe",
                     "press_position_x": None,
@@ -856,7 +809,6 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3
         }
         preference_extractor.extract_async(task_data)
         logging.info("Submitted preference extraction task")
-
 
 
 def parse_planner_response(response_str: str):
@@ -942,7 +894,7 @@ if __name__ == "__main__":
     parser.add_argument("--decider_port", type=int, default=8000, help="Port for decider service (default: 8000)")
     parser.add_argument("--grounder_port", type=int, default=8001, help="Port for grounder service (default: 8001)")
     parser.add_argument("--planner_port", type=int, default=8002, help="Port for planner service (default: 8002)")
-    parser.add_argument("--user_profile", choices=["on", "off"], default="on", help="Enable user profile memory (on/off). Default: on")
+    parser.add_argument("--user_profile", choices=["on", "off"], default="off", help="Enable user profile memory (on/off). Default: off")
     parser.add_argument("--use_graphrag", choices=["on", "off"], default="off", help="Use GraphRAG for user profile preference memory (on/off). Default: off")
     parser.add_argument("--clear_memory", action="store_true", help="Force clear all stored user memories and exit")
     parser.add_argument("--device", type=str, default="Android", choices=["Android", "Harmony"], help="Device type: Android or Harmony (default: Android)")
@@ -969,7 +921,6 @@ if __name__ == "__main__":
         else:
             print("User profile is disabled or memory client not initialized; nothing to clear.")
         raise SystemExit(0)
-
     # 根据 --device 参数选择设备类型
     if args.device == "Android":
         device = AndroidDevice()
@@ -1025,7 +976,7 @@ if __name__ == "__main__":
         logging.info(f"Calling planner to get app_name and package_name")
         app_name, package_name, planner_task_description = get_app_package_name(task_description, use_graphrag=use_graphrag, device_type=current_device_type)
         logging.info(f"Planner result - App: {app_name}, Package: {package_name}")
-        
+
         # 根据 use_experience 参数决定是否使用 planner 改写的任务描述
         if use_experience == True:
             logging.info(f"Using experience: using planner-rewritten task description")

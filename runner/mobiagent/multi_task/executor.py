@@ -17,7 +17,7 @@ import numpy as np
 from openai import OpenAI
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
+from utils.load_md_prompt import load_prompt
 try:
     # 尝试相对导入（当作为模块运行时）
     from .models import ActionPlan, GroundResponse
@@ -230,6 +230,16 @@ def task_in_app(
     screenshots_base64 = []
     skip_temp = False
     
+    if use_qwen3:
+        grounder_prompt_template_bbox = load_prompt("grounder_qwen3_bbox.md")
+        grounder_prompt_template_no_bbox = load_prompt("grounder_qwen3_coordinates.md")
+        # decider_prompt_template = load_prompt("decider_qwen3.md")
+        decider_prompt_template = load_prompt("decider_v2.md")
+    else:
+        grounder_prompt_template_bbox = load_prompt("grounder_bbox.md")
+        grounder_prompt_template_no_bbox = load_prompt("grounder_coordinates.md")
+        decider_prompt_template = load_prompt("decider_v2.md")
+
     # 创建初始的空数据文件
     _save_execution_data(data_dir, app, old_task, task, actions, reacts)
     
@@ -252,7 +262,7 @@ def task_in_app(
         screenshots_base64.append(screenshot)
         
         # Decider决策
-        decider_prompt = DECIDER_PROMPT_TEMPLATE.format(task=task, history=history_str)
+        decider_prompt = decider_prompt_template.format(task=task, history=history_str)
         logging.info(f"Decider prompt: \n{decider_prompt}")
         
         decider_start_time = time.time()
@@ -335,8 +345,8 @@ def task_in_app(
             if any(keyword in target_element for keyword in ["支付宝支付", "¥", "立即支付", "免密支付"]):
                 print("Skipping click action for payment.")
                 skip_temp = True
-            
-            grounder_prompt = (GROUNDER_QWEN3_BBOX_PROMPT if bbox_flag else GROUNDER_PROMPT_NO_BBOX).format(
+
+            grounder_prompt = (grounder_prompt_template_bbox if bbox_flag else grounder_prompt_template_no_bbox).format(
                 reasoning=reasoning, description=target_element
             )
             

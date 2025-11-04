@@ -36,7 +36,11 @@ MobiAgent: A Systematic Framework for Customizable Mobile Agents
 
 ## 新闻
 
-- `[2025.8.30]`🔥 我们开源了MobiAgent！
+ - `[2025.11.03]` 🧠 新增“用户画像偏好记忆”能力：基于 Mem0 的偏好存储与检索，任务完成后异步用 LLM 提取偏好（原文存储、原文检索，不做本地正则结构化），支持可选 GraphRAG（Neo4j）以增强语义关系检索；检索到的偏好原文会拼接进经验模板，个性化规划流程。详见 [此处](runner/mobiagent/README.md)。
+ - `[2025.11.03]` ✅ 新增“多任务执行模块”与“用户偏好支持”。多任务的使用方式与配置说明见 [此处](runner/mobiagent/multi_task/README.md)。
+ - `[2025.9.30]` 🚀 增加“本地经验检索”模块，支持基于任务描述的经验模版检索，显著提升任务规划的智能性与效率。
+ - `[2025.9.29]` 🔥 开源 MobiMind 混合版本，可同时胜任 Decider 与 Grounder 任务！下载试用：[MobiMind-Mixed-7B](https://huggingface.co/IPADS-SAI/MobiMind-Mixed-7B)
+ - `[2025.8.30]` 我们开源了 MobiAgent！
 
 ## 评测结果
 

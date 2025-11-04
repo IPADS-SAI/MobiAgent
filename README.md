@@ -74,7 +74,7 @@ MobiAgent: A Systematic Framework for Customizable Mobile Agents
 
 task: `帮我在小红书找一下推荐的最畅销的男士牛仔裤，然后在淘宝搜这一款裤子，把淘宝中裤子品牌、名称和价格用微信发给小赵`
 <div align="center">
-  <video src="https://github.com/user-attachments/assets/316ef35e-20c6-4cfa-a363-49661da2bc8e"/>
+  <video src="https://github.com/user-attachments/assets/92fdf23c-71d6-4c67-b02a-c3fa13fcc0e7"/>
 </div>
 
 ## Project Structure

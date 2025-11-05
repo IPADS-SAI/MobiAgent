@@ -5,10 +5,22 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>设备数据收集工具</title>
-    <link rel="stylesheet" href="/static/css/style.css?v=1.1">
+    <link rel="stylesheet" href="/static/css/style.css?v=1.5">
 </head>
 
 <body>
+    <!-- 加载动画容器 -->
+    <div id="loadingOverlay" class="loading-overlay hide">
+        <div class="loading-content">
+            <div class="loading-spinner">
+                <div class="spinner-ring"></div>
+                <div class="spinner-ring"></div>
+                <div class="spinner-ring"></div>
+            </div>
+            <p class="loading-text">页面更新中<span class="dot-animation">...</span></p>
+        </div>
+    </div>
+
     <div class="container">
         <!-- 左侧截图区域 -->
         <div class="screenshot-section">
@@ -63,6 +75,12 @@
             </div>
 
             <div class="control-buttons">
+                <button id="waitBtn" class="control-btn wait-btn" onclick="handleWait()" disabled>
+                    ⏱️ 等待
+                </button>
+                <button id="suspendBtn" class="control-btn suspend-btn" onclick="toggleSuspend()" disabled>
+                    🚫 人工介入
+                </button>
                 <button id="inputBtn" class="control-btn" onclick="showInputModal()" disabled>
                     ⌨️ 文本输入
                 </button>
@@ -189,7 +207,7 @@
         </div>
     </div>
 
-    <script src="/static/js/script.js?v=1.1"></script>
+    <script src="/static/js/script.js?v=1.5"></script>
 </body>
 
 </html>

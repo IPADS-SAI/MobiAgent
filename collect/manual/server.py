@@ -60,6 +60,7 @@ action_history = []
 current_task_description = ""  # 当前任务描述
 current_app_name = ""  # 当前应用名称
 current_task_type = ""  # 当前任务类型
+is_suspended = False  # 是否处于人工介入状态
 
 device: Device = None  # 设备连接对象
 device_type = "Android"  # 当前设备类型
@@ -194,6 +195,19 @@ async def handle_click(action: ClickAction):
         x = round(action.x)
         y = round(action.y)
         
+        # 如果处于suspend状态，只执行操作但不记录
+        if is_suspended:
+            logger.info(f"Click in suspend mode: ({x}, {y}) - 不记录操作")
+            device.click(x, y)
+            return {
+                "status": "success",
+                "message": f"点击操作已执行但未记录 (人工介入模式): ({x}, {y})",
+                "action": "click",
+                "coordinates": {"x": x, "y": y},
+                "suspended": True,
+                "action_count": len(action_history)
+            }
+        
         element_bounds = find_clicked_element(hierarchy, x, y)
         if element_bounds:
             element_bounds = [round(coord) for coord in element_bounds]
@@ -210,7 +224,6 @@ async def handle_click(action: ClickAction):
         }
         print(action_record)
         action_history.append(action_record)
-        # get_current_hierarchy_and_screenshot(1.5)
 
         return {
             "status": "success", 
@@ -222,7 +235,7 @@ async def handle_click(action: ClickAction):
         }
     
     except Exception as e:
-        print(f"点击操作失败: {str(e)}")
+        logger.error(f"点击操作失败: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"点击操作失败: {str(e)}")
 
 @app.post("/swipe")
@@ -234,6 +247,20 @@ async def handle_swipe(action: SwipeAction):
         startY = round(action.startY)
         endX = round(action.endX)
         endY = round(action.endY)
+        
+        # 如果处于suspend状态，只执行操作但不记录
+        if is_suspended:
+            logger.info(f"Swipe in suspend mode: ({startX}, {startY}) -> ({endX}, {endY}) - 不记录操作")
+            device.swipe(startX, startY, endX, endY, duration=0.1)
+            return {
+                "status": "success",
+                "message": f"滑动操作已执行但未记录 (人工介入模式): ({startX}, {startY}) → ({endX}, {endY})",
+                "action": "swipe",
+                "start": {"x": startX, "y": startY},
+                "end": {"x": endX, "y": endY},
+                "suspended": True,
+                "action_count": len(action_history)
+            }
         
         get_current_hierarchy_and_screenshot()
         save_screenshot()
@@ -250,7 +277,6 @@ async def handle_swipe(action: SwipeAction):
         }
         print(action_record)
         action_history.append(action_record)
-        # get_current_hierarchy_and_screenshot(1.5)
 
         return {
             "status": "success",
@@ -263,7 +289,7 @@ async def handle_swipe(action: SwipeAction):
         }
     
     except Exception as e:
-        print(f"滑动操作失败: {str(e)}")
+        logger.error(f"滑动操作失败: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"滑动操作失败: {str(e)}")
 
 @app.post("/input")
@@ -274,6 +300,20 @@ async def handle_input(action: InputAction):
     
     try:
         logger.info(f"Text input action received: '{action.text}'")
+        
+        # 如果处于suspend状态，只执行操作但不记录
+        if is_suspended:
+            logger.info(f"Input in suspend mode: '{action.text}' - 不记录操作")
+            device.input(action.text)
+            return {
+                "status": "success",
+                "message": f"文本输入已执行但未记录 (人工介入模式): '{action.text}'",
+                "action": "input",
+                "text": action.text,
+                "suspended": True,
+                "action_count": len(action_history)
+            }
+        
         get_current_hierarchy_and_screenshot()
         save_screenshot()
         
@@ -302,6 +342,82 @@ async def handle_input(action: InputAction):
     except Exception as e:
         logger.error(f"输入操作失败: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"输入操作失败: {str(e)}")
+
+@app.post("/wait")
+async def handle_wait():
+    """处理等待操作 - 记录当前页面截图和'wait'动作"""
+    if device is None:
+        raise HTTPException(status_code=400, detail="Device not initialized")
+    
+    try:
+        logger.info("Wait action triggered")
+        get_current_hierarchy_and_screenshot()
+        save_screenshot()
+        
+        action_record = {
+            "type": "wait"
+        }
+        print(action_record)
+        action_history.append(action_record)
+        
+        logger.info(f"Wait action recorded successfully")
+        
+        return {
+            "status": "success",
+            "message": "等待操作已记录",
+            "action": "wait",
+            "action_count": len(action_history)
+        }
+    
+    except Exception as e:
+        logger.error(f"等待操作失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"等待操作失败: {str(e)}")
+
+@app.post("/suspend")
+async def handle_suspend():
+    """处理人工介入操作 - 切换suspend状态"""
+    global is_suspended
+    
+    if device is None:
+        raise HTTPException(status_code=400, detail="Device not initialized")
+    
+    try:
+        is_suspended = not is_suspended
+        
+        if is_suspended:
+            logger.info("Suspend mode activated - human intervention started")
+            action_record = {
+                "type": "suspend",
+                "action": "start"
+            }
+        else:
+            logger.info("Suspend mode deactivated - human intervention ended")
+            action_record = {
+                "type": "suspend",
+                "action": "end"
+            }
+        
+        print(action_record)
+        action_history.append(action_record)
+        
+        return {
+            "status": "success",
+            "message": "人工介入模式" + ("已启动" if is_suspended else "已关闭"),
+            "action": "suspend",
+            "is_suspended": is_suspended,
+            "action_count": len(action_history)
+        }
+    
+    except Exception as e:
+        logger.error(f"人工介入操作失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"人工介入操作失败: {str(e)}")
+
+@app.get("/suspend_status")
+async def get_suspend_status():
+    """获取人工介入模式状态"""
+    return {
+        "is_suspended": is_suspended
+    }
 
 @app.get("/action_history")
 async def get_action_history():
@@ -343,6 +459,8 @@ async def save_current_data():
             json.dump(save_data, f, ensure_ascii=False, indent=4)
   
         action_history.clear()
+        global is_suspended
+        is_suspended = False  # 重置suspend状态
 
         # [Info]
         print(f"第 {currentDataIndex} 条数据已保存")
@@ -375,6 +493,8 @@ async def delete_current_data():
             shutil.rmtree(data_dir)
     
         action_history.clear()
+        global is_suspended
+        is_suspended = False  # 重置suspend状态
 
         return {
             "status": "success",
@@ -382,8 +502,8 @@ async def delete_current_data():
             "data_index": currentDataIndex
         }
     except Exception as e:
-        print(f"保存数据失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"保存数据失败: {str(e)}")
+        logger.error(f"删除数据失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"删除数据失败: {str(e)}")
 
 
 # Device-specific app mappings

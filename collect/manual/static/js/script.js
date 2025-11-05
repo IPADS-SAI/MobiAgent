@@ -17,9 +17,34 @@ let autoRefreshEnabled = false; // 是否启用自动刷新
 
 let deviceConnected = false; // 设备是否已连接
 let currentDeviceType = "Android"; // 当前设备类型
+let isSuspended = false; // 是否处于人工介入模式
 
 // 鼠标位置追踪
 let lastMousePosition = { x: 0, y: 0 }; // 记录最后的鼠标位置
+
+// ==================== 加载动画控制函数 ====================
+
+/**
+ * 显示加载动画
+ */
+function showLoadingAnimation() {
+    console.log('显示加载动画');
+    const overlay = document.getElementById('loadingOverlay');
+    if (overlay) {
+        overlay.classList.remove('hide');
+    }
+}
+
+/**
+ * 隐藏加载动画
+ */
+function hideLoadingAnimation() {
+    console.log('隐藏加载动画');
+    const overlay = document.getElementById('loadingOverlay');
+    if (overlay) {
+        overlay.classList.add('hide');
+    }
+}
 
 // 检查设备连接状态
 async function checkDeviceStatus() {
@@ -132,6 +157,8 @@ async function endDataCollection() {
     const endBtn = document.getElementById('endBtn');
     const nextBtn = document.getElementById('nextBtn');
     const deleteBtn = document.getElementById('deleteBtn');
+    const waitBtn = document.getElementById('waitBtn');
+    const suspendBtn = document.getElementById('suspendBtn');
     const inputBtn = document.getElementById('inputBtn');
     const historyBtn = document.getElementById('historyBtn');
     const autoRefreshBtn = document.getElementById('autoRefreshBtn');
@@ -150,10 +177,17 @@ async function endDataCollection() {
         endBtn.disabled = true;
         nextBtn.disabled = true;
         deleteBtn.disabled = true;
+        waitBtn.disabled = true;
+        suspendBtn.disabled = true;
         inputBtn.disabled = true;
         historyBtn.disabled = true;
         autoRefreshBtn.disabled = true;
         isCollecting = false;
+        isSuspended = false;
+
+        // 重置suspend按钮状态
+        suspendBtn.classList.remove('suspended');
+        suspendBtn.textContent = '🚫 人工介入';
 
         // 隐藏自动刷新状态
         const statusPanel = document.getElementById('autoRefreshStatus');
@@ -204,6 +238,114 @@ async function deleteDataCollection() {
     }
 }
 
+// 等待操作处理
+async function handleWait() {
+    if (!isCollecting) {
+        updateStatus('请先开始数据收集', 'error');
+        return;
+    }
+
+    if (isSuspended) {
+        updateStatus('人工介入模式下无法执行等待操作', 'error');
+        return;
+    }
+
+    try {
+        updateStatus('正在记录等待操作...', 'info');
+
+        const response = await fetch('/wait', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+
+        if (response.ok) {
+            const result = await response.json();
+            updateStatus(`等待操作已记录 | 总操作数: ${result.action_count}`, 'success');
+            
+            // 显示加载动画
+            showLoadingAnimation();
+            
+            // 刷新截图
+            setTimeout(async () => {
+                await refreshScreenshot(true);  // 传入true显示加载动画
+                console.log('等待操作后已刷新截图');
+            }, 200);
+        } else {
+            const error = await response.json();
+            updateStatus(`等待操作失败: ${error.detail}`, 'error');
+        }
+    } catch (error) {
+        console.error('等待操作错误:', error);
+        updateStatus(`等待操作错误: ${error.message}`, 'error');
+    }
+}
+
+// 人工介入模式切换
+async function toggleSuspend() {
+    if (!isCollecting) {
+        updateStatus('请先开始数据收集', 'error');
+        return;
+    }
+
+    try {
+        const response = await fetch('/suspend', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+
+        if (response.ok) {
+            const result = await response.json();
+            isSuspended = result.is_suspended;
+
+            const suspendBtn = document.getElementById('suspendBtn');
+            
+            if (isSuspended) {
+                suspendBtn.classList.add('suspended');
+                suspendBtn.textContent = '✅ 人工介入中';
+                updateStatus('✋ 人工介入模式已启动 - 后续操作将不被记录，直到您点击此按钮关闭', 'warning');
+            } else {
+                suspendBtn.classList.remove('suspended');
+                suspendBtn.textContent = '🚫 人工介入';
+                updateStatus('✅ 人工介入模式已关闭 - 操作将继续被记录', 'success');
+            }
+        } else {
+            const error = await response.json();
+            updateStatus(`人工介入切换失败: ${error.detail}`, 'error');
+        }
+    } catch (error) {
+        console.error('人工介入切换错误:', error);
+        updateStatus(`人工介入切换错误: ${error.message}`, 'error');
+    }
+}
+
+// 检查并同步suspend状态
+async function checkSuspendStatus() {
+    try {
+        const response = await fetch('/suspend_status');
+        if (response.ok) {
+            const data = await response.json();
+            if (data.is_suspended !== isSuspended) {
+                isSuspended = data.is_suspended;
+                const suspendBtn = document.getElementById('suspendBtn');
+                
+                if (isSuspended) {
+                    suspendBtn.classList.add('suspended');
+                    suspendBtn.textContent = '✅ 人工介入中';
+                } else {
+                    suspendBtn.classList.remove('suspended');
+                    suspendBtn.textContent = '🚫 人工介入';
+                }
+            }
+        }
+    } catch (error) {
+        console.error('检查suspend状态失败:', error);
+    }
+}
+
 async function takeScreenshot() {
     const status = document.getElementById('status');
     const container = document.getElementById('screenshotContainer');
@@ -211,6 +353,9 @@ async function takeScreenshot() {
     // 显示加载状态
     status.innerHTML = '<div class="loading">正在获取截图，请稍候...</div>';
     container.innerHTML = '<div class="loading">截图中...</div>';
+    
+    // 显示加载动画
+    // showLoadingAnimation();
 
     try {
         // 直接调用获取截图的API，该API会自动更新截图
@@ -254,6 +399,9 @@ async function takeScreenshot() {
 
             // 为截图添加交互功能
             setupScreenshotInteraction();
+            
+            // 隐藏加载动画
+            hideLoadingAnimation();
         } else {
             const error = await response.json();
             throw new Error(error.detail || '截图失败');
@@ -261,6 +409,8 @@ async function takeScreenshot() {
     } catch (error) {
         status.innerHTML = `<div class="error">错误: ${error.message}</div>`;
         container.innerHTML = '<div class="error">截图失败，请重试</div>';
+        // 隐藏加载动画
+        hideLoadingAnimation();
     }
 }
 
@@ -450,30 +600,50 @@ async function handleClickAction(x, y) {
 
         if (response.ok) {
             const result = await response.json();
-            updateStatus(`点击操作完成: (${x}, ${y}) | 总操作数: ${result.action_count || 0}`, 'success');
+            
+            if (result.suspended) {
+                updateStatus(`✋ 点击操作已执行但未记录 (人工介入模式): (${x}, ${y})`, 'info');
+            } else {
+                updateStatus(`点击操作完成: (${x}, ${y}) | 总操作数: ${result.action_count || 0}`, 'success');
 
-            // 显示被点击的元素信息
-            if (result.clicked_elements && result.clicked_elements.length > 0) {
-                displayElementInfo(result.clicked_elements);
+                // 显示被点击的元素信息
+                if (result.clicked_elements && result.clicked_elements.length > 0) {
+                    displayElementInfo(result.clicked_elements);
+                }
             }
 
-            // 操作完成后刷新截图和UI元素信息
-            setTimeout(async () => {
-                await refreshScreenshot();
-                console.log('点击操作后已刷新UI元素信息');
+            // 只在非suspend模式下刷新截图
+            if (!result.suspended) {
+                // 操作完成后刷新截图和UI元素信息
+                setTimeout(async () => {
+                    await refreshScreenshot(true);  // 传入true显示加载动画
+                    console.log('点击操作后已刷新UI元素信息');
 
-                // 如果之前开启了自动刷新，重新开启
+                    // 如果之前开启了自动刷新，重新开启
+                    if (wasAutoRefreshing && isCollecting) {
+                        setTimeout(() => {
+                            console.log('重新开启自动刷新');
+                            startAutoRefresh();
+                            const btn = document.getElementById('autoRefreshBtn');
+                            const statusPanel = document.getElementById('autoRefreshStatus');
+                            btn.textContent = '⏹️ 停止刷新';
+                            statusPanel.style.display = 'block';
+                        }, 500); // 延迟500ms再开启自动刷新，给操作完成留出时间
+                    }
+                }, 200);
+            } else {
+                // 在suspend模式下，重新开启自动刷新
                 if (wasAutoRefreshing && isCollecting) {
                     setTimeout(() => {
-                        console.log('重新开启自动刷新');
+                        console.log('人工介入模式下重新开启自动刷新');
                         startAutoRefresh();
                         const btn = document.getElementById('autoRefreshBtn');
                         const statusPanel = document.getElementById('autoRefreshStatus');
                         btn.textContent = '⏹️ 停止刷新';
                         statusPanel.style.display = 'block';
-                    }, 500); // 延迟500ms再开启自动刷新，给操作完成留出时间
+                    }, 500);
                 }
-            }, 200);
+            }
         } else {
             const error = await response.json();
             updateStatus(`点击操作失败: ${error.detail}`, 'error');
@@ -519,16 +689,39 @@ async function handleSwipeAction(startX, startY, endX, endY, deltaX, deltaY) {
 
         if (response.ok) {
             const result = await response.json();
-            updateStatus(`滑动操作完成: (${startX}, ${startY}) → (${endX}, ${endY}) [${direction}] | 总操作数: ${result.action_count || 0}`, 'success');
+            
+            if (result.suspended) {
+                updateStatus(`✋ 滑动操作已执行但未记录 (人工介入模式): (${startX}, ${startY}) → (${endX}, ${endY})`, 'info');
+            } else {
+                updateStatus(`滑动操作完成: (${startX}, ${startY}) → (${endX}, ${endY}) [${direction}] | 总操作数: ${result.action_count || 0}`, 'success');
+            }
 
-            setTimeout(async () => {
-                await refreshScreenshot();
-                console.log('滑动操作后已刷新UI元素信息');
+            // 只在非suspend模式下刷新截图
+            if (!result.suspended) {
+                // // 显示加载动画
+                // showLoadingAnimation();
+                
+                setTimeout(async () => {
+                    await refreshScreenshot(true);  // 传入true显示加载动画
+                    console.log('滑动操作后已刷新UI元素信息');
 
-                // 如果之前开启了自动刷新，重新开启
+                    // 如果之前开启了自动刷新，重新开启
+                    if (wasAutoRefreshing && isCollecting) {
+                        setTimeout(() => {
+                            console.log('重新开启自动刷新');
+                            startAutoRefresh();
+                            const btn = document.getElementById('autoRefreshBtn');
+                            const statusPanel = document.getElementById('autoRefreshStatus');
+                            btn.textContent = '⏹️ 停止刷新';
+                            statusPanel.style.display = 'block';
+                        }, 500);
+                    }
+                }, 200);
+            } else {
+                // 在suspend模式下，重新开启自动刷新
                 if (wasAutoRefreshing && isCollecting) {
                     setTimeout(() => {
-                        console.log('重新开启自动刷新');
+                        console.log('人工介入模式下重新开启自动刷新');
                         startAutoRefresh();
                         const btn = document.getElementById('autoRefreshBtn');
                         const statusPanel = document.getElementById('autoRefreshStatus');
@@ -536,7 +729,7 @@ async function handleSwipeAction(startX, startY, endX, endY, deltaX, deltaY) {
                         statusPanel.style.display = 'block';
                     }, 500);
                 }
-            }, 200);
+            }
         } else {
             const error = await response.json();
             updateStatus(`滑动操作失败: ${error.detail}`, 'error');
@@ -553,9 +746,14 @@ function updateStatus(message, type) {
     status.innerHTML = `<div class="${type}">${message}</div>`;
 }
 
-async function refreshScreenshot() {
+async function refreshScreenshot(showLoading = false) {
     try {
         console.log('开始刷新截图和UI元素信息...');
+        
+        // 仅当非自动刷新模式时显示加载动画
+        if (showLoading && !autoRefreshEnabled) {
+            showLoadingAnimation();
+        }
 
         const response = await fetch('/screenshot');
         const data = await response.json();
@@ -587,14 +785,20 @@ async function refreshScreenshot() {
             }
 
             console.log('截图和UI元素信息刷新完成');
+            
+            // 隐藏加载动画
+            hideLoadingAnimation();
+            
             return true;
         } else {
             console.error('截图数据不完整');
+            hideLoadingAnimation();
             return false;
         }
 
     } catch (error) {
         console.error('刷新截图时出错:', error);
+        hideLoadingAnimation();
         return false;
     }
 }
@@ -690,6 +894,13 @@ function displayHistoryModal(actions, totalCount) {
                     console.warn('Input action missing text field:', action);
                     details = `文本输入`;
                 }
+            } else if (action.type === 'wait') {
+                // 处理等待操作
+                details = `⏱️ 等待操作`;
+            } else if (action.type === 'suspend') {
+                // 处理人工介入操作
+                const suspendAction = action.action === 'start' ? '启动' : '关闭';
+                details = `🚫 人工介入 - ${suspendAction}`;
             } else if (action.type === 'done') {
                 // 处理数据保存操作
                 details = `✅ 数据已保存`;
@@ -822,6 +1033,8 @@ async function startDataCollectionWithDescription() {
     const endBtn = document.getElementById('endBtn');
     const nextBtn = document.getElementById('nextBtn');
     const deleteBtn = document.getElementById('deleteBtn');
+    const waitBtn = document.getElementById('waitBtn');
+    const suspendBtn = document.getElementById('suspendBtn');
     const inputBtn = document.getElementById('inputBtn');
     const historyBtn = document.getElementById('historyBtn');
     const autoRefreshBtn = document.getElementById('autoRefreshBtn');
@@ -841,10 +1054,20 @@ async function startDataCollectionWithDescription() {
         endBtn.disabled = false;
         nextBtn.disabled = false;
         deleteBtn.disabled = false;
+        waitBtn.disabled = false;
+        suspendBtn.disabled = false;
         inputBtn.disabled = false;
         historyBtn.disabled = false;
         autoRefreshBtn.disabled = false;
         isCollecting = true;
+        isSuspended = false;
+        
+        // 📝 调试日志：记录按钮启用状态
+        console.log('=== 🎬 startDataCollectionWithDescription 执行 ===');
+        console.log('✓ waitBtn.disabled:', waitBtn.disabled);
+        console.log('✓ suspendBtn.disabled:', suspendBtn.disabled);
+        console.log('✓ isCollecting:', isCollecting);
+        console.log('✓ isSuspended:', isSuspended);
 
         // 更新状态显示
         const statusDiv = document.querySelector('.collection-status');
@@ -879,7 +1102,10 @@ async function startDataCollectionWithDescription() {
         nextBtn.disabled = true;
         deleteBtn.disabled = true;
         autoRefreshBtn.disabled = true;
+        waitBtn.disabled = true;
+        suspendBtn.disabled = true;
         isCollecting = false;
+        isSuspended = false;
     }
 }
 
@@ -953,6 +1179,12 @@ async function continueWithNextDataCollection() {
 
         // 自动获取新截图
         await takeScreenshot();
+
+        // 重置suspend状态
+        isSuspended = false;
+        const suspendBtn = document.getElementById('suspendBtn');
+        suspendBtn.classList.remove('suspended');
+        suspendBtn.textContent = '🚫 人工介入';
 
         // 自动开启自动刷新功能
         if (!autoRefreshEnabled) {
@@ -1034,17 +1266,40 @@ async function sendInputText() {
         });
         if (response.ok) {
             const result = await response.json();
-            updateStatus(`文本输入完成: "${text}"`, 'success');
+            
+            if (result.suspended) {
+                updateStatus(`✋ 文本已发送但未记录（人工介入模式）: "${text}"`, 'info');
+            } else {
+                updateStatus(`文本输入完成: "${text}"`, 'success');
+            }
 
-            // 操作完成后刷新截图和UI元素信息
-            setTimeout(async () => {
-                await refreshScreenshot();
-                console.log('输入操作后已刷新UI元素信息');
+            // 如果不在suspend模式下，才刷新截图
+            if (!result.suspended) {
+                // 显示加载动画
+                showLoadingAnimation();
+                
+                // 操作完成后刷新截图和UI元素信息
+                setTimeout(async () => {
+                    await refreshScreenshot(true);  // 传入true显示加载动画
+                    console.log('输入操作后已刷新UI元素信息');
 
-                // 如果之前开启了自动刷新，重新开启
+                    // 如果之前开启了自动刷新，重新开启
+                    if (wasAutoRefreshing && isCollecting) {
+                        setTimeout(() => {
+                            console.log('重新开启自动刷新');
+                            startAutoRefresh();
+                            const btn = document.getElementById('autoRefreshBtn');
+                            const statusPanel = document.getElementById('autoRefreshStatus');
+                            btn.textContent = '⏹️ 停止刷新';
+                            statusPanel.style.display = 'block';
+                        }, 500);
+                    }
+                }, 200);
+            } else {
+                // 在suspend模式下，重新开启自动刷新
                 if (wasAutoRefreshing && isCollecting) {
                     setTimeout(() => {
-                        console.log('重新开启自动刷新');
+                        console.log('人工介入模式下重新开启自动刷新');
                         startAutoRefresh();
                         const btn = document.getElementById('autoRefreshBtn');
                         const statusPanel = document.getElementById('autoRefreshStatus');
@@ -1052,7 +1307,7 @@ async function sendInputText() {
                         statusPanel.style.display = 'block';
                     }, 500);
                 }
-            }, 200);
+            }
         } else {
             const error = await response.json();
             updateStatus(`输入操作失败: ${error.detail}`, 'error');
@@ -1365,6 +1620,8 @@ async function startAutoRefresh() {
             try {
                 console.log('连续自动刷新截图...');
                 const success = await refreshScreenshot();
+                // 隐藏加载动画
+                hideLoadingAnimation();
                 if (success) {
                     console.log('连续自动刷新完成');
                 } else {
@@ -1439,3 +1696,54 @@ function hideAppInfoModal() {
     const modal = document.getElementById('appInfoModal');
     modal.style.display = 'none';
 }
+
+// 页面加载完成后的诊断和初始化
+window.addEventListener('load', function() {
+    console.log('=== 📋 页面加载完成，执行诊断 ===');
+    
+    // 检查按钮元素是否存在
+    const waitBtn = document.getElementById('waitBtn');
+    const suspendBtn = document.getElementById('suspendBtn');
+    
+    console.log('✓ waitBtn 元素存在:', !!waitBtn);
+    console.log('✓ suspendBtn 元素存在:', !!suspendBtn);
+    
+    if (waitBtn) {
+        console.log('  waitBtn 初始状态: disabled =', waitBtn.disabled);
+        console.log('  waitBtn onclick属性:', waitBtn.getAttribute('onclick'));
+        console.log('  waitBtn 类名:', waitBtn.className);
+    }
+    
+    if (suspendBtn) {
+        console.log('  suspendBtn 初始状态: disabled =', suspendBtn.disabled);
+        console.log('  suspendBtn onclick属性:', suspendBtn.getAttribute('onclick'));
+        console.log('  suspendBtn 类名:', suspendBtn.className);
+    }
+    
+    // 检查全局函数是否存在
+    console.log('✓ handleWait函数存在:', typeof window.handleWait === 'function');
+    console.log('✓ toggleSuspend函数存在:', typeof window.toggleSuspend === 'function');
+    
+    // 检查脚本版本（从HTML中）
+    console.log('✓ 脚本版本: 从 /static/js/script.js?v=1.2 加载');
+    
+    console.log('=== 诊断完成 ===\n');
+    
+    // 初始化设备检查
+    checkDeviceStatus();
+});
+
+// 当按钮被启用时的日志记录（用于调试）
+const originalEnableWaitBtn = function() {
+    const btn = document.getElementById('waitBtn');
+    if (btn) {
+        console.log('🔓 waitBtn 被启用');
+    }
+};
+
+const originalEnableSuspendBtn = function() {
+    const btn = document.getElementById('suspendBtn');
+    if (btn) {
+        console.log('🔓 suspendBtn 被启用');
+    }
+};

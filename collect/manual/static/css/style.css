@@ -244,6 +244,40 @@ h1 {
     box-shadow: none;
 }
 
+/* 等待按钮样式 */
+.wait-btn {
+    background: linear-gradient(135deg, #f39c12 0%, #e67e22 100%);
+}
+
+.wait-btn:hover {
+    box-shadow: 0 3px 10px rgba(243, 156, 18, 0.4);
+}
+
+/* 人工介入按钮样式 */
+.suspend-btn {
+    background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
+}
+
+.suspend-btn:hover {
+    box-shadow: 0 3px 10px rgba(231, 76, 60, 0.4);
+}
+
+.suspend-btn.suspended {
+    background: linear-gradient(135deg, #27ae60 0%, #2ecc71 100%);
+    box-shadow: 0 3px 15px rgba(39, 174, 96, 0.6);
+    animation: pulse-suspend 1.5s ease-in-out infinite;
+}
+
+/* 脉冲动画 */
+@keyframes pulse-suspend {
+    0%, 100% {
+        box-shadow: 0 3px 15px rgba(39, 174, 96, 0.6);
+    }
+    50% {
+        box-shadow: 0 3px 25px rgba(39, 174, 96, 1);
+    }
+}
+
 /* 截图容器样式 */
 .screenshot-container {
     flex: 1;
@@ -709,4 +743,194 @@ h1 {
     align-items: center;
     justify-content: center;
     gap: 8px;
+}
+
+/* ==================== 加载动画样式 ==================== */
+
+/* 加载动画容器 */
+.loading-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+    animation: fadeIn 0.3s ease-in;
+}
+
+.loading-overlay.hide {
+    display: none;
+}
+
+/* 加载动画内容 */
+.loading-content {
+    background: white;
+    border-radius: 15px;
+    padding: 40px;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+    text-align: center;
+    min-width: 200px;
+    animation: slideUp 0.4s ease-out;
+}
+
+/* 多层旋转加载器 */
+.loading-spinner {
+    width: 60px;
+    height: 60px;
+    margin: 0 auto 20px;
+    position: relative;
+}
+
+.spinner-ring {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    border: 3px solid transparent;
+    border-radius: 50%;
+}
+
+.spinner-ring:nth-child(1) {
+    border-top-color: #667eea;
+    animation: spin 1.5s linear infinite;
+}
+
+.spinner-ring:nth-child(2) {
+    border-right-color: #764ba2;
+    animation: spin 2s linear infinite reverse;
+    width: 80%;
+    height: 80%;
+    top: 10%;
+    left: 10%;
+}
+
+.spinner-ring:nth-child(3) {
+    border-bottom-color: #f093fb;
+    animation: spin 2.5s linear infinite;
+    width: 60%;
+    height: 60%;
+    top: 20%;
+    left: 20%;
+}
+
+/* 脉冲点加载器 */
+.loading-dots {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 6px;
+    margin: 0 auto 20px;
+}
+
+.dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #667eea;
+    animation: pulse 1.4s infinite;
+}
+
+.dot:nth-child(2) {
+    animation-delay: 0.2s;
+    background: #764ba2;
+}
+
+.dot:nth-child(3) {
+    animation-delay: 0.4s;
+    background: #f093fb;
+}
+
+/* 进度条加载器 */
+.loading-progress {
+    width: 200px;
+    height: 4px;
+    background: #e9ecef;
+    border-radius: 2px;
+    overflow: hidden;
+    margin: 0 auto 20px;
+}
+
+.progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, #667eea, #764ba2, #f093fb);
+    border-radius: 2px;
+    animation: slideProgress 1.5s ease-in-out infinite;
+}
+
+/* 加载文本 */
+.loading-text {
+    color: #666;
+    font-size: 14px;
+    font-weight: 500;
+    margin-top: 10px;
+}
+
+.loading-text.animated {
+    animation: blink 1.4s infinite;
+}
+
+/* ==================== 动画效果 ==================== */
+
+@keyframes spin {
+    from {
+        transform: rotate(0deg);
+    }
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+@keyframes pulse {
+    0%, 60%, 100% {
+        opacity: 0.3;
+        transform: scale(1);
+    }
+    30% {
+        opacity: 1;
+        transform: scale(1.2);
+    }
+}
+
+@keyframes slideProgress {
+    0% {
+        width: 0;
+    }
+    50% {
+        width: 100%;
+    }
+    100% {
+        width: 0;
+    }
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+@keyframes slideUp {
+    from {
+        transform: translateY(20px);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+@keyframes blink {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.5;
+    }
 }

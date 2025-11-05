@@ -4,8 +4,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>安卓设备数据收集工具</title>
-    <link rel="stylesheet" href="/static/css/style.css">
+    <title>设备数据收集工具</title>
+    <link rel="stylesheet" href="/static/css/style.css?v=1.1">
 </head>
 
 <body>
@@ -13,13 +13,35 @@
         <!-- 左侧截图区域 -->
         <div class="screenshot-section">
             <div id="screenshotContainer" class="screenshot-container">
-                <div style="color: #999;">请先开始数据收集</div>
+                <div style="color: #999;">请先初始化设备并开始数据收集</div>
             </div>
         </div>
 
         <!-- 右侧控制区域 -->
         <div class="control-section">
-            <h1>📱 安卓设备数据收集工具</h1>
+            <h1>📱 设备数据收集工具</h1>
+
+            <!-- 设备选择区域 -->
+            <div class="device-selection">
+                <h3>🔌 设备配置</h3>
+                <div class="device-controls">
+                    <label for="deviceType">设备类型：</label>
+                    <select id="deviceType">
+                        <option value="Android">Android (uiautomator2)</option>
+                        <option value="Harmony">Harmony (hmdriver2)</option>
+                    </select>
+                    
+                    <label for="adbEndpoint">ADB端点 (可选)未选择则默认第1个：</label>
+                    <input type="text" id="adbEndpoint" placeholder="Android如: 192.168.1.100:5555 /Harmony 设备serial,如 3UJ0225419004996" />
+                    
+                    <button id="initDeviceBtn" class="control-btn device-init-btn" onclick="initializeDevice()">
+                        🔗 连接设备
+                    </button>
+                </div>
+                <div id="deviceStatus" class="device-status">
+                    <span id="deviceStatusText">未连接</span>
+                </div>
+            </div>
 
             <div class="data-collection-controls">
                 <button id="startBtn" class="control-btn start-btn" onclick="startDataCollection()">
@@ -167,7 +189,7 @@
         </div>
     </div>
 
-    <script src="/static/js/script.js"></script>
+    <script src="/static/js/script.js?v=1.1"></script>
 </body>
 
 </html>

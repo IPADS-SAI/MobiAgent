@@ -15,10 +15,114 @@ let elementOverlay = null; // 元素高亮覆盖层
 
 let autoRefreshEnabled = false; // 是否启用自动刷新
 
+let deviceConnected = false; // 设备是否已连接
+let currentDeviceType = "Android"; // 当前设备类型
+
 // 鼠标位置追踪
 let lastMousePosition = { x: 0, y: 0 }; // 记录最后的鼠标位置
 
+// 检查设备连接状态
+async function checkDeviceStatus() {
+    try {
+        const response = await fetch('/device_status');
+        const data = await response.json();
+        
+        const statusDiv = document.getElementById('deviceStatus');
+        const statusText = document.getElementById('deviceStatusText');
+        const startBtn = document.getElementById('startBtn');
+        
+        if (data.status === 'connected') {
+            deviceConnected = true;
+            currentDeviceType = data.device_type;
+            statusDiv.classList.remove('disconnected');
+            statusDiv.classList.add('connected');
+            statusText.textContent = `✅ ${data.device_type}设备已连接`;
+            startBtn.disabled = false;
+        } else {
+            deviceConnected = false;
+            statusDiv.classList.remove('connected');
+            statusDiv.classList.add('disconnected');
+            statusText.textContent = '❌ 未连接设备';
+            startBtn.disabled = true;
+        }
+    } catch (error) {
+        console.error('检查设备状态失败:', error);
+        deviceConnected = false;
+        document.getElementById('startBtn').disabled = true;
+    }
+}
+
+// 初始化设备连接
+async function initializeDevice() {
+    const deviceType = document.getElementById('deviceType').value;
+    const adbEndpoint = document.getElementById('adbEndpoint').value.trim() || null;
+    const initBtn = document.getElementById('initDeviceBtn');
+    const statusDiv = document.getElementById('deviceStatus');
+    const statusText = document.getElementById('deviceStatusText');
+    
+    try {
+        initBtn.disabled = true;
+        statusText.textContent = '正在连接...';
+        statusDiv.classList.remove('connected', 'disconnected');
+        
+        const response = await fetch('/init_device', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                device_type: deviceType,
+                adb_endpoint: adbEndpoint
+            })
+        });
+        
+        if (!response.ok) {
+            // 处理HTTP错误
+            const errorData = await response.json().catch(() => ({}));
+            const errorMessage = errorData.detail || `连接失败 (HTTP ${response.status})`;
+            throw new Error(errorMessage);
+        }
+        
+        const result = await response.json();
+        
+        if (result.status === 'success') {
+            deviceConnected = true;
+            currentDeviceType = deviceType;
+            statusDiv.classList.add('connected');
+            statusText.textContent = `✅ ${deviceType}设备已连接`;
+            updateStatus(`${deviceType}设备连接成功！`, 'success');
+            
+            // 启用开始收集按钮
+            document.getElementById('startBtn').disabled = false;
+        } else {
+            deviceConnected = false;
+            statusDiv.classList.add('disconnected');
+            statusText.textContent = `❌ 连接失败: ${result.message || '未知错误'}`;
+            updateStatus(`设备连接失败: ${result.message || '未知错误'}`, 'error');
+        }
+    } catch (error) {
+        deviceConnected = false;
+        statusDiv.classList.add('disconnected');
+        statusText.textContent = `❌ 连接错误: ${error.message}`;
+        updateStatus(`设备连接错误: ${error.message}`, 'error');
+        console.error('设备连接详细错误:', error);
+    } finally {
+        initBtn.disabled = false;
+    }
+}
+
+// 页面加载时检查设备状态
+window.addEventListener('DOMContentLoaded', () => {
+    checkDeviceStatus();
+    // 每5秒检查一次设备状态
+    setInterval(checkDeviceStatus, 5000);
+});
+
 async function startDataCollection() {
+    if (!deviceConnected) {
+        updateStatus('请先连接设备', 'error');
+        return;
+    }
     // 显示应用信息输入弹窗
     showAppInfoModal();
 }
@@ -500,17 +604,25 @@ async function showActionHistory() {
         const response = await fetch('/action_history');
         const data = await response.json();
 
+        console.log('Action history response:', { ok: response.ok, data });
+
         if (response.ok) {
+            console.log(`Displaying ${data.total_actions} actions`);
             displayHistoryModal(data.actions, data.total_actions);
         } else {
+            console.error('Response not ok:', response.status);
             updateStatus('获取操作历史失败', 'error');
         }
     } catch (error) {
+        console.error('Error fetching action history:', error);
         updateStatus(`获取操作历史错误: ${error.message}`, 'error');
     }
 }
 
 function displayHistoryModal(actions, totalCount) {
+    // 调试: 输出原始数据到控制台
+    console.log('displayHistoryModal called with:', { totalCount, actions });
+    
     // 创建弹窗
     const modal = document.createElement('div');
     modal.className = 'history-modal';
@@ -532,21 +644,62 @@ function displayHistoryModal(actions, totalCount) {
     if (actions.length === 0) {
         content.innerHTML += '<p>暂无操作记录</p>';
     } else {
-        actions.reverse().forEach((action, index) => {
+        // 反转数组以显示最新操作在前面
+        const reversedActions = actions.reverse();
+        console.log('Reversed actions:', reversedActions);
+        
+        reversedActions.forEach((action, index) => {
             const item = document.createElement('div');
             item.className = 'action-item';
 
-            const timestamp = new Date(action.timestamp).toLocaleString();
+            // 根据不同操作类型构建显示信息
             let details = '';
 
+            console.log(`Processing action ${index}:`, action);
+
             if (action.type === 'click') {
-                details = `点击操作 - 位置: (${action.position.x}, ${action.position.y})`;
+                // 处理点击操作 - 支持两种格式
+                const posX = action.position ? action.position.x : action.position_x;
+                const posY = action.position ? action.position.y : action.position_y;
+                if (posX !== undefined && posY !== undefined) {
+                    details = `点击操作 - 位置: (${posX}, ${posY})`;
+                } else {
+                    details = `点击操作`;
+                }
             } else if (action.type === 'swipe') {
-                details = `滑动操作 - 从 (${action.press_position.x}, ${action.press_position.y}) 到 (${action.release_position.x}, ${action.release_position.y}) [${action.direction}]`;
+                // 处理滑动操作 - 支持两种格式
+                const startX = action.press_position ? action.press_position.x : action.press_position_x;
+                const startY = action.press_position ? action.press_position.y : action.press_position_y;
+                const endX = action.release_position ? action.release_position.x : action.release_position_x;
+                const endY = action.release_position ? action.release_position.y : action.release_position_y;
+                
+                if (startX !== undefined && startY !== undefined && endX !== undefined && endY !== undefined) {
+                    details = `滑动操作 - 从 (${startX}, ${startY}) 到 (${endX}, ${endY})`;
+                    if (action.direction) {
+                        details += ` [${action.direction}]`;
+                    }
+                } else {
+                    details = `滑动操作`;
+                }
+            } else if (action.type === 'input') {
+                // 处理文本输入操作
+                console.log('Input action detected:', action);
+                if (action.text !== undefined && action.text !== null) {
+                    details = `文本输入 - 内容: "${action.text}"`;
+                } else {
+                    console.warn('Input action missing text field:', action);
+                    details = `文本输入`;
+                }
+            } else if (action.type === 'done') {
+                // 处理数据保存操作
+                details = `✅ 数据已保存`;
+            } else {
+                details = `${action.type} 操作`;
             }
 
+            console.log(`  -> details: ${details}`);
+
             item.innerHTML = `
-                <div class="action-timestamp">${timestamp}</div>
                 <div class="action-details">${details}</div>
             `;
 

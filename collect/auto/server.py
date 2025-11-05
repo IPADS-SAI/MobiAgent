@@ -42,7 +42,7 @@ def get_current_hierarchy_and_screenshot(action_dir, sleep_time = 0):
     # if not os.path.exists(action_dir):
     #     os.makedirs(action_dir)
 
-    screenshot_path = os.path.join(action_dir, "screenshot.jpg")
+    screenshot_path = os.path.join(action_dir, "screenshot-collect.jpg")
     hierarchy_path = os.path.join(action_dir, "hierarchy.xml")
 
     device.screenshot(screenshot_path)
@@ -237,7 +237,7 @@ def do_task(task_description, data_dir):
         ]
 
         # 屏幕截图
-        screenshot_path = os.path.join(action_dir, "screenshot.jpg")
+        screenshot_path = os.path.join(action_dir, "screenshot-collect.jpg")
         screenshot = get_screenshot(screenshot_path, factor=1.0)
         message_content.append({
             "type": "text",
@@ -484,7 +484,7 @@ def change_auto_data(data_log_path, index):
     
     # 复制并重命名图片文件
     for index in range(1, len(new_actions) + 2):  # +2 因为通常有一张额外的截图
-        screenshot_src = os.path.join(data_log_path, str(index), "screenshot.jpg")
+        screenshot_src = os.path.join(data_log_path, str(index), "screenshot-collect.jpg")
         if os.path.exists(screenshot_src):
             screenshot_dest = os.path.join(dest_path, f"{index}.jpg")
             shutil.copy2(screenshot_src, screenshot_dest)

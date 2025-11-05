@@ -105,7 +105,7 @@ def draw_bounds_on_screenshot(screenshot_path, layer, output_path):
 def process_folder(folder_path, need_clickable=False):
     """处理单个文件夹"""
     hierarchy_path = os.path.join(folder_path, 'hierarchy.xml')
-    screenshot_path = os.path.join(folder_path, 'screenshot.jpg')
+    screenshot_path = os.path.join(folder_path, 'screenshot-collect.jpg')
     
     try:
         # 读取hierarchy.xml

@@ -10,15 +10,19 @@ data_log/
 weights/
 
 utils/experience/BAAI/
+.venv/
+utils/experience/BAAI/
+utils/experience/all-MiniLM-L6-v2/
 data-*
 new_data/
 vectordb/
-utils/experience/all-MiniLM-L6-v2/
-runner/mobiagent/data-*
-runner/HarmonyOS-mobiagent/
 RAG/
 utils/experience/BAAI/
 
 output*/
 utils/experience/multistage_plans_storage
 utils/experience/singletask_storage
+runner/HarmonyOS-mobiagent/
+runner/UI-TARS-agent/data_uitars-test/
+tasks/
+utils/experience/templates-new-bak.json

@@ -40,3 +40,5 @@ ui-tars
 
 llama-index
 llama-index-embeddings-huggingface
+pandas
+hmdriver2

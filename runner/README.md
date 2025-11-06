@@ -62,14 +62,25 @@ python -m runner.mobiagent.mobiagent
 
 **自定义配置启动**
 ```bash
-python -m runner.mobiagent.mobiagent --service_ip <服务IP> --decider_port <决策服务端口> --grounder_port <定位服务端口> --planner_port <规划服务端口>
+python -m runner.mobiagent.mobiagent --service_ip <服务IP> --decider_port <决策服务端口> --grounder_port <定位服务端口> --planner_port <规划服务端口>  --device Android --use_qwen3 --data_dir data --task_file task.json
 ```
 
 **参数说明**
-- `--service_ip`：服务IP（默认：`localhost`）
-- `--decider_port`：决策服务端口（默认：`8000`）
-- `--grounder_port`：定位服务端口（默认：`8001`）
-- `--planner_port`：规划服务端口（默认：`8002`）
+以下为可用的命令行启动参数、类型与在 `mobiagent.py` 中的默认行为（基于代码实现）：
+
+- `--service_ip <str>`：服务 IP，默认 `localhost`。用于连接 decider/grounder/planner 服务的主机地址。
+- `--decider_port <int>`：decider 服务端口，默认 `8000`。
+- `--grounder_port <int>`：grounder 服务端口，默认 `8001`。
+- `--planner_port <int>`：planner 服务端口，默认 `8002`。
+- `--user_profile on|off`：是否启用用户画像/偏好记忆（Mem0）。默认：`off`。此参数接受字符串 `on` 或 `off`，启用后会初始化偏好提取器，在任务完成后可异步提取并写入偏好记忆。
+- `--use_graphrag on|off`：是否使用 GraphRAG（Neo4j）进行偏好检索。默认：`off`。若启用，检索优先使用 GraphRAG（由命令行决定，不再依赖环境变量）。
+- `--clear_memory`：布尔标志（不带值），默认关闭。若指定，程序会在启动时清空当前用户（`default_user`）的所有记忆并退出（需要 `--user_profile on` 且 memory client 已正确初始化）。
+- `--device Android|Harmony`：设备类型，默认 `Android`。决定使用 `AndroidDevice` 还是 `HarmonyDevice` 驱动（影响截图/层级解析等逻辑）。
+- `--use_qwen3`：布尔标志（不带值），用于启用 Qwen3 相对坐标（范围 0-1000）到像素坐标的转换。注意：在当前代码中此参数被定义为 `action='store_true'` 且源码中默认值为 `True`（即默认启用坐标转换）；如果需要禁用该行为，需要修改源码中的 argparse 默认或添加显式的反向开关。用途：当后端 planner/grounder 返回 Qwen3 风格的相对坐标时必须启用，才能得到正确的像素坐标用于点击/绘图。
+- `--use_experience`：布尔标志(不带值)，默认 `False`。启用后会使用 planner 返回的、基于本地经验检索而改写的任务描述作为实际执行任务描述（即启用“经验改写”流程）。
+- `--data_dir <path>`：结果数据保存目录，默认为脚本目录下的 `data/`（若不存在会自动创建）。
+- `--task_file <path>`：任务列表文件路径，默认为脚本目录下的 `task.json`。
+
 
 ### 用户画像与偏好记忆（Mem0/GraphRAG）
 

@@ -120,6 +120,12 @@ pip install -r requirements.txt
 # Download OmniParser model weights
 for f in icon_detect/{train_args.yaml,model.pt,model.yaml} ; do huggingface-cli download microsoft/OmniParser-v2.0 "$f" --local-dir weights; done
 
+# Download embedding model utils
+huggingface-cli download BAAI/bge-small-zh --local-dir ./utils/experience
+
+# Install OCR utils
+sudo apt install tesseract-ocr tesseract-ocr-chi-sim  # chinese optional
+
 # If you need GPU acceleration for OCR, install paddlepaddle-gpu according to your CUDA version
 # For details, refer to https://www.paddlepaddle.org.cn/install/quick, for example CUDA 11.8:
 python -m pip install paddlepaddle-gpu==3.1.0 -i https://www.paddlepaddle.org.cn/packages/stable/cu118/

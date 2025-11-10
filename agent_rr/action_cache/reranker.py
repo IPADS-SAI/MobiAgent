@@ -8,9 +8,9 @@ class Qwen3Reranker:
         self.tokenizer = AutoTokenizer.from_pretrained(path, padding_side='left')
         device = "cpu"
         if is_torch_cuda_available():
-            device = "cuda:0"
+            device = "cuda"
         elif is_torch_npu_available():
-            device="npu:0"
+            device="npu"
         self.model = AutoModelForCausalLM.from_pretrained(path, device_map=device).eval()
         prefix = "<|im_start|>system\nJudge whether the Document meets the requirements based on the Query and the Instruct provided. Note that the answer can only be \"yes\" or \"no\".<|im_end|>\n<|im_start|>user\n"
         suffix = "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"

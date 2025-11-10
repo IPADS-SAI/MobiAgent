@@ -1,4 +1,7 @@
-import os, itertools, json, copy
+import os, itertools, json, copy, logging
+
+logger = logging.getLogger(__name__)
+logger.setLevel(os.environ.get("LOG_LEVEL", "INFO").upper())
 
 def get_task_templates(raw_template):
     results = []
@@ -50,7 +53,7 @@ def get_trajectory(trajectory_template, fmt):
 def get_app_task_trajectories(domain_dir, include_alter=False):
     with open(os.path.join(domain_dir, "templates.json"), encoding='utf-8') as f:
         templates = json.load(f)
-    print(f"Domain: {domain_dir}")
+    logger.debug(f"Domain: {domain_dir}")
     task_trajectories = {}
     for template in templates:
         raw_task_template = template["task"]
@@ -70,7 +73,7 @@ def get_app_task_trajectories(domain_dir, include_alter=False):
             bind_keys = dependency[len("bind:"):].split(',')
 
             if any([k not in keys for k in bind_keys]):
-                print(f"Unknown bind keys: {bind_keys}")
+                logger.warning(f"Unknown bind keys: {bind_keys}")
                 continue
 
             bind_combinations = zip(*[candidates[k] for k in bind_keys])
@@ -94,7 +97,7 @@ def get_app_task_trajectories(domain_dir, include_alter=False):
         elif dependency == "no":
             combinations = itertools.product(*[candidates[k] for k in keys])
         else:
-            print(f"Unknonw dependency type: {dependency}")
+            logger.warning(f"Unknonw dependency type: {dependency}")
             continue
 
         for combination in combinations:
@@ -105,7 +108,7 @@ def get_app_task_trajectories(domain_dir, include_alter=False):
             for task_template in task_templates:
                 task = task_template.format(**fmt)
                 task_trajectories[task] = trajectory
-    # print(task_trajectories)
+
     app_task_trajectories = {}
     for task, trajectory in task_trajectories.items():
         app = trajectory[0].split(' ')[1]

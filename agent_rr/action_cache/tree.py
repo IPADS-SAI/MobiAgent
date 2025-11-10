@@ -2,10 +2,15 @@ from enum import Enum
 import torch
 import time
 from sentence_transformers import util
+import logging, os
+
+logger = logging.getLogger(__name__)
+logger.setLevel(os.environ.get("LOG_LEVEL", "INFO").upper())
+
 try:
     from omniparser.omniparser import Omniparser
-except ImportError as e:
-    print("Import omniparser failed, some features may not work")
+except Exception:
+    logger.warning("Import omniparser failed, some features may not work")
 
 from .reranker import Qwen3Reranker
 from .embedder import Qwen3Embedder
@@ -215,7 +220,6 @@ class ActionTreeNode:
             if cur_len > max_shortcut_len:
                 return
             if cur_len >= min_shortcut_len and _can_merge_to_supernode(nodes):
-                # print(nodes)
                 supernodes.append(SuperNode(nodes))
                 action_names = trace[:-1]
                 last_action = nodes[0].get_incoming_action()
@@ -269,7 +273,6 @@ class ActionTreeNodeFuzzy(ActionTreeNode):
         ret = []
         for e in self.edges:
             hit = util.semantic_search(step_embedding, e.task_embeddings, top_k=1, score_function=util.dot_score)[0]
-            # print(hit)
             score = hit[0]['score']
             if score < EMBEDDER_THRESHOLD:
                 continue
@@ -278,7 +281,7 @@ class ActionTreeNodeFuzzy(ActionTreeNode):
             if keyword not in task.description:
                 continue
             hit_task = e.tasks[corpus_id]
-            print(hit_task, score)
+            logger.debug(f"hit_task: {hit_task}, score: {score}")
             ret.append((e.action, e.to, keyword, hit_task))
         return ret
 
@@ -338,7 +341,7 @@ class ActionTree:
         self.embedding_counter = 0.0
 
     def print_counter(self):
-        print(f"env_counter: {self.env_counter}, inference_counter: {self.inference_counter}, detection_counter: {self.detection_counter}, embedding_counter: {self.embedding_counter}")
+        logger.info(f"env_counter: {self.env_counter}, inference_counter: {self.inference_counter}, detection_counter: {self.detection_counter}, embedding_counter: {self.embedding_counter}")
 
     def clear(self):
         self.shortcuts = []
@@ -435,15 +438,15 @@ class ActionTree:
                     action_node_keyword_tasks = node.get_cached_action(task, step_embedding)
                     hit_tasks = [t.description for a, n, kw, t in action_node_keyword_tasks]
                     if len(action_node_keyword_tasks) == 0:
-                        print(f"No similar task found.")
+                        logger.debug(f"No similar task found.")
                     else:
-                        print(f"Found similar task: {hit_tasks}")
+                        logger.debug(f"Found similar task: {hit_tasks}")
                     if self.reranker is not None and len(hit_tasks) > 0:
                         scores = self.reranker.rerank(query_tasks=hit_tasks, document_task=task_description, step=depth + 1)
                         indices = [i for i, score in enumerate(scores) if score > RERANKER_MIN_CONF]
                         action_node_keyword_tasks = [action_node_keyword_tasks[i] for i in indices]
                         if len(indices) != len(hit_tasks):
-                            print(f"Reranker filtered tasks: {[hit_tasks[i] for i in range(len(hit_tasks)) if i not in indices]}")
+                            logger.debug(f"Reranker filtered tasks: {[hit_tasks[i] for i in range(len(hit_tasks)) if i not in indices]}")
                     action_nodes = [(a, n) for a, n, kw, t in action_node_keyword_tasks]
                     keywords = [kw for a, n, kw, t in action_node_keyword_tasks]
             end_time = time.time()
@@ -451,7 +454,7 @@ class ActionTree:
 
             if node.split_pin and not self.generate_only and not tracking_shortcut:
                 # start tracking possible shortcut
-                print("Start tracking shortcut")
+                logger.debug("Start tracking shortcut")
                 tracking_shortcut = True
                 possible_shortcuts = [sc for sc in self.shortcuts if sc.split_node is node]
                 cur_step = 0
@@ -478,7 +481,7 @@ class ActionTree:
                             break
                     # the else block is executed if the for loop is not broken
                     else:
-                        print("warning: target element changed")
+                        logger.debug("warning: target element changed")
                         needs_generation = True
 
                     end_time = time.time()
@@ -489,7 +492,7 @@ class ActionTree:
                         keyword = keywords[0]
 
             if needs_generation:
-                print("Cache miss")
+                logger.debug("Cache miss")
                 start_time = time.time()
                 agent_output = self.agent.generate(agent_input)
                 end_time = time.time()
@@ -506,7 +509,7 @@ class ActionTree:
                 else:
                     next_node = node.add_child(action, task, step_embedding)
             else:
-                print("Cache hit")
+                logger.debug("Cache hit")
                 edge = next_node.get_incoming_edge()
                 # only add similar task to the edge
                 if self.mode == MatchMode.FUZZY and task not in edge.tasks:
@@ -552,6 +555,6 @@ class ActionTree:
             if num_tasks - self.num_tasks_last_check >= period:
                 self.num_tasks_last_check = num_tasks
                 self.generate_shortcuts()
-                print(f"number of shortcuts: {len(self.shortcuts)}")
+                logger.debug(f"number of shortcuts: {len(self.shortcuts)}")
                 for sc in self.shortcuts:
-                    print(f"split_node: {sc.split_node}, template: {sc.template.action_names}, last_action: {sc.template.last_action}, supernode size: {len(sc.supernode.nodes)}")
+                    logger.debug(f"split_node: {sc.split_node}, template: {sc.template.action_names}, last_action: {sc.template.last_action}, supernode size: {len(sc.supernode.nodes)}")

@@ -1,9 +1,16 @@
+import logging, os
+
+logging.basicConfig(format='%(asctime)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+logger = logging.getLogger(__name__)
+logger.setLevel(os.environ.get("LOG_LEVEL", "INFO").upper())
+
 from train.task_template import get_app_task_trajectories
 from agent.agent import Agent
 from agent.env import Environment
 import os, random, math
 from action_cache.action import Action
 from action_cache.tree import ActionTree, Task, MatchMode
+import pandas as pd
 
 class MybenchTasks:
     def __init__(self, data_path):
@@ -53,7 +60,7 @@ class MybenchAgent(Agent):
         self.cur_generate_cnt = 0
 
     def print_cnt(self):
-        print(f"generate_cnt: {self.generate_cnt}")
+        logger.info(f"generate_cnt: {self.generate_cnt}")
 
     def generate(self, agent_input):
         self.cur_generate_cnt += 1
@@ -83,7 +90,7 @@ class MybenchEnvironment(Environment):
         self.cur_success = True
 
     def print_cnt(self):
-        print(f"execute_cnt: {self.execute_cnt}, total_task_cnt: {self.total_task_cnt}, correct_task_cnt: {self.correct_task_cnt}")
+        logger.info(f"execute_cnt: {self.execute_cnt}, total_task_cnt: {self.total_task_cnt}, correct_task_cnt: {self.correct_task_cnt}")
 
     def get_agent_input(self, history, task_description):
         self.agent.task_step[task_description] += 1
@@ -91,16 +98,16 @@ class MybenchEnvironment(Environment):
         return {"task": task_description, "history": history}
 
     def execute(self, action):
-        print(f"env executing: {action}")
+        logger.debug(f"env executing: {action}")
         self.cur_execute_cnt += 1
         step = self.agent.task_step[self.cur_task]
         if step >= len(self.agent.task_trajectory[self.cur_task]):
-            print(f"incorrect: expected done action, actual action is {action}")
+            logger.debug(f"incorrect: expected done action, actual action is {action}")
             self.cur_success = False
             return
         ground_truth = self.agent.task_trajectory[self.cur_task][step]
         if action != ground_truth:
-            print(f"incorrect: {action} != {ground_truth} in step {step}")
+            logger.debug(f"incorrect: {action} != {ground_truth} in step {step}")
             self.cur_success = False
 
     def check_done(self):
@@ -114,7 +121,7 @@ class MybenchEnvironment(Environment):
             self.correct_task_cnt += 1
         else:
             self.cur_success = False
-            print("incorrect: done mismatch")
+            logger.debug("incorrect: done mismatch")
         self.agent.reset_cur_task(account=self.cur_success)
 
 def main(args):
@@ -130,6 +137,7 @@ def main(args):
                       })
 
     app_task_trajectories = agent.tasks.get_app_task_trajectories()
+    records = []
     for app, task_trajectories in app_task_trajectories.items():
         tree.clear()
         tasks = [t for t, _ in task_trajectories]
@@ -143,10 +151,11 @@ def main(args):
             task80 = tasks[num_task20:]
             redistributed_tasks = task20 * 16 + task80
             random.shuffle(redistributed_tasks)
+            redistributed_tasks = random.sample(redistributed_tasks, len(tasks))
         else:
             raise ValueError(f"Unknown distribution: {args.distribution}")
         for task in redistributed_tasks:
-            print(f"Current task: {task}")
+            logger.info(f"Current task: {task}")
             tree.execute(task)
             env.check_done()
             if not env.cur_success:
@@ -154,10 +163,30 @@ def main(args):
             agent.task_step[task] = -1
             env.reset_cur_task()
             env.total_task_cnt += 1
-        print(f"Current app: {app}")
+        logger.info(f"Current app: {app}")
         env.print_cnt()
         agent.print_cnt()
-        input("Press enter to continue")
+        logger.info(f"embedding time: {tree.embedding_counter}")
+        if args.csv_path:
+            records.append({
+                "app": app,
+                "total_task": env.total_task_cnt,
+                "correct_task": env.correct_task_cnt,
+                "total_actions": env.execute_cnt,
+                "replayed_actions": env.execute_cnt - agent.generate_cnt,
+                "total_embedding_time": tree.embedding_counter,
+                "embedding_time_per_step": tree.embedding_counter / env.execute_cnt if env.execute_cnt > 0 else 0.0,
+                "avg_steps": round(env.execute_cnt / env.total_task_cnt, 2) if env.total_task_cnt > 0 else 0.0,
+                "correct_rate": round(env.correct_task_cnt / env.total_task_cnt, 2) if env.total_task_cnt > 0 else 0.0,
+                "replay_rate": round(1 - agent.generate_cnt / env.execute_cnt, 2) if env.execute_cnt > 0 else 0.0
+            })
+        env.reset_cnt()
+        agent.reset_cnt()
+        tree.reset_counter()
+    if args.csv_path:
+        df = pd.DataFrame.from_records(records)
+        df.to_csv(args.csv_path, index=False)
+        logger.info(f"Results exported to {args.csv_path}")
 
 if __name__ == '__main__':
     import argparse
@@ -166,5 +195,6 @@ if __name__ == '__main__':
     parser.add_argument('--reranker_path', type=str, required=True)
     parser.add_argument('--data_path', type=str, required=True)
     parser.add_argument('--distribution', choices=['uniform', 'power_law'], default='uniform')
+    parser.add_argument('--csv_path', type=str, required=False, default=None)
     args = parser.parse_args()
     main(args)

@@ -121,7 +121,7 @@ pip install -r requirements.txt
 for f in icon_detect/{train_args.yaml,model.pt,model.yaml} ; do huggingface-cli download microsoft/OmniParser-v2.0 "$f" --local-dir weights; done
 
 # Download embedding model utils
-huggingface-cli download BAAI/bge-small-zh --local-dir ./utils/experience
+huggingface-cli download BAAI/bge-small-zh --local-dir ./utils/experience/BAAI/bge-small-zh
 
 # Install OCR utils
 sudo apt install tesseract-ocr tesseract-ocr-chi-sim  # chinese optional

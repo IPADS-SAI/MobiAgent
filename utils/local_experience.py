@@ -281,11 +281,11 @@ class PromptTemplateSearch:
         # 提取 full_experience 字段
         if result and hasattr(result, 'response'):
             full_description = self.extract_full_description(result.response)
-            return full_description if full_description else "未找到full_experience字段"
+            return full_description if full_description else None
         elif isinstance(result, str): # 处理来自 query 的错误消息
-             return result
+            return result
         
-        return "未找到full_experience字段"
+        return None
     
 
 if __name__ == "__main__":

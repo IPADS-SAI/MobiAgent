@@ -28,6 +28,11 @@ from .user_preference_extractor import (
     should_extract_preferences,
     combine_context
 )
+from .experience_rr import (
+    MobiAgentAction,
+    # ReplayInfo,
+    ExperienceRR
+)
 
 # 清除可能已存在的 handlers，避免重复配置
 for handler in logging.root.handlers[:]:
@@ -154,9 +159,12 @@ class AndroidDevice(Device):
         return self.d.dump_hierarchy()
 
 class HarmonyDevice(Device):
-    def __init__(self):
+    def __init__(self, hdc_endpoint=None):
         super().__init__()
-        self.d = Driver()
+        if hdc_endpoint:
+            self.d = Driver(hdc_endpoint)
+        else:
+            self.d = Driver()
         self.app_package_names = {
             "携程": "com.ctrip.harmonynext",
             "飞猪": "com.fliggy.hmos",
@@ -240,14 +248,16 @@ decider_client = None
 grounder_client = None
 planner_client = None
 
-planner_model = ""
+planner_model = "gemini-2.5-flash"
 decider_model = ""
 grounder_model = ""
 
+experience_rr: ExperienceRR = None
+
 # 全局偏好提取器
 preference_extractor = None
-def init(service_ip, decider_port, grounder_port, planner_port, enable_user_profile=False, use_graphrag=False):
-    global decider_client, grounder_client, planner_client, general_client, general_model, apps, preference_extractor
+def init(service_ip, decider_port, grounder_port, planner_port, enable_user_profile=False, use_graphrag=False, use_experience_rr=False):
+    global decider_client, grounder_client, planner_client, general_client, general_model, apps, preference_extractor, experience_rr
     
     # 加载环境变量
     env_path = Path(__file__).parent / ".env"
@@ -260,9 +270,13 @@ def init(service_ip, decider_port, grounder_port, planner_port, enable_user_prof
         api_key = "0",
         base_url = f"http://{service_ip}:{grounder_port}/v1",
     )
+    # planner_client = OpenAI(
+    #     api_key = "0",
+    #     base_url = f"http://{service_ip}:{planner_port}/v1",
+    # )
     planner_client = OpenAI(
-        api_key = "0",
-        base_url = f"http://{service_ip}:{planner_port}/v1",
+        api_key = os.environ.get("OPENAI_API_KEY", "0"),
+        base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1"),
     )
     
     # 初始化偏好提取器（可由命令行开关控制）
@@ -270,13 +284,16 @@ def init(service_ip, decider_port, grounder_port, planner_port, enable_user_prof
         preference_extractor = PreferenceExtractor(planner_client, planner_model, use_graphrag=use_graphrag)
     else:
         preference_extractor = None
+
+    if use_experience_rr:
+        experience_rr = ExperienceRR(planner_client, planner_model)
     
 # 截图缩放比例
 factor = 0.5
 
 
 from pydantic import BaseModel, Field
-from typing import Literal, Dict
+from typing import Literal, Dict, Optional, Union
 from enum import Enum
 
 # 1. 使用 Enum 定义固定的动作类型
@@ -467,11 +484,61 @@ def create_swipe_visualization(data_dir, image_index, direction):
     except Exception as e:
         logging.warning(f"Failed to create swipe visualization: {e}")
 
+# def should_replay_action(replay_info: ReplayInfo, replay_group_idx: int, replay_action_idx: int, stop_replay: bool) -> bool:
+#     if stop_replay:
+#         return False
+#     if replay_group_idx >= len(replay_info.replay_groups):
+#         return False
+#     if replay_action_idx >= len(replay_info.replay_groups[replay_group_idx]):
+#         return False
+#     return True
 
-def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3=True, device_type="Android"):
+# def is_same_action(action1: MobiAgentAction, action2: MobiAgentAction) -> bool:
+#     if action1.action != action2.action:
+#         return False
+#     if action1.parameters == action2.parameters:
+#         return True
+#     if action1.action == "click":
+#         bbox1 = action1.extra_info.get("bbox")
+#         bbox2 = action2.extra_info.get("bbox")
+#         center_x1 = (bbox1[0] + bbox1[2]) / 2
+#         center_y1 = (bbox1[1] + bbox1[3]) / 2
+#         center_x2 = (bbox2[0] + bbox2[2]) / 2
+#         center_y2 = (bbox2[1] + bbox2[3]) / 2
+#         return (
+#             (bbox2[0] <= center_x1 <= bbox2[2] and bbox2[1] <= center_y1 <= bbox2[3]) or
+#             (bbox1[0] <= center_x2 <= bbox1[2] and bbox1[1] <= center_y2 <= bbox1[3])
+#         )
+#     return False
+
+# 预处理增强健壮性
+def robust_json_loads(s):
+    import re
+    s = s.strip()
+    # 提取 ```json ... ``` 代码块
+    codeblock = re.search(r"```json(.*?)```", s, re.DOTALL)
+    if codeblock:
+        s = codeblock.group(1).strip()
+    # 替换中文省略号为英文 ...
+    s = s.replace("…", "...")
+    # 去除多余换行
+    s = s.replace("\r", "").replace("\n", " ")
+    # 尝试解析
+    try:
+        return json.loads(s)
+    except Exception as e:
+        logging.error(f"解析 decider_response_str 失败: {e}\n原始内容: {s}")
+        raise
+
+def task_in_app(app, old_task, task, template, device, data_dir, bbox_flag=True, use_qwen3=True, device_type="Android"):
     history = []
     actions = []
     reacts = []
+
+    # full history for experience record
+    # if experience_rr is not enabled, full_history is the same as history
+    # otherwise, history only contains partial history in current subtask
+    full_history = []
 
     if use_qwen3:
         grounder_prompt_template_bbox = load_prompt("grounder_qwen3_bbox.md")
@@ -482,188 +549,207 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3
         grounder_prompt_template_bbox = load_prompt("grounder_bbox.md")
         grounder_prompt_template_no_bbox = load_prompt("grounder_coordinates.md")
         decider_prompt_template = load_prompt("decider_v2.md")
-    while True:     
+    
+    replay_info: list[Union[str, list[MobiAgentAction]]] = None
+    replay_idx = 0
+    if experience_rr and old_task != task and template:
+        logging.info("Finding replayable actions")
+        replay_info = experience_rr.query(task, template)
+        orig_task = task
+        executing_subtask = False
+        if replay_info:
+            for item in replay_info:
+                logging.info(f"Replay item: {item}")
+        else:
+            logging.info("No replayable actions found")
+
+    while True:
         if len(actions) >= MAX_STEPS:
             logging.info("Reached maximum steps, stopping the task.")
             break
         
+        replay_this_step = False
+        replay_grounder_bbox = None
+        if replay_info and replay_idx < len(replay_info) and (not executing_subtask):
+            replay_item = replay_info[replay_idx]
+            logging.info(f"Replaying index {replay_idx}: {replay_item}")
+            if isinstance(replay_item, str):
+                # a subtask
+                task = replay_item.strip("。") + "，完成后立即结束任务，不要进行额外操作"
+                executing_subtask = replay_idx != len(replay_info) - 1 # not the last subtask
+                history.clear()
+            elif isinstance(replay_item, MobiAgentAction):
+                replay_this_step = True
+                decider_response_str = replay_item.model_dump_json(ensure_ascii=False, exclude={"extra_info"})
+                if replay_item.extra_info:
+                    replay_grounder_bbox = replay_item.extra_info.get("bbox", None)
+                logging.info(f"Replaying action for step {len(full_history) + 1}: \n{decider_response_str}")
+            replay_idx += 1
+
         if len(history) == 0:
             history_str = "(No history)"
         else:
             history_str = "\n".join(f"{idx}. {h}" for idx, h in enumerate(history, 1))
         screenshot_resize = get_screenshot(device, device_type)
 
-        
-        decider_prompt = decider_prompt_template.format(
-            task=task,
-            history=history_str
-        )
-        logging.info(f"Decider prompt: \n{decider_prompt}")
+        if not replay_this_step:
+            decider_prompt = decider_prompt_template.format(
+                task=task,
+                history=history_str
+            )
+            logging.info(f"Decider prompt: \n{decider_prompt}")
 
-        decider_start_time = time.time()
-        # --- 修改 API 调用 ---
-        # vLLM 将会强制输出一个符合 ActionPlan 结构的 JSON 字符串
-        decider_response_str = decider_client.chat.completions.create(
-            model=decider_model,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{screenshot_resize}"}},
-                        {"type": "text", "text": decider_prompt},
-                    ]
-                }
-            ],
-            temperature=0,
-            # 核心改动：指定 response_format 并传入 schema
-            response_format={
-                "type": "json_object",
-                "schema": ActionPlan.model_json_schema()
-            }
-            # extra_body={"guided_json": json_schema}
-        ).choices[0].message.content
-
-        decider_end_time = time.time()
-        logging.info(f"Decider time taken: {decider_end_time - decider_start_time} seconds")
-        logging.info(f"Decider response: \n{decider_response_str}")
-        # # 使用 ActionPlan 解析返回的 JSON 字符串
-        # parsed_plan = ActionPlan.model_validate_json(decider_response_str)
-
-        # 预处理 decider_response_str，增强健壮性
-        def robust_json_loads(s):
-            import re
-            s = s.strip()
-            # 提取 ```json ... ``` 代码块
-            codeblock = re.search(r"```json(.*?)```", s, re.DOTALL)
-            if codeblock:
-                s = codeblock.group(1).strip()
-            # 替换中文省略号为英文 ...
-            s = s.replace("…", "...")
-            # 去除多余换行
-            s = s.replace("\r", "").replace("\n", " ")
-            # 尝试解析
-            try:
-                return json.loads(s)
-            except Exception as e:
-                logging.error(f"解析 decider_response_str 失败: {e}\n原始内容: {s}")
-                raise
-
-        decider_response = robust_json_loads(decider_response_str)
-        converted_item = {
-            "reasoning": decider_response["reasoning"],
-            "function": {
-                "name": decider_response["action"],
-                "parameters": decider_response["parameters"]
-            }
-        }
-        reacts.append(converted_item)
-        action = decider_response["action"]
-
-        # compute image index for this loop iteration (1-based)
-        image_index = len(actions) + 1
-        current_dir = os.getcwd()
-        current_image = ""
-        if device_type == "Android":
-            img_path = os.path.join(current_dir, f"screenshot-Android.jpg")
-            save_path = os.path.join(data_dir, f"{image_index}.jpg")
-            current_image = f"screenshot-Android.jpg"
-        else:
-            img_path = os.path.join(current_dir, f"screenshot-Harmony.jpg")
-            save_path = os.path.join(data_dir, f"{image_index}.jpg")
-            current_image = f"screenshot-Harmony.jpg"
-        img = Image.open(img_path)
-        img.save(save_path)
-
-        # attach index to the most recent react (reasoning)
-        if reacts:
-            try:
-                reacts[-1]["action_index"] = image_index
-            except Exception:
-                pass
-
-        # 根据设备类型保存hierarchy
-        hierarchy = device.dump_hierarchy()
-        # print(hierarchy)
-        
-        if device_type == "Android":
-            # Android设备保存为XML格式
-            hierarchy_path = os.path.join(data_dir, f"{image_index}.xml")
-            with open(hierarchy_path, "w", encoding="utf-8") as f:
-                f.write(hierarchy)
-        else:
-            # Harmony设备保存为JSON格式
-            hierarchy_path = os.path.join(data_dir, f"{image_index}.json")
-            try:
-                # 尝试将hierarchy解析为JSON（如果已是JSON字符串）
-                if isinstance(hierarchy, str):
-                    hierarchy_json = json.loads(hierarchy)
-                else:
-                    hierarchy_json = hierarchy
-                with open(hierarchy_path, "w", encoding="utf-8") as f:
-                    json.dump(hierarchy_json, f, ensure_ascii=False, indent=2)
-            except (json.JSONDecodeError, TypeError):
-                # 如果解析失败，直接保存为字符串
-                logging.warning(f"Failed to parse hierarchy as JSON, saving as plain text")
-                with open(hierarchy_path, "w", encoding="utf-8") as f:
-                    f.write(str(hierarchy))
-        
-        if action == "done":
-            print("Task completed.")
-            actions.append({
-                "type": "done",
-                "action_index": image_index
-            })
-            break
-        if action == "click":
-            reasoning = decider_response["reasoning"]
-            target_element = decider_response["parameters"]["target_element"]
-            grounder_prompt = (grounder_prompt_template_bbox if bbox_flag else grounder_prompt_template_no_bbox).format(reasoning=reasoning, description=target_element)
-            # logging.info(f"Grounder prompt: \n{grounder_prompt}")
-            # 记录一下grounder开始时间,s 为单位
-            grounder_start_time = time.time()
-            grounder_response_str = grounder_client.chat.completions.create(
-                model= grounder_model,
+            decider_start_time = time.time()
+            # --- 修改 API 调用 ---
+            # vLLM 将会强制输出一个符合 ActionPlan 结构的 JSON 字符串
+            decider_response_str = decider_client.chat.completions.create(
+                model=decider_model,
                 messages=[
                     {
                         "role": "user",
                         "content": [
                             {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{screenshot_resize}"}},
-                            {"type": "text", "text": grounder_prompt},
+                            {"type": "text", "text": decider_prompt},
                         ]
                     }
                 ],
                 temperature=0,
-
+                # 核心改动：指定 response_format 并传入 schema
+                response_format={
+                    "type": "json_object",
+                    "schema": ActionPlan.model_json_schema()
+                }
+                # extra_body={"guided_json": json_schema}
             ).choices[0].message.content
-                # response_format={
-                #     "type": "json_object",
-                #     "schema": json_schema_ground
-                # }
-            grounder_end_time = time.time()
-            logging.info(f"Grounder time taken: {grounder_end_time - grounder_start_time} seconds")
-            logging.info(f"Grounder response: \n{grounder_response_str}")
-            # grounder_response = json.loads(grounder_response_str)
-            grounder_response = parse_json_response(grounder_response_str)
-            if(bbox_flag):
-                bbox = grounder_response["bbox"] if "bbox" in grounder_response else None
-                bbox_2d = grounder_response["bbox_2d"] if "bbox_2d" in grounder_response else None
-                bbox_2d_ = grounder_response.get("bbox-2d", None)
-                bbox_2D = grounder_response.get("bbox_2D", None)
-                if bbox_2D is not None:
-                    bbox = bbox_2D
-                if bbox_2d_ is not None:
-                    bbox = bbox_2d_
-                if bbox_2d is not None:
-                    bbox = bbox_2d
 
-                # 如果使用 Qwen3 模型，进行坐标转换
-                if use_qwen3:
-                    bbox = convert_qwen3_coordinates_to_absolute(bbox, img.width, img.height, is_bbox=True)
-                    x1, y1, x2, y2 = bbox
+            decider_end_time = time.time()
+            logging.info(f"Decider time taken: {decider_end_time - decider_start_time} seconds")
+            logging.info(f"Decider response: \n{decider_response_str}")
+
+        decider_response = robust_json_loads(decider_response_str)
+        action = decider_response["action"]
+
+        if not (executing_subtask and action == "done"):
+            converted_item = {
+                "reasoning": decider_response["reasoning"],
+                "function": {
+                    "name": decider_response["action"],
+                    "parameters": decider_response["parameters"]
+                }
+            }
+            reacts.append(converted_item)
+
+            # compute image index for this loop iteration (1-based)
+            image_index = len(actions) + 1
+            current_dir = os.getcwd()
+            current_image = ""
+            if device_type == "Android":
+                img_path = os.path.join(current_dir, f"screenshot-Android.jpg")
+                save_path = os.path.join(data_dir, f"{image_index}.jpg")
+                current_image = f"screenshot-Android.jpg"
+            else:
+                img_path = os.path.join(current_dir, f"screenshot-Harmony.jpg")
+                save_path = os.path.join(data_dir, f"{image_index}.jpg")
+                current_image = f"screenshot-Harmony.jpg"
+            img = Image.open(img_path)
+            img.save(save_path)
+
+            # attach index to the most recent react (reasoning)
+            if reacts:
+                try:
+                    reacts[-1]["action_index"] = image_index
+                except Exception:
+                    pass
+
+            # 根据设备类型保存hierarchy
+            hierarchy = device.dump_hierarchy()
+            # print(hierarchy)
+            
+            if device_type == "Android":
+                # Android设备保存为XML格式
+                hierarchy_path = os.path.join(data_dir, f"{image_index}.xml")
+                with open(hierarchy_path, "w", encoding="utf-8") as f:
+                    f.write(hierarchy)
+            else:
+                # Harmony设备保存为JSON格式
+                hierarchy_path = os.path.join(data_dir, f"{image_index}.json")
+                try:
+                    # 尝试将hierarchy解析为JSON（如果已是JSON字符串）
+                    if isinstance(hierarchy, str):
+                        hierarchy_json = json.loads(hierarchy)
+                    else:
+                        hierarchy_json = hierarchy
+                    with open(hierarchy_path, "w", encoding="utf-8") as f:
+                        json.dump(hierarchy_json, f, ensure_ascii=False, indent=2)
+                except (json.JSONDecodeError, TypeError):
+                    # 如果解析失败，直接保存为字符串
+                    logging.warning(f"Failed to parse hierarchy as JSON, saving as plain text")
+                    with open(hierarchy_path, "w", encoding="utf-8") as f:
+                        f.write(str(hierarchy))
+            full_history.append(decider_response_str)
+
+        if action == "done":
+            if replay_info and executing_subtask:
+                logging.info(f"Subtask '{task}' completed, moving to next subtask.")
+                history.clear()
+                executing_subtask = False
+            else:
+                logging.info("Task completed.")
+                actions.append({
+                    "type": "done",
+                    "action_index": image_index
+                })
+                break
+        elif action == "click":
+            if replay_grounder_bbox is None:
+                reasoning = decider_response["reasoning"]
+                target_element = decider_response["parameters"]["target_element"]
+                grounder_prompt = (grounder_prompt_template_bbox if bbox_flag else grounder_prompt_template_no_bbox).format(reasoning=reasoning, description=target_element)
+                # logging.info(f"Grounder prompt: \n{grounder_prompt}")
+                grounder_start_time = time.time()
+                grounder_response_str = grounder_client.chat.completions.create(
+                    model= grounder_model,
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{screenshot_resize}"}},
+                                {"type": "text", "text": grounder_prompt},
+                            ]
+                        }
+                    ],
+                    temperature=0,
+
+                ).choices[0].message.content
+
+                grounder_end_time = time.time()
+                logging.info(f"Grounder time taken: {grounder_end_time - grounder_start_time} seconds")
+                logging.info(f"Grounder response: \n{grounder_response_str}")
+                # grounder_response = json.loads(grounder_response_str)
+                grounder_response = parse_json_response(grounder_response_str)
+            if bbox_flag:
+                if replay_grounder_bbox is None:
+                    bbox = grounder_response["bbox"] if "bbox" in grounder_response else None
+                    bbox_2d = grounder_response["bbox_2d"] if "bbox_2d" in grounder_response else None
+                    bbox_2d_ = grounder_response.get("bbox-2d", None)
+                    bbox_2D = grounder_response.get("bbox_2D", None)
+                    if bbox_2D is not None:
+                        bbox = bbox_2D
+                    if bbox_2d_ is not None:
+                        bbox = bbox_2d_
+                    if bbox_2d is not None:
+                        bbox = bbox_2d
+
+                    # 如果使用 Qwen3 模型，进行坐标转换
+                    if use_qwen3:
+                        bbox = convert_qwen3_coordinates_to_absolute(bbox, img.width, img.height, is_bbox=True)
+                        x1, y1, x2, y2 = bbox
+                    else:
+                        x1, y1, x2, y2 = [int(coord/factor) for coord in bbox]
                 else:
-                    x1, y1, x2, y2 = [int(coord/factor) for coord in bbox]
+                    logging.info(f"Using replayed grounder bbox: {replay_grounder_bbox}")
+                    x1, y1, x2, y2 = replay_grounder_bbox
 
-                
                 print(f"Clicking on bbox: [{x1}, {y1}, {x2}, {y2}]")
                 print(f"Image size: width={img.width}, height={img.height}")
                 print(f"Adjusted bbox: [{x1}, {y1}, {x2}, {y2}]")
@@ -678,7 +764,6 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3
                     "bounds": [x1, y1, x2, y2],
                     "action_index": image_index
                 })
-                history.append(decider_response_str)
 
                 current_dir = os.getcwd()
                 img_path = os.path.join(current_dir, current_image)
@@ -721,10 +806,7 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3
                     "position_x": x,
                     "position_y": y,
                     "action_index": image_index
-                })
-                history.append(decider_response_str)
-          
-
+                })          
         elif action == "input":
             text = decider_response["parameters"]["text"]
             device.input(text)
@@ -733,57 +815,38 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3
                 "text": text,
                 "action_index": image_index
             })
-            history.append(decider_response_str)
 
         elif action == "swipe":
             direction = decider_response["parameters"]["direction"]
 
-            if direction == "DOWN":
-                device.swipe(direction.lower(), 0.6)
-                # record the swipe as an action (index only)
-                actions.append({
-                    "type": "swipe",
-                    "press_position_x": None,
-                    "press_position_y": None,
-                    "release_position_x": None,
-                    "release_position_y": None,
-                    "direction": direction.lower(),
-                    "action_index": image_index
-                })
-                history.append(decider_response_str)
-                
-                # 为向下滑动创建可视化
-                create_swipe_visualization(data_dir, image_index, direction.lower())
-                continue
-
-            if direction in ["UP", "LEFT", "RIGHT"]:
-                device.swipe(direction.lower(), 0.6)
-                actions.append({
-                    "type": "swipe",
-                    "press_position_x": None,
-                    "press_position_y": None,
-                    "release_position_x": None,
-                    "release_position_y": None,
-                    "direction": direction.lower(),
-                    "action_index": image_index
-                })
-                history.append(decider_response_str)
-                
-                # 为滑动创建可视化
-                create_swipe_visualization(data_dir, image_index, direction.lower())
-
-            else:
-                raise ValueError(f"Unknown swipe direction: {direction}")
+            if direction not in ["UP", "DOWN", "LEFT", "RIGHT"]:
+                raise ValueError(f"Invalid swipe direction: {direction}")
+            
+            device.swipe(direction.lower(), 0.6)
+            actions.append({
+                "type": "swipe",
+                "press_position_x": None,
+                "press_position_y": None,
+                "release_position_x": None,
+                "release_position_y": None,
+                "direction": direction.lower(),
+                "action_index": image_index
+            })
+            
+            # 为滑动创建可视化
+            create_swipe_visualization(data_dir, image_index, direction.lower())
         elif action == "wait":
             print("Waiting for a while...")
             actions.append({
                 "type": "wait",
                 "action_index": image_index
             })
-            history.append(decider_response_str)
         else:
             raise ValueError(f"Unknown action: {action}")
+        history.append(decider_response_str)
         
+    if replay_info:
+        task = orig_task
     
     data = {
         "app_name": app,
@@ -810,6 +873,423 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3
         preference_extractor.extract_async(task_data)
         logging.info("Submitted preference extraction task")
 
+    if experience_rr and template and old_task != task:
+        extra_info = [{"bbox": act["bounds"]} if "bounds" in act else None for act in actions]
+        experience_rr.record(task, template, full_history, extra_info)
+        logging.info("Recorded experience for later replay")
+
+# def task_in_app(app, old_task, task, template, device, data_dir, bbox_flag=True, use_qwen3=True, device_type="Android"):
+#     history = []
+#     actions = []
+#     reacts = []
+
+#     if use_qwen3:
+#         grounder_prompt_template_bbox = load_prompt("grounder_qwen3_bbox.md")
+#         grounder_prompt_template_no_bbox = load_prompt("grounder_qwen3_coordinates.md")
+#         # decider_prompt_template = load_prompt("decider_qwen3.md")
+#         decider_prompt_template = load_prompt("decider_v2.md")
+#     else:
+#         grounder_prompt_template_bbox = load_prompt("grounder_bbox.md")
+#         grounder_prompt_template_no_bbox = load_prompt("grounder_coordinates.md")
+#         decider_prompt_template = load_prompt("decider_v2.md")
+    
+#     replay_info: Optional[ReplayInfo] = None
+#     if experience_rr and old_task != task and template:
+#         logging.info("Finding replayable actions")
+#         replay_info = experience_rr.query(task, template)
+    
+#     if replay_info:
+#         logging.info(f"Found replayable actions: {len(replay_info.replay_groups)} groups")
+#         replay_group_idx = 0
+#         replay_action_idx_in_group = 0
+#         stop_replay = (not replay_info.fisrt_group_replayable)
+#         num_missed_steps = 0
+#         period_idx = 0
+
+#     while True:
+#         if len(actions) >= MAX_STEPS:
+#             logging.info("Reached maximum steps, stopping the task.")
+#             break
+        
+#         if len(history) == 0:
+#             history_str = "(No history)"
+#         else:
+#             history_str = "\n".join(f"{idx}. {h}" for idx, h in enumerate(history, 1))
+#         screenshot_resize = get_screenshot(device, device_type)
+        
+#         replay_this_step = False
+#         if replay_info and should_replay_action(
+#             replay_group_idx, 
+#             replay_action_idx_in_group, 
+#             stop_replay
+#         ):
+#             replay_this_step = True
+#             replay_action = replay_info.replay_groups[replay_group_idx][replay_action_idx_in_group]
+#             decider_response_str = replay_action.model_dump_json(ensure_ascii=False, exclude={"extra_info"})
+#             logging.info(f"Replaying action for step {len(actions) + 1}: \n{decider_response_str}")
+            
+
+#         if not replay_this_step:
+#             if replay_info:
+#                 num_missed_steps += 1
+#             decider_prompt = decider_prompt_template.format(
+#                 task=task,
+#                 history=history_str
+#             )
+#             logging.info(f"Decider prompt: \n{decider_prompt}")
+
+#             decider_start_time = time.time()
+#             # --- 修改 API 调用 ---
+#             # vLLM 将会强制输出一个符合 ActionPlan 结构的 JSON 字符串
+#             decider_response_str = decider_client.chat.completions.create(
+#                 model=decider_model,
+#                 messages=[
+#                     {
+#                         "role": "user",
+#                         "content": [
+#                             {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{screenshot_resize}"}},
+#                             {"type": "text", "text": decider_prompt},
+#                         ]
+#                     }
+#                 ],
+#                 temperature=0,
+#                 # 核心改动：指定 response_format 并传入 schema
+#                 response_format={
+#                     "type": "json_object",
+#                     "schema": ActionPlan.model_json_schema()
+#                 }
+#                 # extra_body={"guided_json": json_schema}
+#             ).choices[0].message.content
+
+#             decider_end_time = time.time()
+#             logging.info(f"Decider time taken: {decider_end_time - decider_start_time} seconds")
+#             logging.info(f"Decider response: \n{decider_response_str}")
+#         # # 使用 ActionPlan 解析返回的 JSON 字符串
+#         # parsed_plan = ActionPlan.model_validate_json(decider_response_str)
+
+#         # 预处理 decider_response_str，增强健壮性
+#         def robust_json_loads(s):
+#             import re
+#             s = s.strip()
+#             # 提取 ```json ... ``` 代码块
+#             codeblock = re.search(r"```json(.*?)```", s, re.DOTALL)
+#             if codeblock:
+#                 s = codeblock.group(1).strip()
+#             # 替换中文省略号为英文 ...
+#             s = s.replace("…", "...")
+#             # 去除多余换行
+#             s = s.replace("\r", "").replace("\n", " ")
+#             # 尝试解析
+#             try:
+#                 return json.loads(s)
+#             except Exception as e:
+#                 logging.error(f"解析 decider_response_str 失败: {e}\n原始内容: {s}")
+#                 raise
+
+#         decider_response = robust_json_loads(decider_response_str)
+#         converted_item = {
+#             "reasoning": decider_response["reasoning"],
+#             "function": {
+#                 "name": decider_response["action"],
+#                 "parameters": decider_response["parameters"]
+#             }
+#         }
+#         reacts.append(converted_item)
+#         action = decider_response["action"]
+
+#         # compute image index for this loop iteration (1-based)
+#         image_index = len(actions) + 1
+#         current_dir = os.getcwd()
+#         current_image = ""
+#         if device_type == "Android":
+#             img_path = os.path.join(current_dir, f"screenshot-Android.jpg")
+#             save_path = os.path.join(data_dir, f"{image_index}.jpg")
+#             current_image = f"screenshot-Android.jpg"
+#         else:
+#             img_path = os.path.join(current_dir, f"screenshot-Harmony.jpg")
+#             save_path = os.path.join(data_dir, f"{image_index}.jpg")
+#             current_image = f"screenshot-Harmony.jpg"
+#         img = Image.open(img_path)
+#         img.save(save_path)
+
+#         # attach index to the most recent react (reasoning)
+#         if reacts:
+#             try:
+#                 reacts[-1]["action_index"] = image_index
+#             except Exception:
+#                 pass
+
+#         # 根据设备类型保存hierarchy
+#         hierarchy = device.dump_hierarchy()
+#         # print(hierarchy)
+        
+#         if device_type == "Android":
+#             # Android设备保存为XML格式
+#             hierarchy_path = os.path.join(data_dir, f"{image_index}.xml")
+#             with open(hierarchy_path, "w", encoding="utf-8") as f:
+#                 f.write(hierarchy)
+#         else:
+#             # Harmony设备保存为JSON格式
+#             hierarchy_path = os.path.join(data_dir, f"{image_index}.json")
+#             try:
+#                 # 尝试将hierarchy解析为JSON（如果已是JSON字符串）
+#                 if isinstance(hierarchy, str):
+#                     hierarchy_json = json.loads(hierarchy)
+#                 else:
+#                     hierarchy_json = hierarchy
+#                 with open(hierarchy_path, "w", encoding="utf-8") as f:
+#                     json.dump(hierarchy_json, f, ensure_ascii=False, indent=2)
+#             except (json.JSONDecodeError, TypeError):
+#                 # 如果解析失败，直接保存为字符串
+#                 logging.warning(f"Failed to parse hierarchy as JSON, saving as plain text")
+#                 with open(hierarchy_path, "w", encoding="utf-8") as f:
+#                     f.write(str(hierarchy))
+        
+#         mobiagent_action_this_step = MobiAgentAction(
+#             reasoning=decider_response["reasoning"],
+#             action=decider_response["action"],
+#             parameters=decider_response["parameters"],
+#             extra_info={}
+#         )
+
+#         if action == "done":
+#             history.append(decider_response_str)
+#             print("Task completed.")
+#             actions.append({
+#                 "type": "done",
+#                 "action_index": image_index
+#             })
+#             break
+#         if action == "click":
+#             reasoning = decider_response["reasoning"]
+#             target_element = decider_response["parameters"]["target_element"]
+#             grounder_prompt = (grounder_prompt_template_bbox if bbox_flag else grounder_prompt_template_no_bbox).format(reasoning=reasoning, description=target_element)
+#             # logging.info(f"Grounder prompt: \n{grounder_prompt}")
+#             # 记录一下grounder开始时间,s 为单位
+#             grounder_start_time = time.time()
+#             grounder_response_str = grounder_client.chat.completions.create(
+#                 model= grounder_model,
+#                 messages=[
+#                     {
+#                         "role": "user",
+#                         "content": [
+#                             {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{screenshot_resize}"}},
+#                             {"type": "text", "text": grounder_prompt},
+#                         ]
+#                     }
+#                 ],
+#                 temperature=0,
+
+#             ).choices[0].message.content
+#                 # response_format={
+#                 #     "type": "json_object",
+#                 #     "schema": json_schema_ground
+#                 # }
+#             grounder_end_time = time.time()
+#             logging.info(f"Grounder time taken: {grounder_end_time - grounder_start_time} seconds")
+#             logging.info(f"Grounder response: \n{grounder_response_str}")
+#             # grounder_response = json.loads(grounder_response_str)
+#             grounder_response = parse_json_response(grounder_response_str)
+#             if(bbox_flag):
+#                 bbox = grounder_response["bbox"] if "bbox" in grounder_response else None
+#                 bbox_2d = grounder_response["bbox_2d"] if "bbox_2d" in grounder_response else None
+#                 bbox_2d_ = grounder_response.get("bbox-2d", None)
+#                 bbox_2D = grounder_response.get("bbox_2D", None)
+#                 if bbox_2D is not None:
+#                     bbox = bbox_2D
+#                 if bbox_2d_ is not None:
+#                     bbox = bbox_2d_
+#                 if bbox_2d is not None:
+#                     bbox = bbox_2d
+
+#                 # 如果使用 Qwen3 模型，进行坐标转换
+#                 if use_qwen3:
+#                     bbox = convert_qwen3_coordinates_to_absolute(bbox, img.width, img.height, is_bbox=True)
+#                     x1, y1, x2, y2 = bbox
+#                 else:
+#                     x1, y1, x2, y2 = [int(coord/factor) for coord in bbox]
+
+#                 mobiagent_action_this_step.extra_info["bbox"] = [x1, y1, x2, y2]
+
+#                 print(f"Clicking on bbox: [{x1}, {y1}, {x2}, {y2}]")
+#                 print(f"Image size: width={img.width}, height={img.height}")
+#                 print(f"Adjusted bbox: [{x1}, {y1}, {x2}, {y2}]")
+#                 position_x = (x1 + x2) // 2
+#                 position_y = (y1 + y2) // 2
+#                 device.click(position_x, position_y)
+#                 # save action (record index only)
+#                 actions.append({
+#                     "type": "click",
+#                     "position_x": position_x,
+#                     "position_y": position_y,
+#                     "bounds": [x1, y1, x2, y2],
+#                     "action_index": image_index
+#                 })
+#                 history.append(decider_response_str)
+
+#                 current_dir = os.getcwd()
+#                 img_path = os.path.join(current_dir, current_image)
+#                 save_path = os.path.join(data_dir, f"{image_index}_highlighted.jpg")
+#                 img = Image.open(img_path)
+#                 draw = ImageDraw.Draw(img)
+#                 font = ImageFont.truetype("msyh.ttf", 40)
+#                 text = f"CLICK [{position_x}, {position_y}]"
+#                 text = textwrap.fill(text, width=20)
+#                 text_width, text_height = draw.textbbox((0, 0), text, font=font)[2:]
+#                 draw.text((img.width / 2 - text_width / 2, 0), text, fill="red", font=font)
+#                 img.save(save_path)
+
+#                 # 拉框
+#                 bounds_path = os.path.join(data_dir, f"{image_index}_bounds.jpg")
+#                 img_bounds = Image.open(save_path)
+#                 draw_bounds = ImageDraw.Draw(img_bounds)
+#                 draw_bounds.rectangle([x1, y1, x2, y2], outline='red', width=5)
+#                 img_bounds.save(bounds_path)
+
+#                 # 画点
+#                 cv2image = cv2.imread(bounds_path)
+#                 if cv2image is not None:
+#                     # 在点击位置画圆点
+#                     cv2.circle(cv2image, (position_x, position_y), 15, (0, 255, 0), -1)  # 绿色实心圆
+#                     # 保存带点击点的图像
+#                     click_point_path = os.path.join(data_dir, f"{image_index}_click_point.jpg")
+#                     cv2.imwrite(click_point_path, cv2image)
+
+#             else:
+#                 coordinates = grounder_response["coordinates"]
+#                 if use_qwen3:
+#                     coordinates = convert_qwen3_coordinates_to_absolute(coordinates, img.width, img.height, is_bbox=False)
+#                     x, y = coordinates
+#                 else:
+#                     x, y = [int(coord / factor) for coord in coordinates]
+#                 device.click(x, y)
+#                 actions.append({
+#                     "type": "click",
+#                     "position_x": x,
+#                     "position_y": y,
+#                     "action_index": image_index
+#                 })
+#                 history.append(decider_response_str)
+          
+
+#         elif action == "input":
+#             text = decider_response["parameters"]["text"]
+#             device.input(text)
+#             actions.append({
+#                 "type": "input",
+#                 "text": text,
+#                 "action_index": image_index
+#             })
+#             history.append(decider_response_str)
+
+#         elif action == "swipe":
+#             direction = decider_response["parameters"]["direction"]
+
+#             if direction not in ["UP", "DOWN", "LEFT", "RIGHT"]:
+#                 raise ValueError(f"Invalid swipe direction: {direction}")
+            
+#             if direction == "DOWN":
+#                 device.swipe(direction.lower(), 0.6)
+#                 # record the swipe as an action (index only)
+#                 actions.append({
+#                     "type": "swipe",
+#                     "press_position_x": None,
+#                     "press_position_y": None,
+#                     "release_position_x": None,
+#                     "release_position_y": None,
+#                     "direction": direction.lower(),
+#                     "action_index": image_index
+#                 })
+#                 history.append(decider_response_str)
+                
+#                 # 为向下滑动创建可视化
+#                 create_swipe_visualization(data_dir, image_index, direction.lower())
+
+#             if direction in ["UP", "LEFT", "RIGHT"]:
+#                 device.swipe(direction.lower(), 0.6)
+#                 actions.append({
+#                     "type": "swipe",
+#                     "press_position_x": None,
+#                     "press_position_y": None,
+#                     "release_position_x": None,
+#                     "release_position_y": None,
+#                     "direction": direction.lower(),
+#                     "action_index": image_index
+#                 })
+#                 history.append(decider_response_str)
+                
+#                 # 为滑动创建可视化
+#                 create_swipe_visualization(data_dir, image_index, direction.lower())
+#         elif action == "wait":
+#             print("Waiting for a while...")
+#             actions.append({
+#                 "type": "wait",
+#                 "action_index": image_index
+#             })
+#             history.append(decider_response_str)
+#         else:
+#             raise ValueError(f"Unknown action: {action}")
+        
+#         if (
+#             replay_info and stop_replay and
+#             replay_action_idx_in_group == 0 and
+#             replay_group_idx < len(replay_info.replay_groups) and
+#             num_missed_steps >= replay_info.periods[period_idx][0] and # must have called agent for min_steps times
+#             is_same_action(mobiagent_action_this_step, replay_info.replay_groups[replay_group_idx][0])
+#         ):
+#             logging.info("Resuming replay of the next replayable action sequence")
+#             stop_replay = False
+#             replay_this_step = True # the action in this iteration is considered replayed (one more inference)
+        
+#         if replay_this_step:
+#             replay_action_idx_in_group += 1
+#             if replay_action_idx_in_group >= len(replay_info.replay_groups[replay_group_idx]):
+#                 replay_group_idx += 1
+#                 replay_action_idx_in_group = 0
+#                 stop_replay = True
+#                 logging.info("Replayable action sequence ended, the next subtask will not be replayed")
+#                 num_missed_steps = 0
+#                 period_idx += 1
+
+#         if (
+#             replay_info and stop_replay and
+#             num_missed_steps > replay_info.periods[period_idx][1]
+#         ):
+#             # cache staled, too many missed steps in current subtask
+#             replay_info = None
+#             logging.info("Abandoning replay due to too many missed steps")
+        
+    
+#     data = {
+#         "app_name": app,
+#         "task_type": None,
+#         "old_task_description": old_task,
+#         "task_description": task,
+#         "action_count": len(actions),
+#         "actions": actions
+#     }
+
+#     with open(os.path.join(data_dir, "actions.json"), "w", encoding='utf-8') as f:
+#         json.dump(data, f, ensure_ascii=False, indent=4)
+#     with open(os.path.join(data_dir, "react.json"), "w", encoding='utf-8') as f:
+#         json.dump(reacts, f, ensure_ascii=False, indent=4)
+    
+#     # 任务完成后，异步提取用户偏好
+#     if preference_extractor and should_extract_preferences(data):
+#         task_data = {
+#             'task_description': task,
+#             'actions': actions,
+#             'reacts': reacts,
+#             'app_name': app
+#         }
+#         preference_extractor.extract_async(task_data)
+#         logging.info("Submitted preference extraction task")
+
+#     if experience_rr and template and old_task != task:
+#         extra_info = [{"bbox": act["bounds"]} if "bounds" in act else None for act in actions]
+#         experience_rr.record(task, template, history, extra_info)
+#         logging.info("Recorded experience for later replay")
+
 
 def parse_planner_response(response_str: str):
 
@@ -835,7 +1315,8 @@ def get_app_package_name(task_description, use_graphrag=False, device_type="Andr
     """单阶段：本地检索经验，调用模型完成应用选择和任务描述生成。"""
     current_file_path = Path(__file__).resolve()
     current_dir = current_file_path.parent
-    default_template_path = current_dir.parent.parent / "utils" /"experience" / "templates-new.json"
+    # default_template_path = current_dir.parent.parent / "utils" /"experience" / "templates-new.json"
+    default_template_path = current_dir.parent.parent / "utils" /"experience" / "templates-rr.json"
     logging.debug("Using template path: %s", default_template_path)
 
     # 本地检索经验
@@ -884,7 +1365,7 @@ def get_app_package_name(task_description, use_graphrag=False, device_type="Andr
     app_name = response_json.get("app_name")
     package_name = response_json.get("package_name")
     final_desc = response_json.get("final_task_description", task_description)
-    return app_name, package_name, final_desc
+    return app_name, package_name, final_desc, experience_content
 
 # for testing purposes
 if __name__ == "__main__":
@@ -898,17 +1379,31 @@ if __name__ == "__main__":
     parser.add_argument("--use_graphrag", choices=["on", "off"], default="off", help="Use GraphRAG for user profile preference memory (on/off). Default: off")
     parser.add_argument("--clear_memory", action="store_true", help="Force clear all stored user memories and exit")
     parser.add_argument("--device", type=str, default="Android", choices=["Android", "Harmony"], help="Device type: Android or Harmony (default: Android)")
+    parser.add_argument("--device_endpoint", type=str, default=None, help="Device endpoint for connecting with adb/hdc (default: None)")
     parser.add_argument("--use_qwen3", action="store_true", default=True, help="Whether to use Qwen3 model (default: False)")
     parser.add_argument("--use_experience", action="store_true", default=False, help="Whether to use experience (use planner for task rewriting) (default: False)")
+    parser.add_argument("--use_experience_rr", action="store_true", default=False, help="Whether to use experience-based record & replay (default: False)")
     parser.add_argument("--data_dir", type=str, default=None, help="Directory to save data (default: ./data relative to script location)")
     parser.add_argument("--task_file", type=str, default=None, help="Path to task.json file (default: ./task.json relative to script location)")
     args = parser.parse_args()
 
+    use_experience_rr = args.use_experience_rr
+    if use_experience_rr and (not args.use_experience):
+        logging.warning("use_experience_rr is enabled but use_experience is disabled; disabling use_experience_rr.")
+        use_experience_rr = False
+
     # 使用命令行参数初始化
     enable_user_profile = (args.user_profile == "on")
     use_graphrag = (args.use_graphrag == "on")
-    init(args.service_ip, args.decider_port, args.grounder_port, args.planner_port,
-        enable_user_profile=enable_user_profile, use_graphrag=use_graphrag)
+    init(
+        args.service_ip, 
+        args.decider_port, 
+        args.grounder_port, 
+        args.planner_port,
+        enable_user_profile=enable_user_profile, 
+        use_graphrag=use_graphrag, 
+        use_experience_rr=use_experience_rr
+    )
 
     # 如果需要清除记忆，优先执行并退出
     if args.clear_memory:
@@ -923,10 +1418,10 @@ if __name__ == "__main__":
         raise SystemExit(0)
     # 根据 --device 参数选择设备类型
     if args.device == "Android":
-        device = AndroidDevice()
+        device = AndroidDevice(args.device_endpoint)
         logging.info("Using AndroidDevice")
     elif args.device == "Harmony":
-        device = HarmonyDevice()
+        device = HarmonyDevice(args.device_endpoint)
         logging.info("Using HarmonyDevice")
     else:
         raise ValueError(f"Unknown device type: {args.device}")
@@ -974,7 +1469,7 @@ if __name__ == "__main__":
         
         # 调用 planner 获取应用名称和包名
         logging.info(f"Calling planner to get app_name and package_name")
-        app_name, package_name, planner_task_description = get_app_package_name(task_description, use_graphrag=use_graphrag, device_type=current_device_type)
+        app_name, package_name, planner_task_description, template = get_app_package_name(task_description, use_graphrag=use_graphrag, device_type=current_device_type)
         logging.info(f"Planner result - App: {app_name}, Package: {package_name}")
 
         # 根据 use_experience 参数决定是否使用 planner 改写的任务描述
@@ -988,7 +1483,7 @@ if __name__ == "__main__":
             
         logging.info(f"Starting task in app: {app_name} (package: {package_name})")
         device.app_start(package_name)
-        task_in_app(app_name, task_description, new_task_description, device, data_dir, True, use_qwen3_model, current_device_type)
+        task_in_app(app_name, task_description, new_task_description, template, device, data_dir, True, use_qwen3_model, current_device_type)
         logging.info(f"Stopping app: {app_name} (package: {package_name})")
         device.app_stop(package_name)
     # 等待所有偏好提取任务完成

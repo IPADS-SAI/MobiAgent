@@ -1,4 +1,5 @@
 from collections import defaultdict
+from unittest import result
 from pydantic import BaseModel
 from typing import Any, Optional, Union
 from openai import OpenAI
@@ -12,9 +13,11 @@ BINDING_PROMPT = """
 
 你是一个经验重用系统智能体，负责将一个手机使用任务的各个子任务和相应动作序列进行绑定。
 
-## 输入说明
+## 输入格式
 
-一个子任务是一个高层次的自然语言描述。一个动作是实际可在手机上执行的低层次描述，为一个JSON对象，包含以下字段：
+输入包含一个任务拆分的子任务序列，以及这个任务实际执行的动作序列。
+
+一个子任务是一个高层次的自然语言描述；一个动作是实际可在手机上执行的低层次描述，为一个JSON对象，包含以下字段：
 
 - `reasoning`: 产生该动作的推理过程描述。
 - `action`: 动作类别，可选项：`click`, `input`, `scroll`, `wait`, `done`。
@@ -40,6 +43,15 @@ BINDING_PROMPT = """
 ## 实际动作序列
 
 {actions}
+
+## 要求
+
+你的输出需要严格遵守以下要求：
+
+1. 确保上一个子任务的结束动作索引+1等于下一个子任务的起始动作索引
+2. 确保索引从1开始，从最后一个子任务/动作的索引结束
+3. 确保按照输入顺序输出所有子任务
+4. 确保每个子任务至少对应一个动作
 """
 
 
@@ -112,8 +124,7 @@ class MidLevelSequence(BaseModel):
     def __str__(self):
         # skip first open_app
         # filtered_sequence = self.sequence[1:] if len(self.sequence) > 1 else self.sequence
-        filtered_sequence = self.sequence
-        return "\n".join([f"{idx}. {subtask}" for idx, subtask in enumerate(filtered_sequence, 1)])
+        return "\n".join([f"{idx}. {subtask}" for idx, subtask in enumerate(self.sequence, 1)])
 
     def __len__(self):
         return len(self.sequence)
@@ -147,7 +158,7 @@ class LowLevelSequence(BaseModel):
     
     def __str__(self):
         filtered_sequence = self.sequence
-        return "\n".join([f"{idx}. {action.model_dump_json(ensure_ascii=False, exclude={'extra_info'})}" for idx, action in enumerate(filtered_sequence, 1)])
+        return "\n".join([f"{idx}. {action.model_dump_json(exclude={'extra_info'})}" for idx, action in enumerate(filtered_sequence, 1)])
     
     def __len__(self):
         return len(self.sequence)
@@ -164,18 +175,62 @@ class ReplayInfo(BaseModel):
     fisrt_group_replayable: bool
     replay_groups: list[list[MobiAgentAction]]
     periods: list[tuple[int, int]] = []
-    
+
+
+class Subtask(BaseModel):
+    description: str
+    actions: Optional[list[MobiAgentAction]] = None
+
+def append_subtask(subtasks: list[Subtask], new_subtask: Subtask) -> list[Subtask]:
+    subtasks = subtasks + [new_subtask]
+    # merge two consecutive non-replayable subtasks
+    # if len(subtasks) >= 2 and subtasks[-2].actions is None and subtasks[-1].actions is None:
+    #     merged_subtask = Subtask(
+    #         description=subtasks[-2].description.rstrip("。") + "，然后" + subtasks[-1].description,
+    #         actions=None,
+    #     )
+    #     return subtasks[:-2] + [merged_subtask]
+    return subtasks
+
+def convert_subtasks(subtasks: list[Subtask]) -> list[Union[str, list[MobiAgentAction]]]:
+    ret: list[Union[str, list[MobiAgentAction]]] = []
+    for subtask in subtasks:
+        if subtask.actions is None:
+            ret.append(subtask.description.rstrip("。") + "，然后结束任务，不要进行其他操作。")
+        else:
+            ret.extend(subtask.actions)
+    return ret
+
 class ExperienceRR:
     def __init__(self, planner_client: OpenAI, planner_model: str) -> None:
         if not planner_client:
             raise ValueError("planner_client is required")
+        
+        self.planner_client = planner_client
         self.planner_model = planner_model
+
         self.mid_level_table: dict[int, list[MidLevelSequence]] = defaultdict(list)
         self.low_level_table: dict[int, list[LowLevelSequence]] = defaultdict(list)
         self.bindings: dict[int, list[Binding]] = defaultdict(list)
-        self.planner_client = planner_client
+
+        self.subtask_table: dict[int, dict[str, Subtask]] = defaultdict(dict)
+        self.global_subtask_table: dict[str, Subtask] = {}
+
+    def _update_subtasks(self, template_hash: int, idx: int) -> None:
+        low_level_seq = self.low_level_table.get(template_hash)[idx]
+        mid_level_seq = self.mid_level_table.get(template_hash)[idx]
+        binding = self.bindings.get(template_hash)[idx]
+
+        for i, subtask_desc in enumerate(mid_level_seq.sequence):
+            range_start, range_end = binding.ranges[i]
+            actions = low_level_seq.sequence[range_start:range_end]
+            subtask = Subtask(description=subtask_desc, actions=actions)
+
+            self.global_subtask_table[subtask_desc] = subtask
+            self.subtask_table[template_hash][subtask_desc] = subtask
 
     def _bind(self, template_hash: int, idx: int) -> None:
+        assert idx < len(self.bindings[template_hash]), f"Index out of range in binding table for {template_hash}"
         low_level_seq = self.low_level_table.get(template_hash)[idx]
         mid_level_seq = self.mid_level_table.get(template_hash)[idx]
         actions_str = str(low_level_seq)
@@ -217,8 +272,20 @@ class ExperienceRR:
                 raise ValueError(f"Invalid action index range: start {start_action_index}, end {end_action_index}")
             ranges.append((start_action_index, end_action_index))
             cur_subtask_index += 1
+        
+        # further validate ranges
+        # the ranges should cover all actions continuously
+        if ranges[0][0] != 0:
+            raise ValueError(f"First subtask should start from action index 0, got {ranges[0][0]}")
+        if ranges[-1][1] != len(low_level_seq):
+            raise ValueError(f"Last subtask should end at action index {len(low_level_seq)}, got {ranges[-1][1]}")
+        for i in range(len(ranges) - 1):
+            if ranges[i][1] != ranges[i + 1][0]:
+                raise ValueError(f"Action index ranges are not continuous between subtask {i} and {i+1}: end {ranges[i][1]}, start {ranges[i+1][0]}")
+            
         binding = Binding(template_hash=template_hash, ranges=ranges)
-        self.bindings[template_hash].append(binding)
+        self.bindings[template_hash][idx] = binding
+        self._update_subtasks(template_hash, idx)
         
     def record(self, final_desc: str, template: str, history: list[str], extra_info: list[Optional[dict[str, Any]]]) -> None:
         mid_level_seq = MidLevelSequence.from_experience(final_desc, template)
@@ -227,6 +294,8 @@ class ExperienceRR:
         self.mid_level_table[mid_level_seq.template_hash].append(mid_level_seq)
         low_level_seq = LowLevelSequence.from_history(mid_level_seq.template_hash, history, extra_info)
         self.low_level_table[low_level_seq.template_hash].append(low_level_seq)
+        self.bindings[mid_level_seq.template_hash].append(None) # placeholder
+
         max_attempts = 3
         for attempt in range(max_attempts):
             try:
@@ -235,15 +304,16 @@ class ExperienceRR:
             except Exception as e:
                 logger.error(f"Error processing bindings: {e.__class__.__name__}: {e}")
             if attempt == max_attempts - 1:
-                logger.error(f"Failed to process bindings after {max_attempts} attempts.")
+                logger.error(f"Failed to process bindings after {max_attempts} attempts. Recording skipped.")
                 self.mid_level_table[mid_level_seq.template_hash].pop()
                 self.low_level_table[low_level_seq.template_hash].pop()
+                self.bindings[mid_level_seq.template_hash].pop()
 
-    def query(self, final_desc: str, template: str) -> list[Union[str, MobiAgentAction]]:
-        mid_level_seq = MidLevelSequence.from_experience(final_desc, template)
+    def _query(self, mid_level_seq: MidLevelSequence) -> list[Subtask]:
         result: tuple[MidLevelSequence, LowLevelSequence, Binding] = None
         max_match_len = 0
-        for i, existing_mid_level_seq in enumerate(self.mid_level_table.get(mid_level_seq.template_hash, [])):
+        existing_mid_level_seqs = self.mid_level_table.get(mid_level_seq.template_hash, [])
+        for i, existing_mid_level_seq in enumerate(existing_mid_level_seqs):
             if len(existing_mid_level_seq) != len(mid_level_seq):
                 continue
             match_len = 0
@@ -262,15 +332,37 @@ class ExperienceRR:
             return []
         
         existing_mid_level_seq, low_level_seq, binding = result
-        
-        ret: list[Union[str, MobiAgentAction]] = []
-        for i, (subtask1, subtask2) in enumerate(zip(existing_mid_level_seq.sequence, mid_level_seq.sequence)):
+
+        ret_subtasks: list[Subtask] = []
+        for i, (subtask_desc1, subtask_desc2) in enumerate(zip(existing_mid_level_seq.sequence, mid_level_seq.sequence)):
             range_start, range_end = binding.ranges[i]
-            if subtask1 == subtask2:
-                ret.extend(low_level_seq[range_start:range_end])
+            if subtask_desc1 == subtask_desc2:
+                subtask = Subtask(description=subtask_desc1, actions=low_level_seq[range_start:range_end])
             else:
-                ret.append(subtask2)
-        return ret
+                subtask = Subtask(description=subtask_desc2, actions=None)
+            ret_subtasks = append_subtask(ret_subtasks, subtask)
+        return ret_subtasks
+
+    def _query_cross_task(self, mid_level_seq: MidLevelSequence, enable_cross_template: bool = False) -> list[Subtask]:
+        ret_subtasks: list[Subtask] = []
+        available_subtasks = self.global_subtask_table if enable_cross_template else self.subtask_table.get(mid_level_seq.template_hash, {})
+        for subtask_desc in mid_level_seq.sequence:
+            if subtask_desc in available_subtasks:
+                ret_subtasks = append_subtask(ret_subtasks, available_subtasks[subtask_desc])
+            else:
+                ret_subtasks = append_subtask(ret_subtasks, Subtask(description=subtask_desc, actions=None))
+        if all(subtask.actions is None for subtask in ret_subtasks):
+            return []
+        return ret_subtasks
+
+    def query(self, final_desc: str, template: str, enable_cross_task: bool = False, enable_cross_template: bool = False) -> list[Union[str, list[MobiAgentAction]]]:
+        mid_level_seq = MidLevelSequence.from_experience(final_desc, template)
+        subtasks: list[Subtask] = []
+        if enable_cross_task:
+            subtasks = self._query_cross_task(mid_level_seq, enable_cross_template)
+        else:
+            subtasks = self._query(mid_level_seq)
+        return convert_subtasks(subtasks)
 
     # def query(self, final_desc: str, template: str) -> Optional[ReplayInfo]:
     #     mid_level_seq = MidLevelSequence.from_experience(final_desc, template)

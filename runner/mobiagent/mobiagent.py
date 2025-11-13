@@ -248,7 +248,8 @@ decider_client = None
 grounder_client = None
 planner_client = None
 
-planner_model = "gemini-2.5-flash"
+# planner_model = "gemini-2.5-flash"
+planner_model = ""
 decider_model = ""
 grounder_model = ""
 
@@ -270,14 +271,14 @@ def init(service_ip, decider_port, grounder_port, planner_port, enable_user_prof
         api_key = "0",
         base_url = f"http://{service_ip}:{grounder_port}/v1",
     )
-    # planner_client = OpenAI(
-    #     api_key = "0",
-    #     base_url = f"http://{service_ip}:{planner_port}/v1",
-    # )
     planner_client = OpenAI(
-        api_key = os.environ.get("OPENAI_API_KEY", "0"),
-        base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+        api_key = "0",
+        base_url = f"http://{service_ip}:{planner_port}/v1",
     )
+    # planner_client = OpenAI(
+    #     api_key = os.environ.get("OPENAI_API_KEY", "0"),
+    #     base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+    # )
     
     # 初始化偏好提取器（可由命令行开关控制）
     if enable_user_profile:
@@ -293,7 +294,7 @@ factor = 0.5
 
 
 from pydantic import BaseModel, Field
-from typing import Literal, Dict, Optional, Union
+from typing import Any, Literal, Dict, Optional, Union
 from enum import Enum
 
 # 1. 使用 Enum 定义固定的动作类型
@@ -348,36 +349,36 @@ json_schema_ground = GroundResponse.model_json_schema()
 
 
 def parse_json_response(response_str: str) -> dict:
-        """解析JSON响应
+    """解析JSON响应
+    
+    Args:
+        response_str: 模型返回的响应字符串
         
-        Args:
-            response_str: 模型返回的响应字符串
-            
-        Returns:
-            解析后的JSON对象
-        """
-        print("Parsing JSON response...")
+    Returns:
+        解析后的JSON对象
+    """
+    print("Parsing JSON response...")
+    try:
+        # 尝试直接解析JSON
+        return json.loads(response_str)
+    except json.JSONDecodeError:
+        # 如果直接解析失败，尝试提取JSON部分
         try:
-            # 尝试直接解析JSON
-            return json.loads(response_str)
-        except json.JSONDecodeError:
-            # 如果直接解析失败，尝试提取JSON部分
-            try:
-                # 查找JSON代码块
-                json_match = re.search(r'```json\s*(\{.*?\})\s*```', response_str, re.DOTALL)
-                if json_match:
-                    return json.loads(json_match.group(1))
-                
-                # 查找花括号包围的JSON
-                json_match = re.search(r'(\{.*?\})', response_str, re.DOTALL)
-                if json_match:
-                    return json.loads(json_match.group(1))
-                
-                raise ValueError("无法在响应中找到有效的JSON")
-            except Exception as e:
-                logging.error(f"JSON解析失败: {e}")
-                logging.error(f"原始响应: {response_str}")
-                raise ValueError(f"无法解析JSON响应: {e}")
+            # 查找JSON代码块
+            json_match = re.search(r'```json\s*(\{.*?\})\s*```', response_str, re.DOTALL)
+            if json_match:
+                return json.loads(json_match.group(1))
+            
+            # 查找花括号包围的JSON
+            json_match = re.search(r'(\{.*?\})', response_str, re.DOTALL)
+            if json_match:
+                return json.loads(json_match.group(1))
+            
+            raise ValueError("无法在响应中找到有效的JSON")
+        except Exception as e:
+            logging.error(f"JSON解析失败: {e}")
+            logging.error(f"原始响应: {response_str}")
+            raise ValueError(f"无法解析JSON响应: {e}")
 
 def get_screenshot(device, device_type="Android"):
     """
@@ -550,17 +551,21 @@ def task_in_app(app, old_task, task, template, device, data_dir, bbox_flag=True,
         grounder_prompt_template_no_bbox = load_prompt("grounder_coordinates.md")
         decider_prompt_template = load_prompt("decider_v2.md")
     
-    replay_info: list[Union[str, list[MobiAgentAction]]] = None
+    # only for experience rr
+    # store original task description since `task` can be modified during execution
+    orig_task = task
+    replay_info: list[Union[str, list[MobiAgentAction]]] = []
+    executing_subtask = False
     replay_idx = 0
     if experience_rr and old_task != task and template:
         logging.info("Finding replayable actions")
-        replay_info = experience_rr.query(task, template)
-        orig_task = task
-        executing_subtask = False
-        if replay_info:
-            for item in replay_info:
-                logging.info(f"Replay item: {item}")
-        else:
+        replay_info = experience_rr.query(task, template, enable_cross_task=True)
+        for item in replay_info:
+            if isinstance(item, str):
+                logging.info(f"Non-replayable subtask: {item}")
+            elif isinstance(item, MobiAgentAction):
+                logging.info(f"Replayable action: {item.model_dump_json(exclude={'reasoning', 'extra_info'})}")
+        if not replay_info:
             logging.info("No replayable actions found")
 
     while True:
@@ -572,18 +577,18 @@ def task_in_app(app, old_task, task, template, device, data_dir, bbox_flag=True,
         replay_grounder_bbox = None
         if replay_info and replay_idx < len(replay_info) and (not executing_subtask):
             replay_item = replay_info[replay_idx]
-            logging.info(f"Replaying index {replay_idx}: {replay_item}")
             if isinstance(replay_item, str):
                 # a subtask
-                task = replay_item.strip("。") + "，完成后立即结束任务，不要进行额外操作"
+                task = replay_item
                 executing_subtask = replay_idx != len(replay_info) - 1 # not the last subtask
                 history.clear()
+                logging.info(f"The next subtask cannot be replayed: {task}, let agent take it over.")
             elif isinstance(replay_item, MobiAgentAction):
                 replay_this_step = True
-                decider_response_str = replay_item.model_dump_json(ensure_ascii=False, exclude={"extra_info"})
+                decider_response_str = replay_item.model_dump_json(exclude={"extra_info"})
                 if replay_item.extra_info:
                     replay_grounder_bbox = replay_item.extra_info.get("bbox", None)
-                logging.info(f"Replaying action for step {len(full_history) + 1}: \n{decider_response_str}")
+                logging.info(f"Replaying action for global step {len(full_history) + 1}: \n{replay_item.model_dump_json(exclude={'reasoning', 'extra_info'})}")
             replay_idx += 1
 
         if len(history) == 0:
@@ -629,6 +634,7 @@ def task_in_app(app, old_task, task, template, device, data_dir, bbox_flag=True,
         decider_response = robust_json_loads(decider_response_str)
         action = decider_response["action"]
 
+        # ignore `done` action of subtasks in persistant execution logs and full_history
         if not (executing_subtask and action == "done"):
             converted_item = {
                 "reasoning": decider_response["reasoning"],
@@ -688,9 +694,10 @@ def task_in_app(app, old_task, task, template, device, data_dir, bbox_flag=True,
                         f.write(str(hierarchy))
             full_history.append(decider_response_str)
 
+        history.append(decider_response_str)
         if action == "done":
             if replay_info and executing_subtask:
-                logging.info(f"Subtask '{task}' completed, moving to next subtask.")
+                logging.info(f"Subtask '{task}' completed.")
                 history.clear()
                 executing_subtask = False
             else:
@@ -843,10 +850,11 @@ def task_in_app(app, old_task, task, template, device, data_dir, bbox_flag=True,
             })
         else:
             raise ValueError(f"Unknown action: {action}")
-        history.append(decider_response_str)
         
-    if replay_info:
-        task = orig_task
+        time.sleep(1)
+        
+    # always restore task description
+    task = orig_task
     
     data = {
         "app_name": app,
@@ -874,9 +882,10 @@ def task_in_app(app, old_task, task, template, device, data_dir, bbox_flag=True,
         logging.info("Submitted preference extraction task")
 
     if experience_rr and template and old_task != task:
+        logging.info("Recording experience for future replay")
         extra_info = [{"bbox": act["bounds"]} if "bounds" in act else None for act in actions]
         experience_rr.record(task, template, full_history, extra_info)
-        logging.info("Recorded experience for later replay")
+        logging.info("Experience recorded")
 
 # def task_in_app(app, old_task, task, template, device, data_dir, bbox_flag=True, use_qwen3=True, device_type="Android"):
 #     history = []

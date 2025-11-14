@@ -1,9 +1,14 @@
 from collections import defaultdict
+import itertools
+from pathlib import Path
 from unittest import result
 from pydantic import BaseModel
 from typing import Any, Optional, Union
 from openai import OpenAI
 import json, logging, os
+import hashlib
+from utils.load_md_prompt import load_prompt
+from utils.local_experience import PromptTemplateSearch
 
 logger = logging.getLogger(__name__)
 logger.setLevel(os.environ.get("LOG_LEVEL", "INFO").upper())
@@ -102,12 +107,12 @@ BINDING_PROMPT = """
 """
 
 class MidLevelSequence(BaseModel):
-    template_hash: int
+    template_hash: str
     sequence: list[str]
 
     @classmethod
     def from_experience(cls, final_desc: str, template: str) -> "MidLevelSequence":
-        template_hash = hash(template)
+        template_hash = hashlib.md5(template.encode('utf-8')).hexdigest()
         lines = final_desc.strip().split("\n")
         idx = 1
         sequence = []
@@ -139,11 +144,11 @@ class MobiAgentAction(BaseModel):
     extra_info: Optional[dict[str, Any]] = None
 
 class LowLevelSequence(BaseModel):
-    template_hash: int
+    template_hash: str
     sequence: list[MobiAgentAction]
 
     @classmethod
-    def from_history(cls, template_hash: int, history: list[str], extra_info: list[Optional[dict[str, Any]]]) -> "LowLevelSequence":
+    def from_history(cls, template_hash: str, history: list[str], extra_info: list[Optional[dict[str, Any]]]) -> "LowLevelSequence":
         sequence = []
         for h, extra in zip(history, extra_info):
             h = json.loads(h)
@@ -167,7 +172,7 @@ class LowLevelSequence(BaseModel):
         return self.sequence[index]
 
 class Binding(BaseModel):
-    template_hash: int
+    template_hash: str
     # right exclusive
     ranges: list[tuple[int, int]]
 
@@ -193,10 +198,12 @@ def append_subtask(subtasks: list[Subtask], new_subtask: Subtask) -> list[Subtas
     return subtasks
 
 def convert_subtasks(subtasks: list[Subtask]) -> list[Union[str, list[MobiAgentAction]]]:
+    if all(subtask.actions is None for subtask in subtasks):
+        return []
     ret: list[Union[str, list[MobiAgentAction]]] = []
     for subtask in subtasks:
         if subtask.actions is None:
-            ret.append(subtask.description.rstrip("。") + "，然后结束任务，不要进行其他操作。")
+            ret.append(subtask.description)
         else:
             ret.extend(subtask.actions)
     return ret
@@ -209,14 +216,16 @@ class ExperienceRR:
         self.planner_client = planner_client
         self.planner_model = planner_model
 
-        self.mid_level_table: dict[int, list[MidLevelSequence]] = defaultdict(list)
-        self.low_level_table: dict[int, list[LowLevelSequence]] = defaultdict(list)
-        self.bindings: dict[int, list[Binding]] = defaultdict(list)
+        self.mid_level_table: dict[str, list[MidLevelSequence]] = defaultdict(list)
+        self.low_level_table: dict[str, list[LowLevelSequence]] = defaultdict(list)
+        self.bindings: dict[str, list[Binding]] = defaultdict(list)
 
-        self.subtask_table: dict[int, dict[str, Subtask]] = defaultdict(dict)
+        self.subtask_table: dict[str, dict[str, Subtask]] = defaultdict(dict)
         self.global_subtask_table: dict[str, Subtask] = {}
 
-    def _update_subtasks(self, template_hash: int, idx: int) -> None:
+        self.query_result_cache: dict[str, list[Subtask]] = {}
+
+    def _update_subtasks(self, template_hash: str, idx: int) -> None:
         low_level_seq = self.low_level_table.get(template_hash)[idx]
         mid_level_seq = self.mid_level_table.get(template_hash)[idx]
         binding = self.bindings.get(template_hash)[idx]
@@ -226,17 +235,19 @@ class ExperienceRR:
             actions = low_level_seq.sequence[range_start:range_end]
             subtask = Subtask(description=subtask_desc, actions=actions)
 
-            self.global_subtask_table[subtask_desc] = subtask
-            self.subtask_table[template_hash][subtask_desc] = subtask
+            if subtask_desc not in self.subtask_table[template_hash]:
+                self.subtask_table[template_hash][subtask_desc] = subtask
+            if subtask_desc not in self.global_subtask_table:
+                self.global_subtask_table[subtask_desc] = subtask
 
-    def _bind(self, template_hash: int, idx: int) -> None:
+    def _bind(self, template_hash: str, idx: int) -> None:
         assert idx < len(self.bindings[template_hash]), f"Index out of range in binding table for {template_hash}"
         low_level_seq = self.low_level_table.get(template_hash)[idx]
         mid_level_seq = self.mid_level_table.get(template_hash)[idx]
         actions_str = str(low_level_seq)
         subtasks_str = str(mid_level_seq)
         prompt = BINDING_PROMPT.format(subtasks=subtasks_str, actions=actions_str)
-        # logger.info(f"Binding prompt: {prompt}")
+        logger.info(f"Binding prompt: {prompt}")
         response = self.planner_client.chat.completions.create(
             model=self.planner_model,
             messages=[
@@ -296,18 +307,42 @@ class ExperienceRR:
         self.low_level_table[low_level_seq.template_hash].append(low_level_seq)
         self.bindings[mid_level_seq.template_hash].append(None) # placeholder
 
-        max_attempts = 3
-        for attempt in range(max_attempts):
-            try:
-                self._bind(mid_level_seq.template_hash, len(self.mid_level_table[mid_level_seq.template_hash]) - 1)
-                break
-            except Exception as e:
-                logger.error(f"Error processing bindings: {e.__class__.__name__}: {e}")
-            if attempt == max_attempts - 1:
-                logger.error(f"Failed to process bindings after {max_attempts} attempts. Recording skipped.")
-                self.mid_level_table[mid_level_seq.template_hash].pop()
-                self.low_level_table[low_level_seq.template_hash].pop()
-                self.bindings[mid_level_seq.template_hash].pop()
+        query_key = f"{final_desc}<SEP>{template}"
+        cached_query_result = self.query_result_cache.get(query_key, None)
+        if cached_query_result:
+            logger.info("Using cached query result to update subtasks")
+            cur_start_idx = 0
+            ranges = []
+            for subtask in cached_query_result:
+                if subtask.actions is not None:
+                    range_start = cur_start_idx
+                    range_end = cur_start_idx + len(subtask.actions)
+                    ranges.append((range_start, range_end))
+                    cur_start_idx = range_end
+                else:
+                    desc = subtask.description
+                    # find range in extra_info
+                    filtered_info = [(i, info) for i, info in enumerate(extra_info) if info and info.get("subtask_desc", None) == desc]
+                    range_start = filtered_info[0][0]
+                    range_end = filtered_info[-1][0] + 1
+                    ranges.append((range_start, range_end))
+                    cur_start_idx = range_end
+            binding = Binding(template_hash=mid_level_seq.template_hash, ranges=ranges)
+            self.bindings[mid_level_seq.template_hash][-1] = binding
+            self._update_subtasks(mid_level_seq.template_hash, len(self.mid_level_table[mid_level_seq.template_hash]) - 1)
+        else:
+            max_attempts = 3
+            for attempt in range(max_attempts):
+                try:
+                    self._bind(mid_level_seq.template_hash, len(self.mid_level_table[mid_level_seq.template_hash]) - 1)
+                    break
+                except Exception as e:
+                    logger.error(f"Error processing bindings: {e.__class__.__name__}: {e}")
+                if attempt == max_attempts - 1:
+                    logger.error(f"Failed to process bindings after {max_attempts} attempts. Recording skipped.")
+                    self.mid_level_table[mid_level_seq.template_hash].pop()
+                    self.low_level_table[low_level_seq.template_hash].pop()
+                    self.bindings[mid_level_seq.template_hash].pop()
 
     def _query(self, mid_level_seq: MidLevelSequence) -> list[Subtask]:
         result: tuple[MidLevelSequence, LowLevelSequence, Binding] = None
@@ -328,12 +363,14 @@ class ExperienceRR:
                     self.bindings[mid_level_seq.template_hash][i],
                 )
         
+        ret_subtasks: list[Subtask] = []
         if result is None:
-            return []
+            for subtask_desc in mid_level_seq.sequence:
+                ret_subtasks = append_subtask(ret_subtasks, Subtask(description=subtask_desc, actions=None))
+            return ret_subtasks
         
         existing_mid_level_seq, low_level_seq, binding = result
 
-        ret_subtasks: list[Subtask] = []
         for i, (subtask_desc1, subtask_desc2) in enumerate(zip(existing_mid_level_seq.sequence, mid_level_seq.sequence)):
             range_start, range_end = binding.ranges[i]
             if subtask_desc1 == subtask_desc2:
@@ -351,18 +388,28 @@ class ExperienceRR:
                 ret_subtasks = append_subtask(ret_subtasks, available_subtasks[subtask_desc])
             else:
                 ret_subtasks = append_subtask(ret_subtasks, Subtask(description=subtask_desc, actions=None))
-        if all(subtask.actions is None for subtask in ret_subtasks):
-            return []
         return ret_subtasks
 
-    def query(self, final_desc: str, template: str, enable_cross_task: bool = False, enable_cross_template: bool = False) -> list[Union[str, list[MobiAgentAction]]]:
+    def query(self, 
+        final_desc: str, 
+        template: str, 
+        enable_cross_task: bool = False, 
+        enable_cross_template: bool = False, 
+        convert: bool = True
+    ) -> list[MobiAgentAction] | list[Union[str, list[MobiAgentAction]]]:
         mid_level_seq = MidLevelSequence.from_experience(final_desc, template)
         subtasks: list[Subtask] = []
         if enable_cross_task:
             subtasks = self._query_cross_task(mid_level_seq, enable_cross_template)
         else:
             subtasks = self._query(mid_level_seq)
-        return convert_subtasks(subtasks)
+        # cache query result
+        if any(subtask.actions is not None for subtask in subtasks):
+            cache_key = f"{final_desc}<SEP>{template}"
+            self.query_result_cache[cache_key] = subtasks
+        if convert:
+            subtasks = convert_subtasks(subtasks)
+        return subtasks
 
     # def query(self, final_desc: str, template: str) -> Optional[ReplayInfo]:
     #     mid_level_seq = MidLevelSequence.from_experience(final_desc, template)
@@ -409,33 +456,223 @@ class ExperienceRR:
     #             max_steps = int(orig_steps * 1.5)
     #             periods.append((min_steps, max_steps))
     #     return ReplayInfo(fisrt_group_replayable=first_group_replayable, replay_groups=replay_groups, periods=periods)
+
+class OracleAgent:
+    def __init__(self) -> None:
+        self.mock_actions_table: dict[str, list[tuple[str]]] = {
+            "在首页点击\"酒店\"功能入口": [
+                ("点击首页的酒店按钮，进入酒店功能", "click", "酒店按钮"),
+            ],
+            "选择城市为\"{{城市名}}\"": [
+                ("点击城市选择器准备选择城市", "click", "城市选择器"),
+                ("输入用户指定的城市", "input", "{{城市名}}"),
+                ("点击搜索按钮确认选择城市", "click", "搜索")
+            ],
+            "输入并选定酒店名称为\"{{酒店名}}酒店\"": [
+                ("点击酒店名称输入框准备选择酒店", "click", "酒店名称输入框"),
+                ("输入用户指定的酒店名称", "input", "{{酒店名}}"),
+                ("点击搜索按钮确认选择酒店", "click", "搜索")
+            ],
+            "执行查询操作，看到酒店搜索结果列表出现后，结束任务": [
+                ("点击查询按钮，执行查询操作", "click", "查询按钮"),
+            ],
+        }
+
+    def execute_subtask(self, subtask_desc: str, variables: dict[str, str]) -> list[MobiAgentAction]:
+        subtask_desc = subtask_desc.replace("“", "\"").replace("”", "\"").rstrip("。")
+        matched_mock_actions: list[tuple[str, str]] = []
+        for subtask_template, mock_actions in self.mock_actions_table.items():
+            for key, value in variables.items():
+                subtask_template = subtask_template.replace(f"{{{{{key}}}}}", value)
+                if subtask_template == subtask_desc:
+                    matched_mock_actions = mock_actions
+                    break
+            if matched_mock_actions:
+                break
+        if not matched_mock_actions:
+            raise ValueError(f"No mock actions found for subtask: {subtask_desc}")
+        
+        actions: list[MobiAgentAction] = []
+        for reasoning, action_type, param_template in matched_mock_actions:
+            param_str = param_template
+            for key, value in variables.items():
+                param_str = param_str.replace(f"{{{{{key}}}}}", value)
+            parameters = {"param": param_str}
+            action = MobiAgentAction(
+                reasoning=reasoning,
+                action=action_type,
+                parameters=parameters,
+            )
+            actions.append(action)
+        actions.append(MobiAgentAction(
+            reasoning="任务成功完成",
+            action="done",
+            parameters={"param": ""},
+        ))
+        return actions
+
+class ExperienceRRTest:
+    def __init__(self, planner_client: OpenAI, planner_model: str) -> None:
+        self.experience_rr = ExperienceRR(planner_client=planner_client, planner_model=planner_model)
+        self.oracle_agent = OracleAgent()
+        self.reset_metrics()
+
+    def reset_metrics(self):
+        self.num_tasks = 0
+        self.num_success = 0
+        self.num_replayed_actions = 0
+        self.num_fallback_actions = 0
+
+    def get_metrics(self) -> dict[str, int]:
+        return {
+            "num_tasks": self.num_tasks,
+            "num_success": self.num_success,
+            "num_replayed_actions": self.num_replayed_actions,
+            "num_fallback_actions": self.num_fallback_actions,
+        }
+    
+    def retrive_template(self, task_description: str) -> str:
+        current_file_path = Path(__file__).resolve()
+        current_dir = current_file_path.parent
+        template_path = current_dir.parent.parent / "utils" /"experience" / "templates-rr.json"
+
+        search_engine = PromptTemplateSearch(template_path)
+        template = search_engine.get_experience(task_description, 1)
+        return template
+    
+    def fill_template(self, template: str, variables: dict[str, str]) -> str:
+        filled_template = json.loads(template)["experience1"]
+        for key, value in variables.items():
+            filled_template = filled_template.replace(f"{{{{{key}}}}}", value)
+        return filled_template
+
+    def fill_template_planner(self, template: str, task_description: str) -> tuple[str, dict[str, str]]:
+        planner_prompt_template = load_prompt("planner_oneshot.md")
+        prompt = planner_prompt_template.format(
+            task_description=task_description,
+            experience_content=template,
+        )
+        response_str = self.experience_rr.planner_client.chat.completions.create(
+            model = self.experience_rr.planner_model,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [{"type": "text", "text": prompt}],
+                }
+            ],
+        ).choices[0].message.content
+        if response_str.startswith("```json"):
+            response_str = response_str.replace("```json", "").replace("```", "").strip()
+        response_json = json.loads(response_str)
+        final_desc = response_json.get("final_task_description", task_description)
+        return final_desc, {}
+
+    def execute_task(self, task_description: str, variables: Optional[dict[str, str]]) -> None:
+        self.num_tasks += 1
+        template = self.retrive_template(task_description)
+        if variables:
+            final_desc = self.fill_template(template, variables)
+        else:
+            final_desc, variables = self.fill_template_planner(template, task_description)
+        subtasks: list[Subtask] = self.experience_rr.query(final_desc, template, enable_cross_task=True, convert=False)
+        logger.info(f"Queried subtasks: {subtasks}")
+        is_first_execute = all(subtask.actions is None for subtask in subtasks)
+        actions: list[MobiAgentAction] = []
+        history: list[str] = []
+        extra_info: list[Optional[dict[str, Any]]] = []
+        for i, subtask in enumerate(subtasks):
+            is_replayed = subtask.actions is not None
+            subtask_actions = self.execute_subtask(subtask, variables)
+            if (i != len(subtasks) - 1) and (not is_replayed):
+                if is_first_execute:
+                    self.num_fallback_actions -= 1
+                subtask_actions = subtask_actions[:-1]
+            if not is_replayed:
+                extra_info.extend([{"subtask_desc": subtask.description}] * len(subtask_actions))
+            else:
+                extra_info.extend([None] * len(subtask_actions))
+            actions.extend(subtask_actions)
+            history.extend([action.model_dump_json(exclude={'extra_info'}) for action in subtask_actions])
+
+        if is_first_execute:
+            # must be correct
+            self.num_success += 1
+            self.experience_rr.record(final_desc, template, history, extra_info)
+            return
+        
+        # get ground truth
+        gt_actions: list[MobiAgentAction] = []
+        for i, subtask in enumerate(subtasks):
+            subtask_gt_actions = self.oracle_agent.execute_subtask(subtask.description, variables)
+            if i != len(subtasks) - 1:
+                # exclude done action
+                subtask_gt_actions = subtask_gt_actions[:-1]
+            gt_actions.extend(subtask_gt_actions)
+
+        logger.debug("Executed actions: \n" + "\n".join(a.model_dump_json(exclude={"extra_info"}) for a in actions))
+        logger.debug("Ground truth actions: \n" + "\n".join(a.model_dump_json(exclude={"extra_info"}) for a in gt_actions))
+
+        # compare actions with gt_actions
+        if len(actions) != len(gt_actions):
+            logger.warning(f"Action length mismatch: got {len(actions)}, expected {len(gt_actions)}")
+        elif all(a.model_dump(exclude={'extra_info'}) == b.model_dump(exclude={'extra_info'}) for a, b in zip(actions, gt_actions)):
+            logger.info("Actions match ground truth")
+            self.num_success += 1
+            self.experience_rr.record(final_desc, template, history, extra_info)
+        else:
+            logger.warning("Actions do not match ground truth")
+        
+
+    def execute_subtask(self, subtask: Subtask, variables: dict[str, str]) -> list[MobiAgentAction]:
+        if subtask.actions is not None:
+            self.num_replayed_actions += len(subtask.actions)
+            return subtask.actions
+        else:
+            actions = self.oracle_agent.execute_subtask(subtask.description, variables)
+            self.num_fallback_actions += len(actions)
+            return actions
+        
+    def run_test_suite(self) -> None:
+        tasks: list[tuple[str, dict[str, str]]] = []
+        cities = ["上海", "北京", "广州", "深圳", "杭州"]
+        hotels = ["汉庭", "全季", "如家", "7天", "锦江之星"]
+        for city, hotel in itertools.product(cities, hotels):
+            task_description = f"查询{city}的{hotel}酒店价格"
+            tasks.append((task_description, {"城市名": city, "酒店名": hotel}))
+        for task_description, variables in tasks:
+            self.execute_task(task_description, variables)
         
 if __name__ == "__main__":
     client = OpenAI(
-        api_key = os.environ.get("OPENAI_API_KEY", "0"),
-        base_url = os.environ.get("OPENAI_BASE_URL", "http://localhost:8080/v1"),
+        api_key=os.environ.get("OPENAI_API_KEY", "0"),
+        base_url=os.environ.get("OPENAI_BASE_URL", "http://localhost:8080/v1"),
     )
-    experience_rr = ExperienceRR(planner_client=client)
-    # test record
-    final_desc = "请你使用携程App，帮我完成\"查询上海的汉庭酒店价格\"。主要操作流程为：\n1. 在首页点击“酒店”功能入口。\n2. 选择城市为\"上海\"。\n3. 输入并选定酒店名称为\"汉庭酒店\"。\n4. 执行酒店查询。\n5. 看到酒店搜索结果列表出现后，任务结束。"
-    template = "请你使用{{APP名称}}App，帮我完成\"{{用户原始任务描述}}\"。主要操作流程为：\n1. 在首页点击“酒店”功能入口。\n2. 选择城市为\"{{城市名}}\"。\n3. 输入并选定酒店名称为\"{{酒店名}}\"。\n4. 执行酒店查询。\n5. 看到酒店搜索结果列表出现后，任务结束。"
-    history = [
-        '{"reasoning": "任务是查询全季酒店的价格。首先，我需要进入酒店预订功能。因此，我将点击主页上的“酒店”图标。", "action": "click", "parameters": {"target_element": "酒店图标"}}',
-        '{"reasoning": "进入酒店预订页面后，我需要指定城市。当前城市显示的是“北京”，我需要点击它来修改目标城市。", "action": "click", "parameters": {"target_element": "城市选择框，当前显示北京"}}',
-        '{"reasoning": "我需要点击热门城市中的上海来选择城市", "action": "click", "parameters": {"target_element": "热门城市中的上海"}}',
-        '{"reasoning": "我已经完成了城市选择，接下来我需要指定要查询的酒店，为此，我需要点击位置/品牌/酒店输入框", "action": "click", "parameters": {"target_element": "位置/品牌/酒店输入框"}}',
-        '{"reasoning": "我需要在搜索框中输入“全季酒店”以查找相关酒店。", "action": "input", "parameters": {"text": "汉庭酒店"}}',
-        '{"reasoning": "输入“全季酒店”后，我需要点击键盘上的搜索按钮来执行搜索。", "action": "click", "parameters": {"target_element": "键盘上的搜索按钮"}}',
-        '{"reasoning": "我已经完成了城市和酒店的选择，接下来我需要点击查询按钮来执行这次查询", "action": "click", "parameters": {"target_element": "查询按钮"}}',
-        '{"reasoning": "屏幕上出现了酒店搜索结果，任务完成", "action": "done", "parameters": {"status": "success"}}',
-    ]
-    experience_rr.record(final_desc, template, history)
-    # test query
-    final_desc2 = "请你使用携程App，帮我完成\"查询北京的汉庭酒店价格\"。主要操作流程为：\n1. 在首页点击“酒店”功能入口。\n2. 选择城市为\"北京\"。\n3. 输入并选定酒店名称为\"汉庭酒店\"。\n4. 执行酒店查询。\n5. 看到酒店搜索结果列表出现后，任务结束。"
-    queried_actions = experience_rr.query(final_desc2, template)
-    for action in queried_actions:
-        print(action)
-    final_desc3 = "请你使用携程App，帮我完成\"查询上海的全季酒店价格\"。主要操作流程为：\n1. 在首页点击“酒店”功能入口。\n2. 选择城市为\"上海\"。\n3. 输入并选定酒店名称为\"全季酒店\"。\n4. 执行酒店查询。\n5. 看到酒店搜索结果列表出现后，任务结束。"
-    queried_actions = experience_rr.query(final_desc3, template)
-    for action in queried_actions:
-        print(action)
+    planner_model = ""
+    experience_rr_test = ExperienceRRTest(planner_client=client, planner_model=planner_model)
+    experience_rr_test.run_test_suite()
+    metrics = experience_rr_test.get_metrics()
+    logger.info(f"ExperienceRR Test Metrics: {metrics}")
+    # experience_rr = ExperienceRR(planner_client=client)
+    # # test record
+    # final_desc = "请你使用携程App，帮我完成\"查询上海的汉庭酒店价格\"。主要操作流程为：\n1. 在首页点击“酒店”功能入口。\n2. 选择城市为\"上海\"。\n3. 输入并选定酒店名称为\"汉庭酒店\"。\n4. 执行酒店查询。\n5. 看到酒店搜索结果列表出现后，任务结束。"
+    # template = "请你使用{{APP名称}}App，帮我完成\"{{用户原始任务描述}}\"。主要操作流程为：\n1. 在首页点击“酒店”功能入口。\n2. 选择城市为\"{{城市名}}\"。\n3. 输入并选定酒店名称为\"{{酒店名}}\"。\n4. 执行酒店查询。\n5. 看到酒店搜索结果列表出现后，任务结束。"
+    # history = [
+    #     '{"reasoning": "任务是查询全季酒店的价格。首先，我需要进入酒店预订功能。因此，我将点击主页上的“酒店”图标。", "action": "click", "parameters": {"target_element": "酒店图标"}}',
+    #     '{"reasoning": "进入酒店预订页面后，我需要指定城市。当前城市显示的是“北京”，我需要点击它来修改目标城市。", "action": "click", "parameters": {"target_element": "城市选择框，当前显示北京"}}',
+    #     '{"reasoning": "我需要点击热门城市中的上海来选择城市", "action": "click", "parameters": {"target_element": "热门城市中的上海"}}',
+    #     '{"reasoning": "我已经完成了城市选择，接下来我需要指定要查询的酒店，为此，我需要点击位置/品牌/酒店输入框", "action": "click", "parameters": {"target_element": "位置/品牌/酒店输入框"}}',
+    #     '{"reasoning": "我需要在搜索框中输入“全季酒店”以查找相关酒店。", "action": "input", "parameters": {"text": "汉庭酒店"}}',
+    #     '{"reasoning": "输入“全季酒店”后，我需要点击键盘上的搜索按钮来执行搜索。", "action": "click", "parameters": {"target_element": "键盘上的搜索按钮"}}',
+    #     '{"reasoning": "我已经完成了城市和酒店的选择，接下来我需要点击查询按钮来执行这次查询", "action": "click", "parameters": {"target_element": "查询按钮"}}',
+    #     '{"reasoning": "屏幕上出现了酒店搜索结果，任务完成", "action": "done", "parameters": {"status": "success"}}',
+    # ]
+    # experience_rr.record(final_desc, template, history)
+    # # test query
+    # final_desc2 = "请你使用携程App，帮我完成\"查询北京的汉庭酒店价格\"。主要操作流程为：\n1. 在首页点击“酒店”功能入口。\n2. 选择城市为\"北京\"。\n3. 输入并选定酒店名称为\"汉庭酒店\"。\n4. 执行酒店查询。\n5. 看到酒店搜索结果列表出现后，任务结束。"
+    # queried_actions = experience_rr.query(final_desc2, template)
+    # for action in queried_actions:
+    #     print(action)
+    # final_desc3 = "请你使用携程App，帮我完成\"查询上海的全季酒店价格\"。主要操作流程为：\n1. 在首页点击“酒店”功能入口。\n2. 选择城市为\"上海\"。\n3. 输入并选定酒店名称为\"全季酒店\"。\n4. 执行酒店查询。\n5. 看到酒店搜索结果列表出现后，任务结束。"
+    # queried_actions = experience_rr.query(final_desc3, template)
+    # for action in queried_actions:
+    #     print(action)

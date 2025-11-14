@@ -31,7 +31,8 @@ from .user_preference_extractor import (
 from .experience_rr import (
     MobiAgentAction,
     # ReplayInfo,
-    ExperienceRR
+    ExperienceRR,
+    Subtask
 )
 
 # 清除可能已存在的 handlers，避免重复配置
@@ -564,9 +565,12 @@ def task_in_app(app, old_task, task, template, device, data_dir, bbox_flag=True,
             if isinstance(item, str):
                 logging.info(f"Non-replayable subtask: {item}")
             elif isinstance(item, MobiAgentAction):
-                logging.info(f"Replayable action: {item.model_dump_json(exclude={'reasoning', 'extra_info'})}")
+                logging.info(f"Replayable historical action: {item.model_dump_json(exclude={'extra_info'})}")
         if not replay_info:
             logging.info("No replayable actions found")
+        
+        # record extra info list
+        extra_info: list[Optional[dict[str, Any]]] = []
 
     while True:
         if len(actions) >= MAX_STEPS:
@@ -579,16 +583,19 @@ def task_in_app(app, old_task, task, template, device, data_dir, bbox_flag=True,
             replay_item = replay_info[replay_idx]
             if isinstance(replay_item, str):
                 # a subtask
-                task = replay_item
+                task = replay_item.rstrip("。") + "，然后结束任务，不要进行其他操作。"
                 executing_subtask = replay_idx != len(replay_info) - 1 # not the last subtask
                 history.clear()
                 logging.info(f"The next subtask cannot be replayed: {task}, let agent take it over.")
             elif isinstance(replay_item, MobiAgentAction):
                 replay_this_step = True
-                decider_response_str = replay_item.model_dump_json(exclude={"extra_info"})
+                action_dict = replay_item.model_dump(exclude={"extra_info"})
+                if not action_dict["reasoning"].startswith("Replay:"):
+                    action_dict["reasoning"] = "Replay: " + action_dict["reasoning"]
+                decider_response_str = json.dumps(action_dict, ensure_ascii=False)
                 if replay_item.extra_info:
                     replay_grounder_bbox = replay_item.extra_info.get("bbox", None)
-                logging.info(f"Replaying action for global step {len(full_history) + 1}: \n{replay_item.model_dump_json(exclude={'reasoning', 'extra_info'})}")
+                logging.info(f"Replaying historical action for step {len(full_history) + 1}: \n{decider_response_str}")
             replay_idx += 1
 
         if len(history) == 0:
@@ -693,6 +700,10 @@ def task_in_app(app, old_task, task, template, device, data_dir, bbox_flag=True,
                     with open(hierarchy_path, "w", encoding="utf-8") as f:
                         f.write(str(hierarchy))
             full_history.append(decider_response_str)
+            extra_info.append(None)
+            if executing_subtask:
+                subtask = replay_info[replay_idx - 1]
+                extra_info[-1] = {"subtask_desc": subtask}
 
         history.append(decider_response_str)
         if action == "done":
@@ -757,6 +768,10 @@ def task_in_app(app, old_task, task, template, device, data_dir, bbox_flag=True,
                     logging.info(f"Using replayed grounder bbox: {replay_grounder_bbox}")
                     x1, y1, x2, y2 = replay_grounder_bbox
 
+                if extra_info[-1] is not None:
+                    extra_info[-1]["bbox"] = [x1, y1, x2, y2]
+                else:
+                    extra_info[-1] = {"bbox": [x1, y1, x2, y2]}
                 print(f"Clicking on bbox: [{x1}, {y1}, {x2}, {y2}]")
                 print(f"Image size: width={img.width}, height={img.height}")
                 print(f"Adjusted bbox: [{x1}, {y1}, {x2}, {y2}]")
@@ -883,7 +898,7 @@ def task_in_app(app, old_task, task, template, device, data_dir, bbox_flag=True,
 
     if experience_rr and template and old_task != task:
         logging.info("Recording experience for future replay")
-        extra_info = [{"bbox": act["bounds"]} if "bounds" in act else None for act in actions]
+        # extra_info = [{"bbox": act["bounds"]} if "bounds" in act else None for act in actions]
         experience_rr.record(task, template, full_history, extra_info)
         logging.info("Experience recorded")
 

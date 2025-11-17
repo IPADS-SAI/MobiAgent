@@ -9,6 +9,7 @@ import json, logging, os
 import hashlib
 from utils.load_md_prompt import load_prompt
 from utils.local_experience import PromptTemplateSearch
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 logger.setLevel(os.environ.get("LOG_LEVEL", "INFO").upper())
@@ -459,24 +460,33 @@ class ExperienceRR:
 
 class OracleAgent:
     def __init__(self) -> None:
-        self.mock_actions_table: dict[str, list[tuple[str]]] = {
-            "在首页点击\"酒店\"功能入口": [
-                ("点击首页的酒店按钮，进入酒店功能", "click", "酒店按钮"),
-            ],
-            "选择城市为\"{{城市名}}\"": [
-                ("点击城市选择器准备选择城市", "click", "城市选择器"),
-                ("输入用户指定的城市", "input", "{{城市名}}"),
-                ("点击搜索按钮确认选择城市", "click", "搜索")
-            ],
-            "输入并选定酒店名称为\"{{酒店名}}酒店\"": [
-                ("点击酒店名称输入框准备选择酒店", "click", "酒店名称输入框"),
-                ("输入用户指定的酒店名称", "input", "{{酒店名}}"),
-                ("点击搜索按钮确认选择酒店", "click", "搜索")
-            ],
-            "执行查询操作，看到酒店搜索结果列表出现后，结束任务": [
-                ("点击查询按钮，执行查询操作", "click", "查询按钮"),
-            ],
-        }
+        root_dir = Path(__file__).resolve().parent.parent.parent
+        file_path = root_dir / "utils" / "experience" / "rr-oracle.json"
+        with open(file_path, "r", encoding="utf-8") as f:
+            oracle_data = json.load(f)["subtasks"]
+        self.mock_actions_table: dict[str, list[tuple[str]]] = {}
+        for item in oracle_data:
+            subtask = item["subtask"]
+            actions = [tuple(action) for action in item["actions"]]
+            self.mock_actions_table[subtask] = actions
+        # self.mock_actions_table: dict[str, list[tuple[str]]] = {
+        #     "在首页点击\"酒店\"功能入口": [
+        #         ("点击首页的酒店按钮，进入酒店功能", "click", "酒店按钮"),
+        #     ],
+        #     "选择城市为\"{{城市名}}\"": [
+        #         ("点击城市选择器准备选择城市", "click", "城市选择器"),
+        #         ("输入用户指定的城市", "input", "{{城市名}}"),
+        #         ("点击搜索按钮确认选择城市", "click", "搜索")
+        #     ],
+        #     "输入并选定酒店名称为\"{{酒店名}}酒店\"": [
+        #         ("点击酒店名称输入框准备选择酒店", "click", "酒店名称输入框"),
+        #         ("输入用户指定的酒店名称", "input", "{{酒店名}}"),
+        #         ("点击搜索按钮确认选择酒店", "click", "搜索")
+        #     ],
+        #     "执行查询操作，看到酒店搜索结果列表出现后，结束任务": [
+        #         ("点击查询按钮，执行查询操作", "click", "查询按钮"),
+        #     ],
+        # }
 
     def execute_subtask(self, subtask_desc: str, variables: dict[str, str]) -> list[MobiAgentAction]:
         subtask_desc = subtask_desc.replace("“", "\"").replace("”", "\"").rstrip("。")
@@ -633,19 +643,47 @@ class ExperienceRRTest:
             return actions
         
     def run_test_suite(self) -> None:
-        tasks: list[tuple[str, dict[str, str]]] = []
-        cities = ["上海", "北京", "广州", "深圳", "杭州"]
-        hotels = ["汉庭", "全季", "如家", "7天", "锦江之星"]
-        for city, hotel in itertools.product(cities, hotels):
-            task_description = f"查询{city}的{hotel}酒店价格"
-            tasks.append((task_description, {"城市名": city, "酒店名": hotel}))
-        for task_description, variables in tasks:
-            self.execute_task(task_description, variables)
+        root_dir = Path(__file__).resolve().parent.parent.parent
+        file_path = root_dir / "utils" / "experience" / "rr-oracle.json"
+        with open(file_path, "r", encoding="utf-8") as f:
+            task_data = json.load(f)["tasks"]
+        records = []
+        for item in task_data:
+            task_fmt = item["task"]
+            variables = item["variables"]
+            keys = [var["key"] for var in variables]
+            values = [var["values"] for var in variables]
+            for var_values in itertools.product(*values):
+                var_dict = {k: v for k, v in zip(keys, var_values)}
+                task_description = task_fmt
+                for k, v in var_dict.items():
+                    task_description = task_description.replace(f"{{{{{k}}}}}", v)
+                logger.info(f"Executing test task: {task_description} with variables {var_dict}")
+                self.execute_task(task_description, var_dict)
+            metrics = self.get_metrics()
+            records.append(metrics | {"task": task_fmt})
+            self.reset_metrics()
+        # save test records
+        logger.info("Saving oracle test results...")
+        output_path = root_dir / "utils" / "experience" / "experience_rr_oracle.csv"
+        df = pd.DataFrame(records)
+        df.to_csv(output_path, index=False)
+            
+        # tasks: list[tuple[str, dict[str, str]]] = []
+        # cities = ["上海", "北京", "广州", "深圳", "杭州"]
+        # hotels = ["汉庭", "全季", "如家", "7天", "锦江之星"]
+        # for city, hotel in itertools.product(cities, hotels):
+        #     task_description = f"查询{city}的{hotel}酒店价格"
+        #     tasks.append((task_description, {"城市名": city, "酒店名": hotel}))
+        # for task_description, variables in tasks:
+        #     self.execute_task(task_description, variables)
         
 if __name__ == "__main__":
     client = OpenAI(
-        api_key=os.environ.get("OPENAI_API_KEY", "0"),
-        base_url=os.environ.get("OPENAI_BASE_URL", "http://localhost:8080/v1"),
+        api_key="0",
+        base_url="http://123.60.91.241:8000/v1",
+        # api_key=os.environ.get("OPENAI_API_KEY", "0"),
+        # base_url=os.environ.get("OPENAI_BASE_URL", "http://localhost:8080/v1"),
     )
     planner_model = ""
     experience_rr_test = ExperienceRRTest(planner_client=client, planner_model=planner_model)

@@ -43,13 +43,13 @@ class PromptTemplateSearch:
         model_path = current_dir / "experience" / "BAAI" / "bge-small-zh"
         
         # 使用您在原始代码中提供的绝对路径
-        embed_model_path_str = "./MobiAgent/utils/experience/BAAI/bge-small-zh"
+        embed_model_path_str = "./utils/experience/BAAI/bge-small-zh"
         
         # 检查路径是否存在，如果不存在，尝试使用相对路径
         if not Path(embed_model_path_str).exists():
-            print(f"警告: 绝对路径 {embed_model_path_str} 未找到。")
+            print(f"警告: 相对路径 {embed_model_path_str} 未找到。")
             embed_model_path_str = str(model_path)
-            print(f"回退到相对路径: {embed_model_path_str}")
+            print(f"回退到绝对路径: {embed_model_path_str}")
             if not Path(embed_model_path_str).exists():
                  raise FileNotFoundError(f"嵌入模型未在 {embed_model_path_str} 或原始绝对路径找到。")
 

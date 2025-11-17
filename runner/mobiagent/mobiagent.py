@@ -558,7 +558,8 @@ def task_in_app(app, old_task, task, template, device, data_dir, bbox_flag=True,
     replay_info: list[Union[str, list[MobiAgentAction]]] = []
     executing_subtask = False
     replay_idx = 0
-    if experience_rr and old_task != task and template:
+    rr_enabled = experience_rr and old_task != task and template
+    if rr_enabled:
         logging.info("Finding replayable actions")
         replay_info = experience_rr.query(task, template, enable_cross_task=True)
         for item in replay_info:
@@ -614,7 +615,7 @@ def task_in_app(app, old_task, task, template, device, data_dir, bbox_flag=True,
             decider_start_time = time.time()
             # --- 修改 API 调用 ---
             # vLLM 将会强制输出一个符合 ActionPlan 结构的 JSON 字符串
-            decider_response_str = decider_client.chat.completions.create(
+            decider_response_obj = decider_client.chat.completions.create(
                 model=decider_model,
                 messages=[
                     {
@@ -632,7 +633,9 @@ def task_in_app(app, old_task, task, template, device, data_dir, bbox_flag=True,
                     "schema": ActionPlan.model_json_schema()
                 }
                 # extra_body={"guided_json": json_schema}
-            ).choices[0].message.content
+            )
+            logging.info(f"Decider raw response: \n{decider_response_obj}")
+            decider_response_str = decider_response_obj.choices[0].message.content
 
             decider_end_time = time.time()
             logging.info(f"Decider time taken: {decider_end_time - decider_start_time} seconds")
@@ -700,10 +703,11 @@ def task_in_app(app, old_task, task, template, device, data_dir, bbox_flag=True,
                     with open(hierarchy_path, "w", encoding="utf-8") as f:
                         f.write(str(hierarchy))
             full_history.append(decider_response_str)
-            extra_info.append(None)
-            if executing_subtask:
-                subtask = replay_info[replay_idx - 1]
-                extra_info[-1] = {"subtask_desc": subtask}
+            if rr_enabled:
+                extra_info.append(None)
+                if executing_subtask:
+                    subtask = replay_info[replay_idx - 1]
+                    extra_info[-1] = {"subtask_desc": subtask}
 
         history.append(decider_response_str)
         if action == "done":
@@ -768,10 +772,11 @@ def task_in_app(app, old_task, task, template, device, data_dir, bbox_flag=True,
                     logging.info(f"Using replayed grounder bbox: {replay_grounder_bbox}")
                     x1, y1, x2, y2 = replay_grounder_bbox
 
-                if extra_info[-1] is not None:
-                    extra_info[-1]["bbox"] = [x1, y1, x2, y2]
-                else:
-                    extra_info[-1] = {"bbox": [x1, y1, x2, y2]}
+                if rr_enabled:
+                    if extra_info[-1] is not None:
+                        extra_info[-1]["bbox"] = [x1, y1, x2, y2]
+                    else:
+                        extra_info[-1] = {"bbox": [x1, y1, x2, y2]}
                 print(f"Clicking on bbox: [{x1}, {y1}, {x2}, {y2}]")
                 print(f"Image size: width={img.width}, height={img.height}")
                 print(f"Adjusted bbox: [{x1}, {y1}, {x2}, {y2}]")

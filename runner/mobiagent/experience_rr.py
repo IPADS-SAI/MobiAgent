@@ -522,32 +522,36 @@ class OracleAgent:
         return actions
 
 class ExperienceRRTest:
-    def __init__(self, planner_client: OpenAI, planner_model: str) -> None:
+    def __init__(self, planner_client: OpenAI, planner_model: str, template_path: str) -> None:
         self.experience_rr = ExperienceRR(planner_client=planner_client, planner_model=planner_model)
         self.oracle_agent = OracleAgent()
         self.reset_metrics()
+        self.search_engine = PromptTemplateSearch(template_path)
 
     def reset_metrics(self):
         self.num_tasks = 0
         self.num_success = 0
         self.num_replayed_actions = 0
         self.num_fallback_actions = 0
+        self.num_overhead_actions = 0
 
+    # (theoretical) total action = replayed + fallback
+    @property
+    def num_total_actions(self) -> int:
+        return self.num_replayed_actions + self.num_fallback_actions
+    
     def get_metrics(self) -> dict[str, int]:
         return {
             "num_tasks": self.num_tasks,
             "num_success": self.num_success,
             "num_replayed_actions": self.num_replayed_actions,
             "num_fallback_actions": self.num_fallback_actions,
+            "num_overhead_actions": self.num_overhead_actions,
+            "num_total_actions": self.num_total_actions,
         }
     
     def retrive_template(self, task_description: str) -> str:
-        current_file_path = Path(__file__).resolve()
-        current_dir = current_file_path.parent
-        template_path = current_dir.parent.parent / "utils" /"experience" / "templates-rr.json"
-
-        search_engine = PromptTemplateSearch(template_path)
-        template = search_engine.get_experience(task_description, 1)
+        template = self.search_engine.get_experience(task_description, 1)
         return template
     
     def fill_template(self, template: str, variables: dict[str, str]) -> str:
@@ -577,6 +581,56 @@ class ExperienceRRTest:
         final_desc = response_json.get("final_task_description", task_description)
         return final_desc, {}
 
+    def execute_task_acttree(self, task_description: str, variables: Optional[dict[str, str]]) -> None:
+        self.num_tasks += 1
+        template = self.retrive_template(task_description)
+        if variables:
+            final_desc = self.fill_template(template, variables)
+        else:
+            final_desc, variables = self.fill_template_planner(template, task_description)
+        
+        # hack experience_rr, no query/record
+
+        # get all low-level seq from experience_rr.low_level_table
+        mid_level_seq = MidLevelSequence.from_experience(final_desc, template)
+        all_low_level_seqs = self.experience_rr.low_level_table.get(mid_level_seq.template_hash, [])
+        
+        # get ground truth
+        gt_actions: list[MobiAgentAction] = []
+        for i, subtask_desc in enumerate(mid_level_seq.sequence):
+            subtask_gt_actions = self.oracle_agent.execute_subtask(subtask_desc, variables)
+            if i != len(mid_level_seq) - 1:
+                # exclude done action
+                subtask_gt_actions = subtask_gt_actions[:-1]
+            gt_actions.extend(subtask_gt_actions)
+        
+        # compare with all low-level seqs, find longest match
+        max_match_len = 0
+        for low_level_seq in all_low_level_seqs:
+            existing_actions = low_level_seq.sequence
+            match_len = 0
+            for i, gt_action in enumerate(gt_actions):
+                if i >= len(existing_actions):
+                    break
+                if gt_action.model_dump(exclude={'extra_info'}) == existing_actions[i].model_dump(exclude={'extra_info'}):
+                    match_len += 1
+                else:
+                    break
+            if match_len > max_match_len:
+                max_match_len = match_len
+
+        total_actions = len(gt_actions)
+        self.num_replayed_actions += max_match_len
+        self.num_fallback_actions += (total_actions - max_match_len)
+        self.num_success += 1
+
+        self.experience_rr.low_level_table[mid_level_seq.template_hash].append(
+            LowLevelSequence(
+                template_hash=mid_level_seq.template_hash,
+                sequence=gt_actions,
+            )
+        )
+
     def execute_task(self, task_description: str, variables: Optional[dict[str, str]]) -> None:
         self.num_tasks += 1
         template = self.retrive_template(task_description)
@@ -594,8 +648,11 @@ class ExperienceRRTest:
             is_replayed = subtask.actions is not None
             subtask_actions = self.execute_subtask(subtask, variables)
             if (i != len(subtasks) - 1) and (not is_replayed):
-                if is_first_execute:
-                    self.num_fallback_actions -= 1
+                if not is_first_execute:
+                    # account done action in overheads
+                    self.num_overhead_actions += 1
+                # exclude done action
+                self.num_fallback_actions -= 1
                 subtask_actions = subtask_actions[:-1]
             if not is_replayed:
                 extra_info.extend([{"subtask_desc": subtask.description}] * len(subtask_actions))
@@ -642,7 +699,7 @@ class ExperienceRRTest:
             self.num_fallback_actions += len(actions)
             return actions
         
-    def run_test_suite(self) -> None:
+    def run_test_suite(self, use_acttree: bool = False) -> pd.DataFrame:
         root_dir = Path(__file__).resolve().parent.parent.parent
         file_path = root_dir / "utils" / "experience" / "rr-oracle.json"
         with open(file_path, "r", encoding="utf-8") as f:
@@ -659,16 +716,16 @@ class ExperienceRRTest:
                 for k, v in var_dict.items():
                     task_description = task_description.replace(f"{{{{{k}}}}}", v)
                 logger.info(f"Executing test task: {task_description} with variables {var_dict}")
-                self.execute_task(task_description, var_dict)
+                if use_acttree:
+                    self.execute_task_acttree(task_description, var_dict)
+                else:
+                    self.execute_task(task_description, var_dict)
             metrics = self.get_metrics()
             records.append(metrics | {"task": task_fmt})
             self.reset_metrics()
         # save test records
-        logger.info("Saving oracle test results...")
-        output_path = root_dir / "utils" / "experience" / "experience_rr_oracle.csv"
-        df = pd.DataFrame(records)
-        df.to_csv(output_path, index=False)
-            
+        return pd.DataFrame(records)
+
         # tasks: list[tuple[str, dict[str, str]]] = []
         # cities = ["上海", "北京", "广州", "深圳", "杭州"]
         # hotels = ["汉庭", "全季", "如家", "7天", "锦江之星"]
@@ -680,16 +737,21 @@ class ExperienceRRTest:
         
 if __name__ == "__main__":
     client = OpenAI(
-        api_key="0",
-        base_url="http://123.60.91.241:8000/v1",
-        # api_key=os.environ.get("OPENAI_API_KEY", "0"),
-        # base_url=os.environ.get("OPENAI_BASE_URL", "http://localhost:8080/v1"),
+        # api_key="0",
+        # base_url="http://123.60.91.241:8000/v1",
     )
-    planner_model = ""
-    experience_rr_test = ExperienceRRTest(planner_client=client, planner_model=planner_model)
-    experience_rr_test.run_test_suite()
-    metrics = experience_rr_test.get_metrics()
-    logger.info(f"ExperienceRR Test Metrics: {metrics}")
+    planner_model = "gemini-2.5-flash"
+    experience_dir = Path(__file__).resolve().parent.parent.parent / "utils" / "experience"
+    
+    template_path = str(experience_dir / "templates-rr.json")
+    experience_rr_test = ExperienceRRTest(planner_client=client, planner_model=planner_model, template_path=template_path)
+    df = experience_rr_test.run_test_suite(use_acttree=True)
+    
+    logger.info("Test results:")
+    logger.info(df)
+    result_path = str(experience_dir / "acttree_oracle.csv")
+    df.to_csv(result_path, index=False)
+    logger.info(f"Results saved to {result_path}")
     # experience_rr = ExperienceRR(planner_client=client)
     # # test record
     # final_desc = "请你使用携程App，帮我完成\"查询上海的汉庭酒店价格\"。主要操作流程为：\n1. 在首页点击“酒店”功能入口。\n2. 选择城市为\"上海\"。\n3. 输入并选定酒店名称为\"汉庭酒店\"。\n4. 执行酒店查询。\n5. 看到酒店搜索结果列表出现后，任务结束。"

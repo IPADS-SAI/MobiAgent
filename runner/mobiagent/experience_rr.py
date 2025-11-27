@@ -1,15 +1,20 @@
 from collections import defaultdict
 import itertools
 from pathlib import Path
+import random
 from unittest import result
 from pydantic import BaseModel
-from typing import Any, Optional, Union
+from typing import Any, Optional, Sequence, Union
 from openai import OpenAI
 import json, logging, os
 import hashlib
+import cv2
+import numpy as np
+from PIL import Image
 from utils.load_md_prompt import load_prompt
 from utils.local_experience import PromptTemplateSearch
 import pandas as pd
+from skimage.metrics import structural_similarity
 
 logger = logging.getLogger(__name__)
 logger.setLevel(os.environ.get("LOG_LEVEL", "INFO").upper())
@@ -59,6 +64,19 @@ BINDING_PROMPT = """
 3. 确保按照输入顺序输出所有子任务
 4. 确保每个子任务至少对应一个动作
 """
+
+GENERATE_TEXT_PROMPT = """根据以下描述生成一个随机文本，只返回生成的文本内容，不要包含任何解释、说明或其他额外信息：
+
+{description}"""
+
+GENERATE_TEXT_WITH_HISTORY_PROMPT = """根据以下描述生成一个随机文本，只返回生成的文本内容，不要包含任何解释、说明或其他额外信息：
+
+描述：{description}
+
+重要要求：生成的值**必须**与以下值**不重复**：
+{history_text}
+
+请确保生成一个全新的、与上述值都不相同的文本。"""
 
 
 """
@@ -186,6 +204,104 @@ class ReplayInfo(BaseModel):
 class Subtask(BaseModel):
     description: str
     actions: Optional[list[MobiAgentAction]] = None
+
+
+class BBoxChangeResult(BaseModel):
+    """
+    表示一次UI元素变化检测的结果。
+    """
+
+    changed: bool
+    change_ratio: float
+    mean_intensity_delta: float
+    ssim_score: Optional[float] = None
+
+
+def _load_image(image: Union[str, Path, "np.ndarray", Image.Image]) -> "np.ndarray":
+    """
+    支持从路径或已有的numpy数组加载OpenCV图像。
+    """
+
+    if isinstance(image, np.ndarray):
+        return image
+    if isinstance(image, Image.Image):
+        rgb = image.convert("RGB")
+        return cv2.cvtColor(np.array(rgb), cv2.COLOR_RGB2BGR)
+    image_path = Path(image)
+    if not image_path.exists():
+        raise FileNotFoundError(f"Screenshot not found: {image_path}")
+    img = cv2.imread(str(image_path))
+    if img is None:
+        raise ValueError(f"Failed to read image: {image_path}")
+    return img
+
+
+def _sanitize_bbox(bbox: Sequence[int], width: int, height: int) -> tuple[int, int, int, int]:
+    if len(bbox) != 4:
+        raise ValueError(f"bbox must contain four values, got {bbox}")
+    x1, y1, x2, y2 = map(int, bbox)
+    if x1 > x2:
+        x1, x2 = x2, x1
+    if y1 > y2:
+        y1, y2 = y2, y1
+    width = max(1, int(width))
+    height = max(1, int(height))
+    x1 = max(0, min(x1, width - 1))
+    y1 = max(0, min(y1, height - 1))
+    x2 = max(x1 + 1, min(x2, width))
+    y2 = max(y1 + 1, min(y2, height))
+    return x1, y1, x2, y2
+
+
+def detect_bbox_change(
+    prev_screenshot: Union[str, Path, "np.ndarray", Image.Image],
+    curr_screenshot: Union[str, Path, "np.ndarray", Image.Image],
+    bbox: Sequence[int],
+    *,
+    ssim_threshold: float = 0.9,
+    diff_activation: float = 0.15,
+    blur_kernel_size: int = 3,
+) -> BBoxChangeResult:
+    """
+    使用 SSIM (结构相似度) 判断 bbox 区域是否发生显著变化。
+
+    Args:
+        ssim_threshold: SSIM 分数低于该值则判定变化
+        diff_activation: SSIM 差分图中视为变化的阈值，范围 0-1
+    """
+
+    prev_img = _load_image(prev_screenshot)
+    curr_img = _load_image(curr_screenshot)
+
+    if prev_img.shape[:2] != curr_img.shape[:2]:
+        raise ValueError("Screenshots must share the same resolution for comparison")
+
+    x1, y1, x2, y2 = _sanitize_bbox(bbox, prev_img.shape[1], prev_img.shape[0])
+    prev_roi = prev_img[y1:y2, x1:x2]
+    curr_roi = curr_img[y1:y2, x1:x2]
+
+    if blur_kernel_size and blur_kernel_size > 1:
+        if blur_kernel_size % 2 == 0:
+            blur_kernel_size += 1
+        prev_roi = cv2.GaussianBlur(prev_roi, (blur_kernel_size, blur_kernel_size), 0)
+        curr_roi = cv2.GaussianBlur(curr_roi, (blur_kernel_size, blur_kernel_size), 0)
+
+    prev_gray = cv2.cvtColor(prev_roi, cv2.COLOR_BGR2GRAY)
+    curr_gray = cv2.cvtColor(curr_roi, cv2.COLOR_BGR2GRAY)
+
+    ssim_score, diff_map = structural_similarity(prev_gray, curr_gray, full=True)
+    diff_map = 1.0 - diff_map  # 差异越大数值越大
+    change_mask = diff_map >= diff_activation
+    change_ratio = float(np.mean(change_mask))
+    mean_intensity_delta = float(diff_map.mean())
+    changed = ssim_score <= ssim_threshold
+
+    return BBoxChangeResult(
+        changed=changed,
+        change_ratio=change_ratio,
+        mean_intensity_delta=mean_intensity_delta,
+        ssim_score=ssim_score,
+    )
 
 def append_subtask(subtasks: list[Subtask], new_subtask: Subtask) -> list[Subtask]:
     subtasks = subtasks + [new_subtask]
@@ -464,6 +580,7 @@ class OracleAgent:
         file_path = root_dir / "utils" / "experience" / "rr-oracle.json"
         with open(file_path, "r", encoding="utf-8") as f:
             oracle_data = json.load(f)["subtasks"]
+            # oracle_data = json.load(f)["subtasks-opt"]
         self.mock_actions_table: dict[str, list[tuple[str]]] = {}
         for item in oracle_data:
             subtask = item["subtask"]
@@ -527,6 +644,8 @@ class ExperienceRRTest:
         self.oracle_agent = OracleAgent()
         self.reset_metrics()
         self.search_engine = PromptTemplateSearch(template_path)
+        # 存储每个description的历史生成值（最近20条）
+        self.generated_value_history: dict[str, list[str]] = defaultdict(list)
 
     def reset_metrics(self):
         self.num_tasks = 0
@@ -698,20 +817,121 @@ class ExperienceRRTest:
             actions = self.oracle_agent.execute_subtask(subtask.description, variables)
             self.num_fallback_actions += len(actions)
             return actions
+
+    def generate_random_value(self, description: str) -> str:
+        """根据描述生成随机文本，只返回文本内容，确保不与历史生成的值重复"""
+        # 获取该description的历史生成值（最近20条）
+        history_values = self.generated_value_history.get(description, [])
         
+        # 构建prompt，包含历史值信息
+        if history_values:
+            history_text = "\n".join([f"- {value}" for value in history_values])
+            prompt = GENERATE_TEXT_WITH_HISTORY_PROMPT.format(description=description, history_text=history_text)
+        else:
+            prompt = GENERATE_TEXT_PROMPT.format(description=description)
+        
+        response = self.experience_rr.planner_client.chat.completions.create(
+            model=self.experience_rr.planner_model,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [{"type": "text", "text": prompt}],
+                }
+            ],
+            # temperature=0.4,
+        ).choices[0].message.content
+        # 清理可能的额外格式
+        response = response.strip()
+        if response.startswith("```"):
+            # 移除可能的代码块标记
+            lines = response.split("\n")
+            if len(lines) > 1:
+                response = "\n".join(lines[1:-1]) if lines[-1].strip() == "```" else response
+        generated_value = response.strip()
+        
+        # 更新历史记录（只保留最近20条）
+        history_list = self.generated_value_history[description]
+        history_list.append(generated_value)
+        if len(history_list) > 20:
+            history_list.pop(0)
+        
+        logger.info(f"Generated value: {generated_value} for description: {description}")
+        return generated_value
+
     def run_test_suite(self, use_acttree: bool = False) -> pd.DataFrame:
         root_dir = Path(__file__).resolve().parent.parent.parent
         file_path = root_dir / "utils" / "experience" / "rr-oracle.json"
-        with open(file_path, "r", encoding="utf-8") as f:
-            task_data = json.load(f)["tasks"]
+        cache_file_path = root_dir / "utils" / "experience" / "task_dict_cache.json"
+        
+        # 检查缓存文件是否存在
+        if cache_file_path.exists():
+            logger.info(f"Loading task_dict from cache: {cache_file_path}")
+            with open(cache_file_path, "r", encoding="utf-8") as f:
+                task_dict = json.load(f)
+            # 将普通字典转换回 defaultdict(list) 格式
+            task_dict = defaultdict(list, task_dict)
+        else:
+            logger.info("Building task_dict from scratch...")
+            with open(file_path, "r", encoding="utf-8") as f:
+                task_data = json.load(f)["tasks"]
+
+            task_dict: dict[str, list[dict[str, str]]] = defaultdict(list)
+            min_tasks_per_template = 20
+            max_tasks_per_template = 100
+            for item in task_data:
+                task_fmt = item["task"]
+                if "外卖" not in task_fmt:
+                    continue
+                fixed_vars = item["variables"]["fixed"]
+                dynamic_vars = item["variables"]["dynamic"]
+                if fixed_vars == []:
+                    for _ in range(min_tasks_per_template):
+                        var_dict = {}
+                        for dynamic_var in dynamic_vars:
+                            key = dynamic_var["key"]
+                            description = dynamic_var["description"]
+                            value = self.generate_random_value(description)
+                            var_dict[key] = value
+                        task_dict[task_fmt].append(var_dict)
+                elif dynamic_vars == []:
+                    keys = [var["key"] for var in fixed_vars]
+                    values = [var["values"] for var in fixed_vars]
+                    var_dicts = []
+                    for value_combination in itertools.product(*values):
+                        var_dict = {k: v for k, v in zip(keys, value_combination)}
+                        var_dicts.append(var_dict)
+                    var_dicts = random.sample(var_dicts, min(len(var_dicts), max_tasks_per_template))
+                    task_dict[task_fmt] = var_dicts
+                else:
+                    # total task num: len(fixed_vars[0]["values"]) ** (len(dynamic_vars) + len(fixed_vars))
+                    value_num = len(fixed_vars[0]["values"])
+                    num_repeat_fixed_vars = value_num ** len(dynamic_vars)
+
+                    # num_repeat_fixed_vars * (value_num ** len(fixed_vars)) <= max_tasks_per_template
+                    num_repeat_fixed_vars = min(max_tasks_per_template // (value_num ** len(fixed_vars)), num_repeat_fixed_vars)
+                    
+                    fixed_keys = [var["key"] for var in fixed_vars]
+                    fixed_values = [var["values"] for var in fixed_vars]
+                    for fixed_value_combination in itertools.product(*fixed_values):
+                        for _ in range(num_repeat_fixed_vars):
+                            var_dict = {k: v for k, v in zip(fixed_keys, fixed_value_combination)}
+                            for dynamic_var in dynamic_vars:
+                                key = dynamic_var["key"]
+                                description = dynamic_var["description"]
+                                value = self.generate_random_value(description)
+                                var_dict[key] = value
+                            task_dict[task_fmt].append(var_dict)
+            
+            # 保存 task_dict 到缓存文件
+            logger.info(f"Saving task_dict to cache: {cache_file_path}")
+            # 将 defaultdict 转换为普通字典以便序列化
+            task_dict_serializable = dict(task_dict)
+            with open(cache_file_path, "w", encoding="utf-8") as f:
+                json.dump(task_dict_serializable, f, ensure_ascii=False)
+
         records = []
-        for item in task_data:
-            task_fmt = item["task"]
-            variables = item["variables"]
-            keys = [var["key"] for var in variables]
-            values = [var["values"] for var in variables]
-            for var_values in itertools.product(*values):
-                var_dict = {k: v for k, v in zip(keys, var_values)}
+        for task_fmt, var_dicts in task_dict.items():
+            for var_dict in var_dicts:
                 task_description = task_fmt
                 for k, v in var_dict.items():
                     task_description = task_description.replace(f"{{{{{k}}}}}", v)
@@ -723,8 +943,25 @@ class ExperienceRRTest:
             metrics = self.get_metrics()
             records.append(metrics | {"task": task_fmt})
             self.reset_metrics()
-        # save test records
         return pd.DataFrame(records)
+        # for item in task_data:
+        #     task_fmt = item["task"]
+        #     variables = item["variables"]
+        #     keys = [var["key"] for var in variables]
+        #     values = [var["values"] for var in variables]
+        #     for var_values in itertools.product(*values):
+        #         var_dict = {k: v for k, v in zip(keys, var_values)}
+        #         task_description = task_fmt
+        #         for k, v in var_dict.items():
+        #             task_description = task_description.replace(f"{{{{{k}}}}}", v)
+        #         logger.info(f"Executing test task: {task_description} with variables {var_dict}")
+        #         if use_acttree:
+        #             self.execute_task_acttree(task_description, var_dict)
+        #         else:
+        #             self.execute_task(task_description, var_dict)
+        #     metrics = self.get_metrics()
+        #     records.append(metrics | {"task": task_fmt})
+        #     self.reset_metrics()
 
         # tasks: list[tuple[str, dict[str, str]]] = []
         # cities = ["上海", "北京", "广州", "深圳", "杭州"]
@@ -736,11 +973,9 @@ class ExperienceRRTest:
         #     self.execute_task(task_description, variables)
         
 if __name__ == "__main__":
-    client = OpenAI(
-        # api_key="0",
-        # base_url="http://123.60.91.241:8000/v1",
-    )
+    client = OpenAI()
     planner_model = "gemini-2.5-flash"
+    # planner_model = ""
     experience_dir = Path(__file__).resolve().parent.parent.parent / "utils" / "experience"
     
     template_path = str(experience_dir / "templates-rr.json")
@@ -749,7 +984,7 @@ if __name__ == "__main__":
     
     logger.info("Test results:")
     logger.info(df)
-    result_path = str(experience_dir / "acttree_oracle.csv")
+    result_path = str(experience_dir / "acttree_oracle_2_1.csv")
     df.to_csv(result_path, index=False)
     logger.info(f"Results saved to {result_path}")
     # experience_rr = ExperienceRR(planner_client=client)

@@ -86,7 +86,7 @@ conda create -n MobiMind python=3.10
 conda activate MobiMind
 ```
 
-最简环境（如果您只想运行agent runner，不希望安装torch等重型依赖）：
+最简环境（如果您只想运行agent runner）：
 
 ```bash
 # 安装最简化依赖
@@ -104,12 +104,12 @@ for f in icon_detect/{train_args.yaml,model.pt,model.yaml} ; do huggingface-cli 
 # 下载embedding模型
 huggingface-cli download BAAI/bge-small-zh --local-dir ./utils/experience
 
-# Install OCR utils
-sudo apt install tesseract-ocr tesseract-ocr-chi-sim  # Optional
+# Install OCR utils (可选)
+sudo apt install tesseract-ocr tesseract-ocr-chi-sim
 
 # 如果需要使用gpu加速ocr，需要根据cuda版本，手动安装paddlepaddle-gpu
 # 详情参考 https://www.paddlepaddle.org.cn/install/quick，例如cuda 11.8版本：
-python -m pip install paddlepaddle-gpu==3.1.0 -i https://www.paddlepaddle.org.cn/packages/stable/cu118/
+python -m pip install paddlepaddle-gpu>=3.1.0 -i https://www.paddlepaddle.org.cn/packages/stable/cu118/
 
 ```
 

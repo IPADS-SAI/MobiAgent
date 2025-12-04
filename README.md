@@ -107,7 +107,7 @@ conda create -n MobiMind python=3.10
 conda activate MobiMind
 ```
 
-Simplest environment setup (in case you want to run the agent runner alone, and do not want heavy dependencies like torch to be installed):
+Simplest environment setup (in case you want to run the agent runner alone):
 
 ```bash
 # Install simplest dependencies
@@ -125,12 +125,12 @@ for f in icon_detect/{train_args.yaml,model.pt,model.yaml} ; do huggingface-cli 
 # Download embedding model utils
 huggingface-cli download BAAI/bge-small-zh --local-dir ./utils/experience/BAAI/bge-small-zh
 
-# Install OCR utils
-sudo apt install tesseract-ocr tesseract-ocr-chi-sim  # chinese optional
+# Install OCR utils (optional)
+sudo apt install tesseract-ocr tesseract-ocr-chi-sim
 
 # If you need GPU acceleration for OCR, install paddlepaddle-gpu according to your CUDA version
-# For details, refer to https://www.paddlepaddle.org.cn/install/quick, for example CUDA 11.8:
-python -m pip install paddlepaddle-gpu==3.1.0 -i https://www.paddlepaddle.org.cn/packages/stable/cu118/
+# For details, refer to https://www.paddlepaddle.org.cn/install/quick, CUDA 11.8 for example:
+python -m pip install paddlepaddle-gpu>=3.1.0 -i https://www.paddlepaddle.org.cn/packages/stable/cu118/
 
 ```
 

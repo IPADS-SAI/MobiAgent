@@ -3,3 +3,7 @@ uiautomator2
 Pillow
 ui-tars
 matplotlib
+llama-index
+llama-index-embeddings-huggingface
+hmdriver2
+mem0ai

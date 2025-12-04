@@ -142,7 +142,16 @@ python -m pip install paddlepaddle-gpu>=3.1.0 -i https://www.paddlepaddle.org.cn
 
 #### Model Deployment
 
-After downloading the `decider`, `grounder`, and `planner` models, use vLLM to deploy model inference services:
+After downloading the model checkpoints, use vLLM to deploy model inference services:
+
+**For MobiMind-Mixed Model (based on Qwen3-VL-4B)**:
+
+```bash
+vllm serve IPADS-SAI/MobiMind-Mixed-4B --port <mixed port>
+vllm serve Qwen/Qwen3-4B-Instruct --port <planner port>
+```
+
+**For Legacy MobiMind-Decider/Grounder Models**:
 
 ```bash
 vllm serve IPADS-SAI/MobiMind-Decider-7B --port <decider port>
@@ -156,7 +165,11 @@ vllm serve Qwen/Qwen3-4B-Instruct --port <planner port>
 Write the list of tasks that you would like to test in `runner/mobiagent/task.json`, then launch agent runner:
 
 ```bash
-python -m runner.mobiagent.mobiagent --service_ip <Service IP> --decider_port <Decider Service Port> --grounder_port <Grounder Service Port> --planner_port <Planner Service Port>
+python -m runner.mobiagent.mobiagent \
+  --service_ip <Service IP> \
+  --decider_port <Decider Service Port> \
+  --grounder_port <Grounder Service Port> \
+  --planner_port <Planner Service Port>
 ```
 
 Parameters:
@@ -167,6 +180,8 @@ Parameters:
 - `--planner_port`: Planner service port (default: `8002`)
 
 The runner automatically controls the device and invoke agent models to complete the pre-defined tasks.
+
+**Important**: If you deploy MobiMind-Mixed model inference, set both decider/grounder ports to `<mixed port>`.
 
 ## Detailed Sub-module Usage
 

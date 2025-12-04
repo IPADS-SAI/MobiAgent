@@ -35,12 +35,13 @@ MobiAgent: A Systematic Framework for Customizable Mobile Agents
 </div>
 
 ## 新闻
-  - `[2025.12.03]` 🔥 我们发布了基于 Qwen3-VL-4B-Instruct 的 **MobiMind-Mixed 模型**的 **4bit 权重量化版本（W4A16）**! 模型已上传至 [MobiMind-Mixed-4B-1203-AWQ](https://huggingface.co/IPADS-SAI/MobiMind-Mixed-4B-1203-AWQ)。使用 **vLLM** 部署推理服务时，请务必添加 `--dtype float16` 参数以确保正常运行。
- - `[2025.11.03]` 🧠 新增“用户画像偏好记忆”能力：基于 Mem0 的偏好存储与检索，任务完成后异步用 LLM 提取偏好（原文存储、原文检索，不做本地正则结构化），支持可选 GraphRAG（Neo4j）以增强语义关系检索；检索到的偏好原文会拼接进经验模板，个性化规划流程。详见 [此处](runner/mobiagent/README.md)。
- - `[2025.11.03]` ✅ 新增“多任务执行模块”与“用户偏好支持”。多任务的使用方式与配置说明见 [此处](runner/mobiagent/multi_task/README.md)。
- - `[2025.9.30]` 🚀 增加“本地经验检索”模块，支持基于任务描述的经验模版检索，显著提升任务规划的智能性与效率。
- - `[2025.9.29]` 🔥 开源 MobiMind 混合版本，可同时胜任 Decider 与 Grounder 任务！下载试用：[MobiMind-Mixed-7B](https://huggingface.co/IPADS-SAI/MobiMind-Mixed-7B)
- - `[2025.8.30]` 我们开源了 MobiAgent！
+- `[2025.12.03]` 🔥 我们发布了基于 Qwen3-VL-4B-Instruct 的 **MobiMind-Mixed 模型**的 **4bit 权重量化版本（W4A16）**! 模型已上传至 [MobiMind-Mixed-4B-1203-AWQ](https://huggingface.co/IPADS-SAI/MobiMind-Mixed-4B-1203-AWQ)。使用 **vLLM** 部署推理服务时，请务必添加 `--dtype float16` 参数以确保正常运行。
+- `[2025.11.03]` ✅ 新增"多任务执行模块"与"用户偏好支持"。多任务的使用方式与配置说明见 [此处](runner/mobiagent/multi_task/README.md)。
+- `[2025.11.03]` 🧠 新增"用户画像偏好记忆"能力：基于 Mem0 的偏好存储与检索，任务完成后异步用 LLM 提取偏好（原文存储、原文检索，不做本地正则结构化），支持可选 GraphRAG（Neo4j）以增强语义关系检索；检索到的偏好原文会拼接进经验模板，个性化规划流程。详见 [此处](runner/mobiagent/README.md)。
+- `[2025.10.31]` 🔥 我们更新了基于 Qwen3-VL-4B-Instruct 的 MobiMind-Mixed 模型！下载地址：[MobiMind-Mixed-4B-1031](https://huggingface.co/IPADS-SAI/MobiMind-Mixed-4B-1031)，运行数据集创建和智能体执行器脚本时请添加 `--use_qwen3` 参数。
+- `[2025.9.30]` 🚀 增加"本地经验检索"模块，支持基于任务描述的经验模版检索，显著提升任务规划的智能性与效率。
+- `[2025.9.29]` 🔥 开源 MobiMind 混合版本，可同时胜任 Decider 与 Grounder 任务！下载试用：[MobiMind-Mixed-7B](https://huggingface.co/IPADS-SAI/MobiMind-Mixed-7B)
+- `[2025.8.30]` 我们开源了 MobiAgent！
 
 ## 评测结果
 
@@ -56,6 +57,25 @@ MobiAgent: A Systematic Framework for Customizable Mobile Agents
 <p align="center">
   <img src="assets/result_agentrr.png" width="60%"/>
 </p>
+</div>
+
+## 演示
+
+**移动端应用演示**:
+<div align="center">
+  <video src="https://github.com/user-attachments/assets/3a6539ea-34a5-4073-93aa-18986ca065ff"/>
+</div>
+
+**AgentRR 演示** (左：首次任务；右：后续任务)
+<div align="center">
+  <video src="https://github.com/user-attachments/assets/ef5268a2-2e9c-489c-b8a7-828f00ec3ed1"/>
+</div>
+
+**多任务演示**
+
+任务：`帮我在小红书找一下推荐的最畅销的男士牛仔裤，然后在淘宝搜这一款裤子，把淘宝中裤子品牌、名称和价格用微信发给小赵`
+<div align="center">
+  <video src="https://github.com/user-attachments/assets/92fdf23c-71d6-4c67-b02a-c3fa13fcc0e7"/>
 </div>
 
 ## 项目结构
@@ -102,7 +122,7 @@ pip install -r requirements.txt
 for f in icon_detect/{train_args.yaml,model.pt,model.yaml} ; do huggingface-cli download microsoft/OmniParser-v2.0 "$f" --local-dir weights; done
 
 # 下载embedding模型
-huggingface-cli download BAAI/bge-small-zh --local-dir ./utils/experience
+huggingface-cli download BAAI/bge-small-zh --local-dir ./utils/experience/BAAI/bge-small-zh
 
 # Install OCR utils (可选)
 sudo apt install tesseract-ocr tesseract-ocr-chi-sim
@@ -121,7 +141,16 @@ python -m pip install paddlepaddle-gpu>=3.1.0 -i https://www.paddlepaddle.org.cn
 
 #### 模型部署
 
-下载好 `decider`、`grounder` 和 `planner` 三个模型后，使用 vLLM 部署模型推理服务：
+下载好模型检查点后，使用 vLLM 部署模型推理服务：
+
+**对于 MobiMind-Mixed 模型（基于 Qwen3-VL-4B）**:
+
+```bash
+vllm serve IPADS-SAI/MobiMind-Mixed-4B --port <mixed port>
+vllm serve Qwen/Qwen3-4B-Instruct --port <planner port>
+```
+
+**对于旧版 MobiMind-Decider/Grounder 模型**:
 
 ```bash
 vllm serve IPADS-SAI/MobiMind-Decider-7B --port <decider port>
@@ -134,7 +163,11 @@ vllm serve Qwen/Qwen3-4B-Instruct --port <planner port>
 在 `runner/mobiagent/task.json` 中写入想要测试的任务列表，然后启动Agent执行器
 
 ```bash
-python -m runner.mobiagent.mobiagent --service_ip <服务IP> --decider_port <决策服务端口> --grounder_port <定位服务端口> --planner_port <规划服务端口>
+python -m runner.mobiagent.mobiagent \
+  --service_ip <服务IP> \
+  --decider_port <Decider模型端口> \
+  --grounder_port <Grounder模型端口> \
+  --planner_port <Planner模型端口>
 ```
 
 **参数说明**
@@ -146,9 +179,31 @@ python -m runner.mobiagent.mobiagent --service_ip <服务IP> --decider_port <决
 
 执行器启动后，将会自动控制手机并调用Agent模型，完成列表中指定的任务。
 
+**重要提示**：如果您部署的是 MobiMind-Mixed 模型，请将 decider/grounder 端口都设置为 `<mixed port>`。
+
 ## 子模块详细使用方式
 
 详细使用方式见各子模块目录下的 `README.md` 文件。
 
+## 引用
+
+如果您在研究中使用了 MobiAgent，欢迎引用我们的[论文](https://arxiv.org/abs/2509.00531)：
+
+```
+@misc{zhang2025mobiagentsystematicframeworkcustomizable,
+  title={MobiAgent: A Systematic Framework for Customizable Mobile Agents}, 
+  author={Cheng Zhang and Erhu Feng and Xi Zhao and Yisheng Zhao and Wangbo Gong and Jiahui Sun and Dong Du and Zhichao Hua and Yubin Xia and Haibo Chen},
+  year={2025},
+  eprint={2509.00531},
+  archivePrefix={arXiv},
+  primaryClass={cs.MA},
+  url={https://arxiv.org/abs/2509.00531}, 
+}
+```
+
 ## 致谢
 我们感谢MobileAgent，UI-TARS，Qwen-VL等优秀的开源工作，同时，感谢国家高端智能化家用电器创新中心对项目的支持。
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=IPADS-SAI/MobiAgent&type=Date)](https://www.star-history.com/#IPADS-SAI/MobiAgent&Date)

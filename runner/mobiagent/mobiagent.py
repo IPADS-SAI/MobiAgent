@@ -225,6 +225,8 @@ class HarmonyDevice(Device):
         time.sleep(0.5)
 
     def input(self, text):
+        self.d.shell("uitest uiInput keyEvent 2072 2017")
+        self.d.press_key(2071)
         self.d.input_text(text)
 
     def swipe(self, direction, scale=0.5):

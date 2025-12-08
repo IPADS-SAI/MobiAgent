@@ -35,7 +35,10 @@ MobiAgent: A Systematic Framework for Customizable Mobile Agents
 </div>
 
 ## 新闻
-- `[2025.12.08]` 🔥 我们发布了基于 Qwen3-VL-4B-Instruct 的 **MobiMind-Mixed 模型**的 **4bit 权重量化版本（W4A16）**! 模型已上传至 [MobiMind-Mixed-4B-1208-AWQ](https://huggingface.co/IPADS-SAI/MobiMind-Reasoning-4B-1208-AWQ)。使用 **vLLM** 部署推理服务时，请务必添加 `--dtype float16` 参数以确保正常运行。
+- `[2025.12.08]` 🔥 我们发布了全新的推理模型（同时支持 Android 与鸿蒙系统）：**MobiMind-Reasoning-4B**  
+  - 原始版本：[MobiMind-Reasoning-4B-1208](https://huggingface.co/IPADS-SAI/MobiMind-Reasoning-4B-1208)  
+  - 4-bit 权重量化（W4A16）版本：[MobiMind-Reasoning-4B-1208-AWQ](https://huggingface.co/IPADS-SAI/MobiMind-Reasoning-4B-1208-AWQ)  
+  使用 **vLLM** 部署量化版本时，请添加 `--dtype float16` 参数以确保兼容性。
 - `[2025.11.03]` ✅ 新增"多任务执行模块"与"用户偏好支持"。多任务的使用方式与配置说明见 [此处](runner/mobiagent/multi_task/README.md)。
 - `[2025.11.03]` 🧠 新增"用户画像偏好记忆"能力：基于 Mem0 的偏好存储与检索，任务完成后异步用 LLM 提取偏好（原文存储、原文检索，不做本地正则结构化），支持可选 GraphRAG（Neo4j）以增强语义关系检索；检索到的偏好原文会拼接进经验模板，个性化规划流程。详见 [此处](runner/mobiagent/README.md)。
 - `[2025.10.31]` 🔥 我们更新了基于 Qwen3-VL-4B-Instruct 的 MobiMind-Mixed 模型！下载地址：[MobiMind-Mixed-4B-1031](https://huggingface.co/IPADS-SAI/MobiMind-Mixed-4B-1031)，运行数据集创建和智能体执行器脚本时请添加 `--use_qwen3` 参数。
@@ -143,7 +146,7 @@ python -m pip install paddlepaddle-gpu>=3.1.0 -i https://www.paddlepaddle.org.cn
 
 下载好模型检查点后，使用 vLLM 部署模型推理服务：
 
-**对于 MobiMind-Mixed 模型（基于 Qwen3-VL-4B）**:
+**对于 MobiMind-Mixed/Reasoning 模型（基于 Qwen3-VL-4B）**:
 
 ```bash
 vllm serve IPADS-SAI/MobiMind-Mixed-4B --port <mixed port>

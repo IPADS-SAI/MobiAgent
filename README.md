@@ -35,8 +35,7 @@ MobiAgent: A Systematic Framework for Customizable Mobile Agents
 </div>
 
 ## News
-- `[2025.12.08]` 🔥 We've released a new **4-bit weight quantized (W4A16)** version of the MobiMind-Mixed model based on Qwen3-VL-4B-Instruct!  
-  Download it at [MobiMind-Mixed-4B-1208-AWQ](https://huggingface.co/IPADS-SAI/MobiMind-Reasoning-4B-1208-AWQ).When serving with **vLLM**, please add the flag `--dtype float16` to ensure compatibility.
+- `[2025.12.08]` 🔥 We've released a new reasoning model (support both Android and HarmonyOS): MobiMind-Reasoning-4B [MobiMind-Reasoning-4B-1208](https://huggingface.co/IPADS-SAI/MobiMind-Reasoning-4B-1208), and 4-bit weight quantized (W4A16) [MobiMind-Reasoning-4B-1208-AWQ](https://huggingface.co/IPADS-SAI/MobiMind-Reasoning-4B-1208-AWQ) version. When serving with vLLM, please add the flag `--dtype float16` for quantized model to ensure compatibility.
 - `[2025.11.03]` ✅ Added multi-task execution module support and user preference support. For details about multi-task usage and configuration, see [here](runner/mobiagent/multi_task/README.md). 
 - `[2025.11.03]` 🧠 Introduced a user profile memory system: async preference extraction with LLM, raw-text preference storage and retrieval, optional GraphRAG via Neo4j. Preferences are retrieved as original texts and appended to experience prompts to personalize planning, see [here](runner/mobiagent/README.md).
 - `[2025.10.31]` 🔥We've updated the MobiMind-Mixed model based on Qwen3-VL-4B-Instruct! Download it at [MobiMind-Mixed-4B-1031](https://huggingface.co/IPADS-SAI/MobiMind-Mixed-4B-1031), and add `--use_qwen3` flag when running dataset creation and agent runner scripts.
@@ -144,7 +143,7 @@ python -m pip install paddlepaddle-gpu>=3.1.0 -i https://www.paddlepaddle.org.cn
 
 After downloading the model checkpoints, use vLLM to deploy model inference services:
 
-**For MobiMind-Mixed Model (based on Qwen3-VL-4B)**:
+**For MobiMind-Mixed/Reasoning Model (based on Qwen3-VL-4B)**:
 
 ```bash
 vllm serve IPADS-SAI/MobiMind-Mixed-4B --port <mixed port>

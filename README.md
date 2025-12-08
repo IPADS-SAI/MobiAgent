@@ -168,7 +168,8 @@ python -m runner.mobiagent.mobiagent \
   --service_ip <Service IP> \
   --decider_port <Decider Service Port> \
   --grounder_port <Grounder Service Port> \
-  --planner_port <Planner Service Port>
+  --planner_port <Planner Service Port> \
+  --device <Harmony/Android>
 ```
 
 Parameters:
@@ -177,6 +178,7 @@ Parameters:
 - `--decider_port`: Decider service port (default: `8000`)
 - `--grounder_port`: Grounder service port (default: `8001`)
 - `--planner_port`: Planner service port (default: `8002`)
+- `--device`: Device type (default: Android)
 
 The runner automatically controls the device and invoke agent models to complete the pre-defined tasks.
 

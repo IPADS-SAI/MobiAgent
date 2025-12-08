@@ -170,7 +170,8 @@ python -m runner.mobiagent.mobiagent \
   --service_ip <服务IP> \
   --decider_port <Decider模型端口> \
   --grounder_port <Grounder模型端口> \
-  --planner_port <Planner模型端口>
+  --planner_port <Planner模型端口> \
+  --device <Harmony/Android>
 ```
 
 **参数说明**
@@ -179,6 +180,7 @@ python -m runner.mobiagent.mobiagent \
 - `--decider_port`：决策服务端口（默认：`8000`）
 - `--grounder_port`：定位服务端口（默认：`8001`）
 - `--planner_port`：规划服务端口（默认：`8002`）
+- `--device`: 运行的设备（默认：Android）
 
 执行器启动后，将会自动控制手机并调用Agent模型，完成列表中指定的任务。
 

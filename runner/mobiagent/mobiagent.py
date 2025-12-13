@@ -113,7 +113,7 @@ class AndroidDevice(Device):
         if not package_name:
             raise ValueError(f"App '{app}' is not registered with a package name.")
         self.d.app_start(package_name, stop=True)
-        time.sleep(1)
+        time.sleep(3)
         if not self.d.app_wait(package_name, timeout=10):
             raise RuntimeError(f"Failed to start app '{app}' with package '{package_name}'")
     
@@ -133,10 +133,20 @@ class AndroidDevice(Device):
         self.d.click(x, y)
         time.sleep(0.5)
 
+    def clear_input(self):
+    # 按下全选（需要 Android 支持 keyevent META_CTRL_ON）
+        self.d.shell(['input', 'keyevent', 'KEYCODE_MOVE_END'])
+        self.d.shell(['input', 'keyevent', 'KEYCODE_MOVE_HOME'])
+        self.d.shell(['input', 'keyevent', 'KEYCODE_DEL'])
+
     def input(self, text):
         current_ime = self.d.current_ime()
         self.d.shell(['settings', 'put', 'secure', 'default_input_method', 'com.android.adbkeyboard/.AdbIME'])
         time.sleep(0.5)
+        # add clear text command, depending on 'ADB Keyboard'
+        self.d.shell(['am', 'broadcast', '-a', 'ADB_CLEAR_TEXT'])
+        time.sleep(0.2)
+
         charsb64 = base64.b64encode(text.encode('utf-8')).decode('utf-8')
         self.d.shell(['am', 'broadcast', '-a', 'ADB_INPUT_B64', '--es', 'msg', charsb64])
         time.sleep(0.5)
@@ -207,7 +217,7 @@ class HarmonyDevice(Device):
         if not package_name:
             raise ValueError(f"App '{app}' is not registered with a package name.")
         self.d.start_app(package_name)
-        time.sleep(1.5)
+        time.sleep(2)
 
     def app_start(self, package_name):
         # self.d.start_app(package_name)
@@ -230,7 +240,15 @@ class HarmonyDevice(Device):
         self.d.input_text(text)
 
     def swipe(self, direction, scale=0.5):
-        self.d.swipe_ext(direction, scale=scale)
+        # self.d.swipe_ext(direction, scale=scale)
+        if direction.lower() == "up":
+            self.d.swipe(0.5,0.7,0.5,0.3,speed=2000)
+        elif direction.lower() == "down":
+            self.d.swipe(0.5,0.3,0.5,0.7,speed=2000)
+        elif direction.lower() == "left":
+            self.d.swipe(0.7,0.5,0.3,0.5,speed=2000)
+        elif direction.lower() == "right":
+            self.d.swipe(0.3,0.5,0.7,0.5,speed=2000)
 
     def keyevent(self, key):
         self.d.press_key(key)
@@ -277,92 +295,75 @@ def init(service_ip, decider_port, grounder_port, planner_port, enable_user_prof
 factor = 0.5
 
 
-from pydantic import BaseModel, Field
-from typing import Literal, Dict
-from enum import Enum
 
-# 1. 使用 Enum 定义固定的动作类型
-class ActionType(str, Enum):
+def parse_json_response(response_str: str, is_guided_decoding: bool = True) -> dict:
     """
-    定义了所有可能的用户界面动作。
-    """
-    CLICK = "click"
-    INPUT = "input"
-    SWIPE = "swipe"
-    DONE = "done"
-    STOP = "stop"
-    TERMINATE = "terminate"
-    WAIT = "wait"
-
-# 2. 编写 ActionPlan 模型
-class ActionPlan(BaseModel):
-    """
-    定义一个包含推理、动作和参数的结构化计划。
-    """
-    reasoning: str = Field(
-        description="描述执行此动作的思考过程和理由。"
-    )
+    解析 JSON 响应，支持 guided decoding 和普通模式
     
-    action: ActionType = Field(
-        description="要执行的下一个动作。"
-    )
-    
-    parameters: Dict[str, str] = Field(
-        description="执行动作所需要的参数，以键值对形式提供。",
-        default_factory=dict  # 如果没有参数，默认为空字典
-    )
-
-
-# 2. 从 Pydantic 模型生成 JSON Schema
-json_schema = ActionPlan.model_json_schema()
-
-class GroundResponse(BaseModel):
-    coordinates: list[int] = Field(
-        description="点击坐标 [x, y]",
-        default=None
-    )
-    bbox: list[int] = Field(
-        description="边界框 [x1, y1, x2, y2]",
-        default=None
-    )
-    bbox_2d: list[int] = Field(description="边界框 [x1, y1, x2, y2]",
-        default=None
-    )
-
-json_schema_ground = GroundResponse.model_json_schema()
-
-
-def parse_json_response(response_str: str) -> dict:
-        """解析JSON响应
+    Args:
+        response_str: 模型返回的响应字符串
+        is_guided_decoding: 是否启用了 guided decoding（默认 True）
         
-        Args:
-            response_str: 模型返回的响应字符串
-            
-        Returns:
-            解析后的JSON对象
-        """
-        print("Parsing JSON response...")
-        try:
-            # 尝试直接解析JSON
-            return json.loads(response_str)
-        except json.JSONDecodeError:
-            # 如果直接解析失败，尝试提取JSON部分
-            try:
-                # 查找JSON代码块
-                json_match = re.search(r'```json\s*(\{.*?\})\s*```', response_str, re.DOTALL)
-                if json_match:
-                    return json.loads(json_match.group(1))
-                
-                # 查找花括号包围的JSON
-                json_match = re.search(r'(\{.*?\})', response_str, re.DOTALL)
-                if json_match:
-                    return json.loads(json_match.group(1))
-                
-                raise ValueError("无法在响应中找到有效的JSON")
-            except Exception as e:
-                logging.error(f"JSON解析失败: {e}")
-                logging.error(f"原始响应: {response_str}")
-                raise ValueError(f"无法解析JSON响应: {e}")
+    Returns:
+        解析后的 JSON 对象
+        
+    说明：
+        - 当启用 guided decoding 时，模型输出应该是纯 JSON 格式
+        - 当禁用 guided decoding 时，可能包含 markdown code block 或其他文本
+    """
+    if not response_str or not isinstance(response_str, str):
+        logging.error(f"Invalid response: {response_str}")
+        raise ValueError(f"无效的响应格式: {response_str}")
+    
+    response_str = response_str.strip()
+    
+    # 首先尝试直接解析 JSON（guided decoding 输出纯 JSON）
+    try:
+        return json.loads(response_str)
+    except json.JSONDecodeError:
+        pass
+    
+    # 如果直接解析失败，尝试提取 JSON 部分（兼容非 guided decoding 的情况）
+    try:
+        # 方法1: 提取 ```json ... ``` 代码块
+        json_match = re.search(r'```json\s*(\{[\s\S]*?\})\s*```', response_str, re.MULTILINE)
+        if json_match:
+            json_str = json_match.group(1).strip()
+            return json.loads(json_str)
+        
+        # 方法2: 提取 ``` ... ``` 代码块
+        json_match = re.search(r'```\s*(\{[\s\S]*?\})\s*```', response_str, re.MULTILINE)
+        if json_match:
+            json_str = json_match.group(1).strip()
+            return json.loads(json_str)
+        
+        # 方法3: 查找最外层的花括号包围的 JSON
+        # 这种方法需要更仔细的处理，避免误匹配嵌套结构
+        start_idx = response_str.find('{')
+        if start_idx != -1:
+            # 从第一个 { 开始，找到匹配的 }
+            brace_count = 0
+            for i in range(start_idx, len(response_str)):
+                if response_str[i] == '{':
+                    brace_count += 1
+                elif response_str[i] == '}':
+                    brace_count -= 1
+                    if brace_count == 0:
+                        json_str = response_str[start_idx:i+1]
+                        try:
+                            return json.loads(json_str)
+                        except json.JSONDecodeError:
+                            continue
+        
+        # 如果都失败了
+        logging.error(f"无法在响应中找到有效的 JSON")
+        logging.error(f"原始响应: {response_str[:200]}...")
+        raise ValueError(f"无法解析 JSON 响应，响应格式不正确")
+        
+    except json.JSONDecodeError as e:
+        logging.error(f"JSON 解析失败: {e}")
+        logging.error(f"原始响应: {response_str[:200]}...")
+        raise ValueError(f"无法解析 JSON 响应: {e}")
 
 def get_screenshot(device, device_type="Android"):
     """
@@ -470,6 +471,62 @@ def create_swipe_visualization(data_dir, image_index, direction):
         logging.warning(f"Failed to create swipe visualization: {e}")
 
 
+# 预处理 decider_response_str，增强健壮性
+def robust_json_loads(s):
+    """
+    健壮的 JSON 加载函数
+    支持 guided decoding 和普通模式的混合输出
+    """
+    if not isinstance(s, str):
+        s = str(s)
+    
+    s = s.strip()
+    
+    # 首先尝试直接解析 JSON（guided decoding 纯输出）
+    try:
+        return json.loads(s)
+    except json.JSONDecodeError:
+        pass
+    
+    # 提取 ```json ... ``` 代码块
+    codeblock = re.search(r"```json\s*([\s\S]*?)\s*```", s, re.MULTILINE)
+    if codeblock:
+        s = codeblock.group(1).strip()
+        try:
+            return json.loads(s)
+        except json.JSONDecodeError:
+            pass
+    
+    # 替换中文省略号为英文 ...
+    s = s.replace("…", "...")
+    
+    # 尝试再次解析
+    try:
+        return json.loads(s)
+    except json.JSONDecodeError:
+        pass
+    
+    # 尝试提取 JSON 对象（从第一个 { 到最后一个 }）
+    start_idx = s.find('{')
+    if start_idx != -1:
+        brace_count = 0
+        for i in range(start_idx, len(s)):
+            if s[i] == '{':
+                brace_count += 1
+            elif s[i] == '}':
+                brace_count -= 1
+                if brace_count == 0:
+                    json_str = s[start_idx:i+1]
+                    try:
+                        return json.loads(json_str)
+                    except json.JSONDecodeError:
+                        continue
+    
+    # 解析失败，记录错误
+    logging.error(f"解析 decider_response_str 失败")
+    logging.error(f"原始内容: {s[:300]}...")
+    raise ValueError(f"无法解析 JSON 响应: 响应格式不正确")
+
 def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3=True, device_type="Android"):
     history = []
     actions = []
@@ -505,59 +562,46 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3
         decider_start_time = time.time()
         # --- 修改 API 调用 ---
         # vLLM 将会强制输出一个符合 ActionPlan 结构的 JSON 字符串
-        decider_response_str = decider_client.chat.completions.create(
-            model=decider_model,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{screenshot_resize}"}},
-                        {"type": "text", "text": decider_prompt},
-                    ]
-                }
-            ],
-            temperature=0,
-            # 核心改动：指定 response_format 并传入 schema
-            response_format={
-                "type": "json_object",
-                "schema": ActionPlan.model_json_schema()
-            }
-            # extra_body={"guided_json": json_schema}
-        ).choices[0].message.content
-
-        decider_end_time = time.time()
-        logging.info(f"Decider time taken: {decider_end_time - decider_start_time} seconds")
-        logging.info(f"Decider response: \n{decider_response_str}")
-        # # 使用 ActionPlan 解析返回的 JSON 字符串
-        # parsed_plan = ActionPlan.model_validate_json(decider_response_str)
-
-        # 预处理 decider_response_str，增强健壮性
-        def robust_json_loads(s):
-            import re
-            s = s.strip()
-            # 提取 ```json ... ``` 代码块
-            codeblock = re.search(r"```json(.*?)```", s, re.DOTALL)
-            if codeblock:
-                s = codeblock.group(1).strip()
-            # 替换中文省略号为英文 ...
-            s = s.replace("…", "...")
-            # 去除多余换行
-            s = s.replace("\r", "").replace("\n", " ")
-            # 尝试解析
+        # 若响应超时或者返回结果解析失败，则进行重试
+        temperature = 0.0
+        for attempt in range(5):  # 最多重试5次
+        # while True:
             try:
-                return json.loads(s)
-            except Exception as e:
-                logging.error(f"解析 decider_response_str 失败: {e}\n原始内容: {s}")
-                raise
+                decider_start_time = time.time()
+                decider_response_str = decider_client.chat.completions.create(
+                    model=decider_model,
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{screenshot_resize}"}},
+                                {"type": "text", "text": decider_prompt},
+                            ]
+                        }
+                    ],
+                    temperature=temperature,
 
-        decider_response = robust_json_loads(decider_response_str)
-        converted_item = {
-            "reasoning": decider_response["reasoning"],
-            "function": {
-                "name": decider_response["action"],
-                "parameters": decider_response["parameters"]
-            }
-        }
+                    timeout=30,
+                    max_tokens=256,
+                ).choices[0].message.content
+                decider_end_time = time.time()
+                logging.info(f"[evaluation] Decider time taken: {decider_end_time - decider_start_time} seconds")
+                logging.info(f"Decider response: \n{decider_response_str}")
+                decider_response = robust_json_loads(decider_response_str)
+                converted_item = {
+                    "reasoning": decider_response["reasoning"],
+                    "function": {
+                        "name": decider_response["action"],
+                        "parameters": decider_response["parameters"]
+                    }
+                }
+                break  # 成功获取响应，跳出重试循环
+            except Exception as e:
+                temperature = 0.1 + attempt * 0.1  # 每次重试时增加温度，增加多样性
+                logging.error(f"Decider 调用失败: {e}, 正在重试 temperature={temperature}...")
+                time.sleep(2)
+
+        
         reacts.append(converted_item)
         action = decider_response["action"]
 
@@ -584,15 +628,15 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3
                 pass
 
         # 根据设备类型保存hierarchy
-        hierarchy = device.dump_hierarchy()
-        # print(hierarchy)
-        
         if device_type == "Android":
+            logging.info("Dumping UI hierarchy...")
+            hierarchy = device.dump_hierarchy()
             # Android设备保存为XML格式
             hierarchy_path = os.path.join(data_dir, f"{image_index}.xml")
             with open(hierarchy_path, "w", encoding="utf-8") as f:
                 f.write(hierarchy)
         else:
+            hierarchy = device.dump_hierarchy()
             # Harmony设备保存为JSON格式
             hierarchy_path = os.path.join(data_dir, f"{image_index}.json")
             try:
@@ -611,8 +655,10 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3
         
         if action == "done":
             print("Task completed.")
+            status = decider_response["parameters"]["status"]
             actions.append({
                 "type": "done",
+                "status": status,
                 "action_index": image_index
             })
             break
@@ -620,43 +666,46 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3
             reasoning = decider_response["reasoning"]
             target_element = decider_response["parameters"]["target_element"]
             grounder_prompt = (grounder_prompt_template_bbox if bbox_flag else grounder_prompt_template_no_bbox).format(reasoning=reasoning, description=target_element)
-            # logging.info(f"Grounder prompt: \n{grounder_prompt}")
-            # 记录一下grounder开始时间,s 为单位
-            grounder_start_time = time.time()
-            grounder_response_str = grounder_client.chat.completions.create(
-                model= grounder_model,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{screenshot_resize}"}},
-                            {"type": "text", "text": grounder_prompt},
-                        ]
-                    }
-                ],
-                temperature=0,
 
-            ).choices[0].message.content
-                # response_format={
-                #     "type": "json_object",
-                #     "schema": json_schema_ground
-                # }
-            grounder_end_time = time.time()
-            logging.info(f"Grounder time taken: {grounder_end_time - grounder_start_time} seconds")
-            logging.info(f"Grounder response: \n{grounder_response_str}")
-            # grounder_response = json.loads(grounder_response_str)
-            grounder_response = parse_json_response(grounder_response_str)
+            # 重试5次获取grounder响应，同时调整temperature
+            temperature = 0.0
+            for attempt in range(5):
+                try:
+                    grounder_start_time = time.time()
+                    grounder_response_str = grounder_client.chat.completions.create(
+                        model=grounder_model,
+                        messages=[
+                            {
+                                "role": "user",
+                                "content": [
+                                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{screenshot_resize}"}},
+                                    {"type": "text", "text": grounder_prompt},
+                                ]
+                            }
+                        ],
+                        temperature=temperature,
+                        timeout=30,
+                        max_tokens=128,
+                    ).choices[0].message.content
+                    grounder_end_time = time.time()
+                    logging.info(f"[evaluation] Grounder time taken: {grounder_end_time - grounder_start_time} seconds")
+                    logging.info(f"Grounder response: \n{grounder_response_str}")
+                    # grounder_response = json.loads(grounder_response_str)
+                    grounder_response = parse_json_response(grounder_response_str)
+                    break  # 成功获取响应，跳出重试循环
+                except Exception as e:
+                    temperature = 0.1 + attempt * 0.1  # 每次重试时增加温度，增加多样性
+                    logging.error(f"Grounder 调用失败: {e}, 正在重试 temperature={temperature}...")
+                    time.sleep(2)
+
             if(bbox_flag):
-                bbox = grounder_response["bbox"] if "bbox" in grounder_response else None
-                bbox_2d = grounder_response["bbox_2d"] if "bbox_2d" in grounder_response else None
-                bbox_2d_ = grounder_response.get("bbox-2d", None)
-                bbox_2D = grounder_response.get("bbox_2D", None)
-                if bbox_2D is not None:
-                    bbox = bbox_2D
-                if bbox_2d_ is not None:
-                    bbox = bbox_2d_
-                if bbox_2d is not None:
-                    bbox = bbox_2d
+                # 直接尝试获取含有bbox的字段，而不要求完全匹配
+                bbox = None
+                for key in grounder_response:
+                    if key.lower() in ["bbox", "bbox_2d", "bbox-2d", "bbox_2D", "bbox2d", "bbox_2009"]:
+                        bbox = grounder_response[key]
+                        break
+                
 
                 # 如果使用 Qwen3 模型，进行坐标转换
                 if use_qwen3:
@@ -735,13 +784,15 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3
                 "text": text,
                 "action_index": image_index
             })
+            
             history.append(decider_response_str)
 
         elif action == "swipe":
             direction = decider_response["parameters"]["direction"]
+            direction = direction.upper()
 
             if direction == "DOWN":
-                device.swipe(direction.lower(), 0.6)
+                device.swipe(direction.lower(), 0.4)
                 # record the swipe as an action (index only)
                 actions.append({
                     "type": "swipe",
@@ -752,6 +803,7 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3
                     "direction": direction.lower(),
                     "action_index": image_index
                 })
+                
                 history.append(decider_response_str)
                 
                 # 为向下滑动创建可视化
@@ -759,7 +811,7 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3
                 continue
 
             if direction in ["UP", "LEFT", "RIGHT"]:
-                device.swipe(direction.lower(), 0.6)
+                device.swipe(direction.lower(), 0.4)
                 actions.append({
                     "type": "swipe",
                     "press_position_x": None,
@@ -769,6 +821,7 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3
                     "direction": direction.lower(),
                     "action_index": image_index
                 })
+                
                 history.append(decider_response_str)
                 
                 # 为滑动创建可视化
@@ -833,7 +886,7 @@ def parse_planner_response(response_str: str):
         logging.error(f"解析 JSON 失败: {e}\n内容为:\n{json_str}")
         return None
 
-def get_app_package_name(task_description, use_graphrag=False, device_type="Android"):
+def get_app_package_name(task_description, use_graphrag=False, device_type="Android", use_experience=False):
     """单阶段：本地检索经验，调用模型完成应用选择和任务描述生成。"""
     current_file_path = Path(__file__).resolve()
     current_dir = current_file_path.parent
@@ -887,6 +940,42 @@ def get_app_package_name(task_description, use_graphrag=False, device_type="Andr
     package_name = response_json.get("package_name")
     final_desc = response_json.get("final_task_description", task_description)
     return app_name, package_name, final_desc
+
+
+def execute_single_task(task_description, device, data_dir, use_experience, use_graphrag, current_device_type, use_qwen3_model):
+    """
+    执行单个任务的通用函数
+    
+    Args:
+        task_description: 任务描述
+        device: 设备对象
+        data_dir: 数据保存目录
+        use_experience: 是否使用经验改写任务
+        use_graphrag: 是否使用GraphRAG
+        current_device_type: 设备类型
+        use_qwen3_model: 是否使用Qwen3模型
+    """
+    # 调用 planner 获取应用名称和包名
+    logging.info(f"Calling planner to get app_name and package_name")
+    app_name, package_name, planner_task_description = get_app_package_name(
+        task_description, use_graphrag=use_graphrag, device_type=current_device_type, use_experience=use_experience
+    )
+
+    # 根据 use_experience 参数决定是否使用 planner 改写的任务描述
+    if use_experience:
+        logging.info(f"Using experience: using planner-rewritten task description")
+        new_task_description = planner_task_description
+        logging.info(f"New task description: {new_task_description}")
+    else:
+        logging.info(f"Not using experience: using original task description")
+        new_task_description = task_description
+
+    logging.info(f"Starting task in app: {app_name} (package: {package_name})")
+    device.app_start(package_name)
+    task_in_app(app_name, task_description, new_task_description, device, data_dir, True, use_qwen3_model, current_device_type)
+    logging.info(f"Stopping app: {app_name} (package: {package_name})")
+    device.app_stop(package_name)
+
 
 # for testing purposes
 if __name__ == "__main__":
@@ -963,36 +1052,38 @@ if __name__ == "__main__":
     
     # print(task_list)
 
-    for task in task_list:
-        existing_dirs = [d for d in os.listdir(data_base_dir) if os.path.isdir(os.path.join(data_base_dir, d)) and d.isdigit()]
-        if existing_dirs:
-            data_index = max(int(d) for d in existing_dirs) + 1
-        else:
-            data_index = 1
-        data_dir = os.path.join(data_base_dir, str(data_index))
-        os.makedirs(data_dir)
-
-        task_description = task
+    for task_item in task_list:
+        # 支持两种格式：
+        # 1. 简单字符串格式: ["task1", "task2", ...]
+        # 2. 结构化格式: {"app": "app_name", "type": "type_name", "tasks": ["task1", "task2", ...]}
         
-        # 调用 planner 获取应用名称和包名
-        logging.info(f"Calling planner to get app_name and package_name")
-        app_name, package_name, planner_task_description = get_app_package_name(task_description, use_graphrag=use_graphrag, device_type=current_device_type)
-        logging.info(f"Planner result - App: {app_name}, Package: {package_name}")
-
-        # 根据 use_experience 参数决定是否使用 planner 改写的任务描述
-        if use_experience == True:
-            logging.info(f"Using experience: using planner-rewritten task description")
-            new_task_description = planner_task_description
-            logging.info(f"New task description: {new_task_description}")
-        else:
-            logging.info(f"Not using experience: using original task description")
-            new_task_description = task_description
+        if isinstance(task_item, dict):
+            # 新格式：结构化任务
+            app_name_from_file = task_item.get("app")
+            task_type = task_item.get("type", "default")
+            tasks_list = task_item.get("tasks", [])
             
-        logging.info(f"Starting task in app: {app_name} (package: {package_name})")
-        device.app_start(package_name)
-        task_in_app(app_name, task_description, new_task_description, device, data_dir, True, use_qwen3_model, current_device_type)
-        logging.info(f"Stopping app: {app_name} (package: {package_name})")
-        device.app_stop(package_name)
+            # 遍历该应用和类型下的所有任务
+            for task_index, task_description in enumerate(tasks_list, 1):
+                # 创建 data_dir: data_base_dir/app/type/task_index
+                data_dir = os.path.join(data_base_dir, app_name_from_file, task_type, str(task_index))
+                os.makedirs(data_dir, exist_ok=True)
+                logging.info(f"Processing task {task_index} of {app_name_from_file}/{task_type}: {task_description}")
+                
+                execute_single_task(task_description, device, data_dir, use_experience, use_graphrag, current_device_type, use_qwen3_model)
+        else:
+            # 旧格式：简单任务列表
+            existing_dirs = [d for d in os.listdir(data_base_dir) if os.path.isdir(os.path.join(data_base_dir, d)) and d.isdigit()]
+            if existing_dirs:
+                data_index = max(int(d) for d in existing_dirs) + 1
+            else:
+                data_index = 1
+            data_dir = os.path.join(data_base_dir, str(data_index))
+            os.makedirs(data_dir, exist_ok=True)
+            task_description = task_item
+            
+            execute_single_task(task_description, device, data_dir, use_experience, use_graphrag, current_device_type, use_qwen3_model)
+    
     # 等待所有偏好提取任务完成
     if preference_extractor and hasattr(preference_extractor, 'executor'):
         logging.info("Waiting for all preference extraction tasks to complete...")

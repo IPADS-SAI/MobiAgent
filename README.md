@@ -73,7 +73,7 @@ MobiAgent: A Systematic Framework for Customizable Mobile Agents
 
 **Multi Task Demo**
 
-task: `帮我在小红书找一下推荐的最畅销的男士牛仔裤，然后在淘宝搜这一款裤子，把淘宝中裤子品牌、名称和价格用微信发给小赵`
+task: `在小红书查找2025年性价比最高的单反相机推荐，然后在淘宝搜索该相机，并将淘宝中的相机品牌、名称和价格通过微信发送给小赵。`
 <div align="center">
   <video src="https://github.com/user-attachments/assets/92fdf23c-71d6-4c67-b02a-c3fa13fcc0e7"/>
 </div>

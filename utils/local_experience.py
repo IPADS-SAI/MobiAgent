@@ -176,7 +176,8 @@ class PromptTemplateSearch:
         
         # 确保 result 是字符串
         result_str = str(result)
-        print(f"提取 full_experience 字段内容: {result_str}")
+        # For debug
+        # print(f"提取 full_experience 字段内容: {result_str}")
         # 方法 1: 使用正则表达式查找单任务格式的 JSON 对象
         single_task_pattern = r'\{"name":\s*"[^"]*",\s*"description":\s*"[^"]*",\s*"full_experience":\s*"(?:[^"\\]|\\.)*"\}'
         single_matches = re.findall(single_task_pattern, result_str)

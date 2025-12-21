@@ -69,6 +69,10 @@ class Device(ABC):
         pass
 
     @abstractmethod
+    def swipe_with_coords(self, start_x, start_y, end_x, end_y):
+        pass
+
+    @abstractmethod
     def keyevent(self, key):
         pass
 
@@ -155,7 +159,19 @@ class AndroidDevice(Device):
 
     def swipe(self, direction, scale=0.5):
         # self.d.swipe_ext(direction, scale)
-        self.d.swipe_ext(direction=direction, scale=scale)
+        # self.d.swipe_ext(direction=direction, scale=scale)
+        if direction.lower() == "up":
+            self.d.swipe(0.5,0.7,0.5,0.3)
+        elif direction.lower() == "down":
+            self.d.swipe(0.5,0.3,0.5,0.7)
+        elif direction.lower() == "left":
+            self.d.swipe(0.7,0.5,0.3,0.5)
+        elif direction.lower() == "right":
+            self.d.swipe(0.3,0.5,0.7,0.5)
+
+    def swipe_with_coords(self, start_x, start_y, end_x, end_y):
+        """Swipe from (start_x, start_y) to (end_x, end_y)"""
+        self.d.swipe(start_x, start_y, end_x, end_y)
 
     def keyevent(self, key):
         self.d.keyevent(key)
@@ -250,6 +266,12 @@ class HarmonyDevice(Device):
         elif direction.lower() == "right":
             self.d.swipe(0.3,0.5,0.7,0.5,speed=2000)
 
+    def swipe_with_coords(self, start_x, start_y, end_x, end_y):
+        """Swipe from (start_x, start_y) to (end_x, end_y)"""
+        # Convert absolute coordinates to normalized coordinates if needed
+        # For Harmony Device, swipe expects coordinates in format (x, y, x, y)
+        self.d.swipe(start_x, start_y, end_x, end_y, speed=2000)
+
     def keyevent(self, key):
         self.d.press_key(key)
 
@@ -263,6 +285,7 @@ planner_client = None
 planner_model = ""
 decider_model = ""
 grounder_model = ""
+
 
 # 全局偏好提取器
 preference_extractor = None
@@ -293,8 +316,6 @@ def init(service_ip, decider_port, grounder_port, planner_port, enable_user_prof
     
 # 截图缩放比例
 factor = 0.5
-
-
 
 def parse_json_response(response_str: str, is_guided_decoding: bool = True) -> dict:
     """
@@ -419,7 +440,7 @@ def convert_qwen3_coordinates_to_absolute(bbox_or_coords, img_width, img_height,
         y = int(y / 1000 * img_height)
         return [x, y]
 
-def create_swipe_visualization(data_dir, image_index, direction):
+def create_swipe_visualization(data_dir, image_index, direction, start_x=None, start_y=None, end_x=None, end_y=None):
     """为滑动动作创建可视化图像"""
     try:
         # 读取原始截图
@@ -433,24 +454,29 @@ def create_swipe_visualization(data_dir, image_index, direction):
             
         height, width = img.shape[:2]
         
-        # 根据方向计算箭头起点和终点
-        center_x, center_y = width // 2, height // 2
-        arrow_length = min(width, height) // 4
-        
-        if direction == "up":
-            start_point = (center_x, center_y + arrow_length // 2)
-            end_point = (center_x, center_y - arrow_length // 2)
-        elif direction == "down":
-            start_point = (center_x, center_y - arrow_length // 2)
-            end_point = (center_x, center_y + arrow_length // 2)
-        elif direction == "left":
-            start_point = (center_x + arrow_length // 2, center_y)
-            end_point = (center_x - arrow_length // 2, center_y)
-        elif direction == "right":
-            start_point = (center_x - arrow_length // 2, center_y)
-            end_point = (center_x + arrow_length // 2, center_y)
+        # 如果提供了具体坐标，使用具体坐标；否则根据方向计算
+        if start_x is not None and start_y is not None and end_x is not None and end_y is not None:
+            start_point = (int(start_x), int(start_y))
+            end_point = (int(end_x), int(end_y))
         else:
-            return
+            # 根据方向计算箭头起点和终点
+            center_x, center_y = width // 2, height // 2
+            arrow_length = min(width, height) // 4
+            
+            if direction == "up":
+                start_point = (center_x, center_y + arrow_length // 2)
+                end_point = (center_x, center_y - arrow_length // 2)
+            elif direction == "down":
+                start_point = (center_x, center_y - arrow_length // 2)
+                end_point = (center_x, center_y + arrow_length // 2)
+            elif direction == "left":
+                start_point = (center_x + arrow_length // 2, center_y)
+                end_point = (center_x - arrow_length // 2, center_y)
+            elif direction == "right":
+                start_point = (center_x - arrow_length // 2, center_y)
+                end_point = (center_x + arrow_length // 2, center_y)
+            else:
+                return
             
         # 绘制箭头
         cv2.arrowedLine(img, start_point, end_point, (255, 0, 0), 8, tipLength=0.3)  # 蓝色箭头
@@ -527,16 +553,21 @@ def robust_json_loads(s):
     logging.error(f"原始内容: {s[:300]}...")
     raise ValueError(f"无法解析 JSON 响应: 响应格式不正确")
 
-def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3=True, device_type="Android"):
+def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3=True, device_type="Android", use_e2e=False):
     history = []
     actions = []
     reacts = []
+    if use_e2e:
+        # 在e2e模式下使用e2e_qwen3.md，否则使用decider_v2.md
+        decider_prompt_template = load_prompt("e2e_qwen3.md")
+        logging.info("Using e2e mode with e2e_qwen3.md")
 
-    if use_qwen3:
+    elif use_qwen3:
         grounder_prompt_template_bbox = load_prompt("grounder_qwen3_bbox.md")
         grounder_prompt_template_no_bbox = load_prompt("grounder_qwen3_coordinates.md")
-        # decider_prompt_template = load_prompt("decider_qwen3.md")
+        
         decider_prompt_template = load_prompt("decider_v2.md")
+
     else:
         grounder_prompt_template_bbox = load_prompt("grounder_bbox.md")
         grounder_prompt_template_no_bbox = load_prompt("grounder_coordinates.md")
@@ -557,9 +588,8 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3
             task=task,
             history=history_str
         )
-        logging.info(f"Decider prompt: \n{decider_prompt}")
+        # logging.info(f"Decider prompt: \n{decider_prompt}")
 
-        decider_start_time = time.time()
         # --- 修改 API 调用 ---
         # vLLM 将会强制输出一个符合 ActionPlan 结构的 JSON 字符串
         # 若响应超时或者返回结果解析失败，则进行重试
@@ -628,15 +658,24 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3
                 pass
 
         # 根据设备类型保存hierarchy
+        
         if device_type == "Android":
             logging.info("Dumping UI hierarchy...")
-            hierarchy = device.dump_hierarchy()
+            try:
+                hierarchy = device.dump_hierarchy()
+            except Exception as e:
+                logging.error(f"Failed to dump UI hierarchy: {e}")
+                hierarchy = "<hierarchy_dump_failed/>"
             # Android设备保存为XML格式
             hierarchy_path = os.path.join(data_dir, f"{image_index}.xml")
             with open(hierarchy_path, "w", encoding="utf-8") as f:
                 f.write(hierarchy)
         else:
-            hierarchy = device.dump_hierarchy()
+            try:
+                hierarchy = device.dump_hierarchy()
+            except Exception as e:
+                logging.error(f"Failed to dump UI hierarchy: {e}")
+                hierarchy = {}
             # Harmony设备保存为JSON格式
             hierarchy_path = os.path.join(data_dir, f"{image_index}.json")
             try:
@@ -665,56 +704,79 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3
         if action == "click":
             reasoning = decider_response["reasoning"]
             target_element = decider_response["parameters"]["target_element"]
-            grounder_prompt = (grounder_prompt_template_bbox if bbox_flag else grounder_prompt_template_no_bbox).format(reasoning=reasoning, description=target_element)
-
-            # 重试5次获取grounder响应，同时调整temperature
-            temperature = 0.0
-            for attempt in range(5):
-                try:
-                    grounder_start_time = time.time()
-                    grounder_response_str = grounder_client.chat.completions.create(
-                        model=grounder_model,
-                        messages=[
-                            {
-                                "role": "user",
-                                "content": [
-                                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{screenshot_resize}"}},
-                                    {"type": "text", "text": grounder_prompt},
-                                ]
-                            }
-                        ],
-                        temperature=temperature,
-                        timeout=30,
-                        max_tokens=128,
-                    ).choices[0].message.content
-                    grounder_end_time = time.time()
-                    logging.info(f"[evaluation] Grounder time taken: {grounder_end_time - grounder_start_time} seconds")
-                    logging.info(f"Grounder response: \n{grounder_response_str}")
-                    # grounder_response = json.loads(grounder_response_str)
-                    grounder_response = parse_json_response(grounder_response_str)
-                    break  # 成功获取响应，跳出重试循环
-                except Exception as e:
-                    temperature = 0.1 + attempt * 0.1  # 每次重试时增加温度，增加多样性
-                    logging.error(f"Grounder 调用失败: {e}, 正在重试 temperature={temperature}...")
-                    time.sleep(2)
-
-            if(bbox_flag):
-                # 直接尝试获取含有bbox的字段，而不要求完全匹配
-                bbox = None
-                for key in grounder_response:
-                    if key.lower() in ["bbox", "bbox_2d", "bbox-2d", "bbox_2D", "bbox2d", "bbox_2009"]:
-                        bbox = grounder_response[key]
-                        break
+            
+            # e2e模式：直接从decider获取bbox，不调用grounder
+            if use_e2e:
+                bbox = decider_response["parameters"]["bbox"]
+                if bbox is None:
+                    logging.error("E2E mode: bbox not found in decider response")
+                    raise ValueError("E2E mode requires bbox in decider response")
                 
-
-                # 如果使用 Qwen3 模型，进行坐标转换
+                logging.info(f"E2E mode: Using bbox directly from decider: {bbox}")
+                # 使用 Qwen3 模型进行坐标转换
                 if use_qwen3:
                     bbox = convert_qwen3_coordinates_to_absolute(bbox, img.width, img.height, is_bbox=True)
-                    x1, y1, x2, y2 = bbox
-                else:
-                    x1, y1, x2, y2 = [int(coord/factor) for coord in bbox]
+                x1, y1, x2, y2 = bbox
+            else:
+                # 非e2e模式：调用grounder获取bbox
+                grounder_prompt = (grounder_prompt_template_bbox if bbox_flag else grounder_prompt_template_no_bbox).format(reasoning=reasoning, description=target_element)
 
-                
+                # 重试5次获取grounder响应，同时调整temperature
+                temperature = 0.0
+                for attempt in range(5):
+                    try:
+                        grounder_start_time = time.time()
+                        grounder_response_str = grounder_client.chat.completions.create(
+                            model=grounder_model,
+                            messages=[
+                                {
+                                    "role": "user",
+                                    "content": [
+                                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{screenshot_resize}"}},
+                                        {"type": "text", "text": grounder_prompt},
+                                    ]
+                                }
+                            ],
+                            temperature=temperature,
+                            timeout=30,
+                            max_tokens=128,
+                        ).choices[0].message.content
+                        grounder_end_time = time.time()
+                        logging.info(f"[evaluation] Grounder time taken: {grounder_end_time - grounder_start_time} seconds")
+                        logging.info(f"Grounder response: \n{grounder_response_str}")
+                        grounder_response = parse_json_response(grounder_response_str)
+                        break  # 成功获取响应，跳出重试循环
+                    except Exception as e:
+                        temperature = 0.1 + attempt * 0.1  # 每次重试时增加温度，增加多样性
+                        logging.error(f"Grounder 调用失败: {e}, 正在重试 temperature={temperature}...")
+                        time.sleep(2)
+
+                if(bbox_flag):
+                    # 直接尝试获取含有bbox的字段，而不要求完全匹配
+                    bbox = None
+                    for key in grounder_response:
+                        if key.lower() in ["bbox", "bbox_2d", "bbox-2d", "bbox_2D", "bbox2d", "bbox_2009"]:
+                            bbox = grounder_response[key]
+                            break
+                    
+
+                    # 如果使用 Qwen3 模型，进行坐标转换
+                    if use_qwen3:
+                        bbox = convert_qwen3_coordinates_to_absolute(bbox, img.width, img.height, is_bbox=True)
+                        x1, y1, x2, y2 = bbox
+                    else:
+                        x1, y1, x2, y2 = [int(coord/factor) for coord in bbox]
+
+                else:
+                    coordinates = grounder_response["coordinates"]
+                    if use_qwen3:
+                        coordinates = convert_qwen3_coordinates_to_absolute(coordinates, img.width, img.height, is_bbox=False)
+                        x, y = coordinates
+                    else:
+                        x, y = [int(coord / factor) for coord in coordinates]
+            
+            # 通用的click处理逻辑（e2e和非e2e都使用）
+            if bbox_flag or use_e2e:
                 print(f"Clicking on bbox: [{x1}, {y1}, {x2}, {y2}]")
                 print(f"Image size: width={img.width}, height={img.height}")
                 print(f"Adjusted bbox: [{x1}, {y1}, {x2}, {y2}]")
@@ -758,14 +820,8 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3
                     # 保存带点击点的图像
                     click_point_path = os.path.join(data_dir, f"{image_index}_click_point.jpg")
                     cv2.imwrite(click_point_path, cv2image)
-
             else:
-                coordinates = grounder_response["coordinates"]
-                if use_qwen3:
-                    coordinates = convert_qwen3_coordinates_to_absolute(coordinates, img.width, img.height, is_bbox=False)
-                    x, y = coordinates
-                else:
-                    x, y = [int(coord / factor) for coord in coordinates]
+                # 非bbox_flag的情况（使用coordinates）
                 device.click(x, y)
                 actions.append({
                     "type": "click",
@@ -790,45 +846,81 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3
         elif action == "swipe":
             direction = decider_response["parameters"]["direction"]
             direction = direction.upper()
+            
+            # e2e模式：尝试获取起始和结束坐标
+            if use_e2e:
+                start_coords = decider_response["parameters"].get("start_coords")
+                end_coords = decider_response["parameters"].get("end_coords")
+                
+                if start_coords and end_coords:
+                    # 进行坐标转换（如果需要）
+                    if use_qwen3:
+                        start_coords = convert_qwen3_coordinates_to_absolute(start_coords, img.width, img.height, is_bbox=False)
+                        end_coords = convert_qwen3_coordinates_to_absolute(end_coords, img.width, img.height, is_bbox=False)
+                    
+                    start_x, start_y = start_coords
+                    end_x, end_y = end_coords
+                    
+                    logging.info(f"E2E mode: swipe from [{start_x}, {start_y}] to [{end_x}, {end_y}]")
+                    device.swipe_with_coords(start_x, start_y, end_x, end_y)
+                    
+                    actions.append({
+                        "type": "swipe",
+                        "press_position_x": start_x,
+                        "press_position_y": start_y,
+                        "release_position_x": end_x,
+                        "release_position_y": end_y,
+                        "direction": direction.lower(),
+                        "action_index": image_index
+                    })
+                    history.append(decider_response_str)
+                    create_swipe_visualization(data_dir, image_index, direction.lower(), start_x, start_y, end_x, end_y)
+                else:
+                    logging.warning("E2E mode: start_coords or end_coords not found, falling back to direction-based swipe")
+                    # 回退到方向based swipe
+                    if direction == "DOWN":
+                        device.swipe(direction.lower(), 0.4)
+                        press_position_x = img.width * 0.3
+                        press_position_y = img.height * 0.5
+                        release_position_x = img.width * 0.7
+                        release_position_y = img.height * 0.5
+                    elif direction in ["UP", "LEFT", "RIGHT"]:
+                        device.swipe(direction.lower(), 0.4)
 
-            if direction == "DOWN":
-                device.swipe(direction.lower(), 0.4)
-                # record the swipe as an action (index only)
-                actions.append({
-                    "type": "swipe",
-                    "press_position_x": None,
-                    "press_position_y": None,
-                    "release_position_x": None,
-                    "release_position_y": None,
-                    "direction": direction.lower(),
-                    "action_index": image_index
-                })
-                
-                history.append(decider_response_str)
-                
-                # 为向下滑动创建可视化
-                create_swipe_visualization(data_dir, image_index, direction.lower())
-                continue
-
-            if direction in ["UP", "LEFT", "RIGHT"]:
-                device.swipe(direction.lower(), 0.4)
-                actions.append({
-                    "type": "swipe",
-                    "press_position_x": None,
-                    "press_position_y": None,
-                    "release_position_x": None,
-                    "release_position_y": None,
-                    "direction": direction.lower(),
-                    "action_index": image_index
-                })
-                
-                history.append(decider_response_str)
-                
-                # 为滑动创建可视化
-                create_swipe_visualization(data_dir, image_index, direction.lower())
-
+                    else:
+                        raise ValueError(f"Unknown swipe direction: {direction}")
+                    
+                    actions.append({
+                        "type": "swipe",
+                        "press_position_x": None,
+                        "press_position_y": None,
+                        "release_position_x": None,
+                        "release_position_y": None,
+                        "direction": direction.lower(),
+                        "action_index": image_index
+                    })
+                    history.append(decider_response_str)
+                    create_swipe_visualization(data_dir, image_index, direction.lower())
             else:
-                raise ValueError(f"Unknown swipe direction: {direction}")
+                if direction in ["DOWN", "UP", "LEFT", "RIGHT"]:
+                    device.swipe(direction.lower(), 0.4)
+                    actions.append({
+                        "type": "swipe",
+                        "press_position_x": None,
+                        "press_position_y": None,
+                        "release_position_x": None,
+                        "release_position_y": None,
+                        "direction": direction.lower(),
+                        "action_index": image_index
+                    })
+                    
+                    history.append(decider_response_str)
+                    
+                    # 为滑动创建可视化
+                    create_swipe_visualization(data_dir, image_index, direction.lower())
+
+                else:
+                    raise ValueError(f"Unknown swipe direction: {direction}")
         elif action == "wait":
             print("Waiting for a while...")
             actions.append({
@@ -942,7 +1034,7 @@ def get_app_package_name(task_description, use_graphrag=False, device_type="Andr
     return app_name, package_name, final_desc
 
 
-def execute_single_task(task_description, device, data_dir, use_experience, use_graphrag, current_device_type, use_qwen3_model):
+def execute_single_task(task_description, device, data_dir, use_experience, use_graphrag, current_device_type, use_qwen3_model, use_e2e=False):
     """
     执行单个任务的通用函数
     
@@ -954,6 +1046,7 @@ def execute_single_task(task_description, device, data_dir, use_experience, use_
         use_graphrag: 是否使用GraphRAG
         current_device_type: 设备类型
         use_qwen3_model: 是否使用Qwen3模型
+        use_e2e: 是否使用e2e模式（skip grounder调用）
     """
     # 调用 planner 获取应用名称和包名
     logging.info(f"Calling planner to get app_name and package_name")
@@ -972,7 +1065,7 @@ def execute_single_task(task_description, device, data_dir, use_experience, use_
 
     logging.info(f"Starting task in app: {app_name} (package: {package_name})")
     device.app_start(package_name)
-    task_in_app(app_name, task_description, new_task_description, device, data_dir, True, use_qwen3_model, current_device_type)
+    task_in_app(app_name, task_description, new_task_description, device, data_dir, True, use_qwen3_model, current_device_type, use_e2e)
     logging.info(f"Stopping app: {app_name} (package: {package_name})")
     device.app_stop(package_name)
 
@@ -993,6 +1086,7 @@ if __name__ == "__main__":
     parser.add_argument("--use_experience", action="store_true", default=False, help="Whether to use experience (use planner for task rewriting) (default: False)")
     parser.add_argument("--data_dir", type=str, default=None, help="Directory to save data (default: ./data relative to script location)")
     parser.add_argument("--task_file", type=str, default=None, help="Path to task.json file (default: ./task.json relative to script location)")
+    parser.add_argument("--e2e", action="store_true", default=False, help="Enable e2e mode: use e2e_qwen3.md as decider prompt and return coordinates directly from decider (default: False)")
     args = parser.parse_args()
 
     # 使用命令行参数初始化
@@ -1029,6 +1123,7 @@ if __name__ == "__main__":
     logging.info(f"Use Qwen3 model: {use_qwen3_model}")
     logging.info(f"Use experience (planner task rewriting): {use_experience}")
     logging.info(f"Device type: {current_device_type}")
+    logging.info(f"Use E2E mode: {args.e2e}")
     # 配置数据保存目录
     if args.data_dir:
         data_base_dir = args.data_dir
@@ -1070,7 +1165,7 @@ if __name__ == "__main__":
                 os.makedirs(data_dir, exist_ok=True)
                 logging.info(f"Processing task {task_index} of {app_name_from_file}/{task_type}: {task_description}")
                 
-                execute_single_task(task_description, device, data_dir, use_experience, use_graphrag, current_device_type, use_qwen3_model)
+                execute_single_task(task_description, device, data_dir, use_experience, use_graphrag, current_device_type, use_qwen3_model, args.e2e)
         else:
             # 旧格式：简单任务列表
             existing_dirs = [d for d in os.listdir(data_base_dir) if os.path.isdir(os.path.join(data_base_dir, d)) and d.isdigit()]
@@ -1082,7 +1177,7 @@ if __name__ == "__main__":
             os.makedirs(data_dir, exist_ok=True)
             task_description = task_item
             
-            execute_single_task(task_description, device, data_dir, use_experience, use_graphrag, current_device_type, use_qwen3_model)
+            execute_single_task(task_description, device, data_dir, use_experience, use_graphrag, current_device_type, use_qwen3_model, args.e2e)
     
     # 等待所有偏好提取任务完成
     if preference_extractor and hasattr(preference_extractor, 'executor'):

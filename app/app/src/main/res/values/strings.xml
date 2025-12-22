@@ -1,4 +1,31 @@
 <resources>
     <string name="app_name">MobiAgent</string>
     <string name="accessibility_service_description">MobiAgent 无障碍服务用于自动化操作，包括点击、滑动等功能。启用此服务以允许应用执行自动化任务。</string>
+    
+    <!-- 主界面 -->
+    <string name="welcome_title">你好！我是 MobiAgent</string>
+    <string name="welcome_subtitle">你的智能手机助手\n告诉我你想做什么，我会帮你完成</string>
+    <string name="welcome_hint">💡 首次使用请点击右上角查看详情</string>
+    <string name="input_hint">输入你的指令...</string>
+    
+    <!-- 按钮文本 -->
+    <string name="btn_send">发送</string>
+    <string name="btn_clear">清空</string>
+    <string name="btn_terminate">终止</string>
+    <string name="btn_settings">设置</string>
+    <string name="btn_more_info">详情</string>
+    
+    <!-- 对话框 -->
+    <string name="dialog_server_title">服务器配置</string>
+    <string name="dialog_server_ip">服务器 IP</string>
+    <string name="dialog_server_port">服务器端口</string>
+    <string name="dialog_confirm">确定</string>
+    <string name="dialog_cancel">取消</string>
+    
+    <!-- Toast 提示 -->
+    <string name="toast_message_empty">请输入内容</string>
+    <string name="toast_clear_success">对话已清空</string>
+    <string name="toast_task_terminated">任务已终止</string>
+    <string name="toast_network_error">网络连接失败</string>
+    <string name="toast_permission_required">需要启用相关权限</string>
 </resources>

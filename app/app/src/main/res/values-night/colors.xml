@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 基础颜色 -->
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+    
+    <!-- 主题色 (暗色模式下稍微调亮) -->
+    <color name="primary">#7C6CFA</color>
+    <color name="primary_dark">#6C5CE7</color>
+    <color name="primary_light">#A29BFE</color>
+    
+    <!-- 背景色 (暗色) -->
+    <color name="background_light">#121212</color>
+    <color name="background_white">#1E1E1E</color>
+    <color name="surface">#2D2D2D</color>
+    
+    <!-- 聊天气泡颜色 -->
+    <color name="user_bubble">#7C6CFA</color>
+    <color name="bot_bubble">#2D2D2D</color>
+    
+    <!-- 文本颜色 -->
+    <color name="text_primary">#E8E8E8</color>
+    <color name="text_secondary">#B0B0B0</color>
+    <color name="text_hint">#6C757D</color>
+    <color name="text_on_primary">#FFFFFF</color>
+    
+    <!-- 分割线和边框 -->
+    <color name="divider">#3A3A3A</color>
+    <color name="border">#4A4A4A</color>
+    
+    <!-- 状态颜色 -->
+    <color name="success">#51CF66</color>
+    <color name="error">#FF6B6B</color>
+    <color name="warning">#FFA94D</color>
+    <color name="info">#4DABF7</color>
+    
+    <!-- 阴影颜色 -->
+    <color name="shadow">#80000000</color>
+    
+    <!-- 兼容旧代码 -->
+    <color name="purple">#7C6CFA</color>
+</resources>

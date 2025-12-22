@@ -4,34 +4,125 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    tools:context="com.mobi.agent.launcher"
-    android:background="@drawable/newfronttt" >
+    android:background="@color/primary"
+    tools:context=".launcher">
 
-    <ImageButton
-        android:id="@+id/launch_button"
-        android:layout_width="60dp"
-        android:layout_height="60dp"
-        android:layout_alignParentStart="true"
-        android:layout_alignParentTop="true"
-        android:layout_marginStart="92dp"
-        android:layout_marginBottom="188dp"
-        android:backgroundTint="@color/purple"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:srcCompat="@drawable/baseline_rocket_launch_24" />
-
-    <ImageButton
-        android:id="@+id/more_info"
-        android:layout_width="60dp"
-        android:layout_height="60dp"
-        android:layout_alignParentStart="true"
-        android:layout_alignParentTop="true"
-        android:layout_marginEnd="80dp"
-        android:layout_marginBottom="188dp"
-        android:backgroundTint="@color/purple"
-        app:layout_constraintBottom_toBottomOf="parent"
-
+    <!-- Logo 容器 -->
+    <LinearLayout
+        android:id="@+id/logo_container"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:orientation="vertical"
+        app:layout_constraintBottom_toTopOf="@id/button_container"
         app:layout_constraintEnd_toEndOf="parent"
-        app:srcCompat="@drawable/baseline_read_more_24" />
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintVertical_chainStyle="packed">
+
+        <!-- App 图标 -->
+        <androidx.cardview.widget.CardView
+            android:layout_width="120dp"
+            android:layout_height="120dp"
+            android:layout_marginBottom="32dp"
+            app:cardBackgroundColor="@color/white"
+            app:cardCornerRadius="28dp"
+            app:cardElevation="8dp">
+
+            <ImageView
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:padding="24dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/baseline_rocket_launch_24"
+                android:tint="@color/primary" />
+
+        </androidx.cardview.widget.CardView>
+
+        <!-- App 名称 -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/app_name"
+            android:textColor="@color/white"
+            android:textSize="36sp"
+            android:textStyle="bold" />
+
+        <!-- 副标题 -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:alpha="0.9"
+            android:text="智能手机助手"
+            android:textColor="@color/white"
+            android:textSize="16sp" />
+
+    </LinearLayout>
+
+    <!-- 按钮容器 -->
+    <LinearLayout
+        android:id="@+id/button_container"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="48dp"
+        android:layout_marginEnd="48dp"
+        android:layout_marginBottom="64dp"
+        android:gravity="center"
+        android:orientation="vertical"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/logo_container">
+
+        <!-- 启动按钮 -->
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/launch_button"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:layout_marginBottom="16dp"
+            android:text="开始使用"
+            android:textColor="@color/primary"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            app:backgroundTint="@color/white"
+            app:cornerRadius="28dp"
+            app:elevation="4dp"
+            app:icon="@drawable/baseline_rocket_launch_24"
+            app:iconGravity="textStart"
+            app:iconPadding="8dp"
+            app:iconTint="@color/primary" />
+
+        <!-- 详情按钮 -->
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/more_info"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:text="使用说明"
+            android:textColor="@color/white"
+            android:textSize="16sp"
+            app:backgroundTint="@android:color/transparent"
+            app:cornerRadius="28dp"
+            app:icon="@drawable/baseline_read_more_24"
+            app:iconGravity="textStart"
+            app:iconPadding="8dp"
+            app:iconTint="@color/white"
+            app:strokeColor="@color/white"
+            app:strokeWidth="2dp" />
+
+    </LinearLayout>
+
+    <!-- 版本信息 -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="16dp"
+        android:alpha="0.7"
+        android:text="v1.0.0"
+        android:textColor="@color/white"
+        android:textSize="12sp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>

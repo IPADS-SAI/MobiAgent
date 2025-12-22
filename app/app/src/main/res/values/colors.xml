@@ -1,6 +1,47 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- 基础颜色 -->
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
-    <color name="purple">#BB9AF5</color>
+    
+    <!-- 主题色 (现代化渐变紫色) -->
+    <color name="primary">#6C5CE7</color>
+    <color name="primary_dark">#5B4BCB</color>
+    <color name="primary_light">#A29BFE</color>
+    
+    <!-- 背景色 -->
+    <color name="background_light">#F8F9FA</color>
+    <color name="background_white">#FFFFFF</color>
+    <color name="surface">#FFFFFF</color>
+    
+    <!-- 聊天气泡颜色 -->
+    <color name="user_bubble">#6C5CE7</color>
+    <color name="bot_bubble">#F1F3F5</color>
+    
+    <!-- 文本颜色 -->
+    <color name="text_primary">#212529</color>
+    <color name="text_secondary">#6C757D</color>
+    <color name="text_hint">#ADB5BD</color>
+    <color name="text_on_primary">#FFFFFF</color>
+    
+    <!-- 分割线和边框 -->
+    <color name="divider">#E9ECEF</color>
+    <color name="border">#DEE2E6</color>
+    
+    <!-- 状态颜色 -->
+    <color name="success">#51CF66</color>
+    <color name="error">#FF6B6B</color>
+    <color name="warning">#FFA94D</color>
+    <color name="info">#4DABF7</color>
+    
+    <!-- 阴影颜色 -->
+    <color name="shadow">#1A000000</color>
+    
+    <!-- 思维链特殊颜色 -->
+    <color name="reasoning_bg">#F3F0FF</color>
+    <color name="reasoning_border">#E5DBFF</color>
+    <color name="reasoning_content_bg">#FAFBFF</color>
+    
+    <!-- 兼容旧代码 -->
+    <color name="purple">#6C5CE7</color>
 </resources>

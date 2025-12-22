@@ -16,7 +16,7 @@ python -m mobiagent_server.server \
     --decider_url <base url for decider model> \
     --grounder_url <base url for grounder model> \
     --planner_url <base url for planner model> \
-    --use_qwen3 <whether to use MobiMind Qwen3-VL model series>
+    --use_qwen3 <whether to use MobiMind Qwen3-VL model series, e.g., MobiMind-Mixed-4B>
 ```
 
 Then you can set MobiAgent Server IP and port in the MobiAgent App, and start exploration!

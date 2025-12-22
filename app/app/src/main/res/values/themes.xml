@@ -1,8 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:tools="http://schemas.android.com/tools">
     <!-- Base application theme. -->
-    <style name="Base.Theme.Draftbot" parent="Theme.Material3.DayNight.NoActionBar">
-        <!-- Customize your light theme here. -->
-        <!-- <item name="colorPrimary">@color/my_light_primary</item> -->
+    <style name="Base.Theme.Draftbot" parent="Theme.Material3.Light.NoActionBar">
+        <!-- 主题色 -->
+        <item name="colorPrimary">@color/primary</item>
+        <item name="colorPrimaryDark">@color/primary_dark</item>
+        <item name="colorAccent">@color/primary_light</item>
+        
+        <!-- 背景色 -->
+        <item name="android:colorBackground">@color/background_light</item>
+        <item name="colorSurface">@color/surface</item>
+        
+        <!-- 文本颜色 -->
+        <item name="android:textColorPrimary">@color/text_primary</item>
+        <item name="android:textColorSecondary">@color/text_secondary</item>
+        <item name="android:textColorHint">@color/text_hint</item>
+        
+        <!-- 状态栏 -->
+        <item name="android:statusBarColor">@color/background_white</item>
+        <item name="android:windowLightStatusBar" tools:targetApi="m">true</item>
+        
+        <!-- 导航栏 -->
+        <item name="android:navigationBarColor">@color/background_white</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="o_mr1">true</item>
     </style>
 
     <style name="Theme.Draftbot" parent="Base.Theme.Draftbot" />
@@ -15,4 +35,16 @@
     <style name="Theme.Draftbot.AppBarOverlay" parent="ThemeOverlay.AppCompat.Dark.ActionBar" />
 
     <style name="Theme.Draftbot.PopupOverlay" parent="ThemeOverlay.AppCompat.Light" />
+    
+    <!-- 对话框样式 -->
+    <style name="Theme.Draftbot.Dialog" parent="ThemeOverlay.Material3.Dialog">
+        <item name="colorPrimary">@color/primary</item>
+        <item name="android:background">@color/background_white</item>
+        <item name="shapeAppearanceMediumComponent">@style/ShapeAppearance.Draftbot.Dialog</item>
+    </style>
+    
+    <style name="ShapeAppearance.Draftbot.Dialog" parent="ShapeAppearance.Material3.MediumComponent">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSize">20dp</item>
+    </style>
 </resources>

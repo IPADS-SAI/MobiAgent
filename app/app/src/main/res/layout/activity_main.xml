@@ -1,157 +1,234 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+<androidx.constraintlayout.widget.ConstraintLayout 
+    xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:fillViewport="true"
-    android:background="@drawable/bg">
+    android:background="@color/background_light"
+    tools:context=".MainActivity">
 
-<RelativeLayout
-    android:layout_width="match_parent"
-    android:layout_height="wrap_content"
-    tools:context="com.mobi.agent.MainActivity">
+    <!-- 顶部导航栏 -->
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/top_bar"
+        android:layout_width="0dp"
+        android:layout_height="56dp"
+        android:background="@drawable/bg_top_bar"
+        android:elevation="4dp"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent">
 
+        <!-- 左侧菜单按钮 -->
+        <ImageButton
+            android:id="@+id/clearButton"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_marginStart="4dp"
+            android:background="@drawable/bg_icon_button"
+            android:contentDescription="清空对话"
+            android:padding="12dp"
+            android:scaleType="centerInside"
+            android:src="@drawable/baseline_delete_sweep_24"
+            android:tint="@color/text_primary"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent" />
+
+        <!-- 标题 -->
+        <TextView
+            android:id="@+id/title_text"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:layout_marginEnd="8dp"
+            android:gravity="center"
+            android:text="@string/app_name"
+            android:textColor="@color/text_primary"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toStartOf="@id/shareButton"
+            app:layout_constraintStart_toEndOf="@id/clearButton"
+            app:layout_constraintTop_toTopOf="parent" />
+
+        <!-- 右侧设置按钮 -->
+        <ImageButton
+            android:id="@+id/shareButton"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_marginEnd="4dp"
+            android:background="@drawable/bg_icon_button"
+            android:contentDescription="设置"
+            android:padding="12dp"
+            android:scaleType="centerInside"
+            android:src="@drawable/baseline_read_more_24"
+            android:tint="@color/text_primary"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintTop_toTopOf="parent" />
+
+        <!-- 底部分割线 -->
+        <View
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:background="@color/divider"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent" />
+
+    </androidx.constraintlayout.widget.ConstraintLayout>
+
+    <!-- 聊天消息列表 -->
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/recycler_view"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:layout_above="@+id/bottom_layout"
-        android:layout_below="@+id/top_buttons_layout"
-        android:layout_marginTop="8dp"
-        android:layout_marginBottom="8dp"
-        android:background="@android:color/transparent" />
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:clipToPadding="false"
+        android:paddingTop="12dp"
+        android:paddingBottom="12dp"
+        android:scrollbars="vertical"
+        app:layout_constraintBottom_toTopOf="@id/bottom_layout"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/top_bar" />
 
-    <!-- 顶部按钮布局容器 -->
-    <RelativeLayout
-        android:id="@+id/top_buttons_layout"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_alignParentTop="true"
-        android:layout_marginTop="16dp"
-        android:paddingStart="16dp"
-        android:paddingEnd="16dp">
-
-        <Button
-            android:id="@+id/clearButton"
-            android:layout_width="90dp"
-            android:layout_height="50dp"
-            android:layout_alignParentStart="true"
-            android:backgroundTint="@color/purple"
-            android:text="清空"
-            android:textColor="@color/white"
-            android:textSize="14sp"
-            android:gravity="center"
-            android:singleLine="true"
-            android:maxLines="1" />
-
-        <Button
-            android:id="@+id/shareButton"
-            android:layout_width="90dp"
-            android:layout_height="50dp"
-            android:layout_alignParentEnd="true"
-            android:backgroundTint="@color/purple"
-            android:text="详情"
-            android:textColor="@color/white"
-            android:textSize="14sp"
-            android:gravity="center"
-            android:singleLine="true"
-            android:maxLines="1" />
-
-    </RelativeLayout>
-
-    <TextView
+    <!-- 欢迎提示文本 (当没有消息时显示) -->
+    <LinearLayout
         android:id="@+id/welcome_text"
-        android:layout_width="match_parent"
+        android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:layout_centerInParent="true"
+        android:layout_marginStart="32dp"
+        android:layout_marginEnd="32dp"
         android:gravity="center"
-        android:text="我是你的智能手机助手\n如果要获取我的使用详情\n请点击右上角按钮（收回键盘）\n操作响应较慢，请耐心等待"
-        android:textColor="#e61515ff"
-        android:textSize="24dp"
-        android:textStyle="bold" />
+        android:orientation="vertical"
+        android:padding="24dp"
+        app:layout_constraintBottom_toBottomOf="@id/recycler_view"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="@id/recycler_view">
 
-    <RelativeLayout
-        android:id="@+id/bottom_layout"
-        android:layout_width="match_parent"
-        android:layout_height="80dp"
-        android:layout_alignParentBottom="true"
-        android:layout_marginBottom="10dp"
-        android:padding="8dp">
-
-        <!-- 终止按钮 - 最左边 -->
-        <Button
-            android:id="@+id/copy_button"
-            android:layout_width="70dp"
-            android:layout_height="48dp"
-            android:layout_alignParentStart="true"
-            android:layout_centerVertical="true"
-            android:layout_marginStart="8dp"
-            android:backgroundTint="@color/purple"
-            android:contentDescription="Terminate Task"
-            android:text="终止"
-            android:textColor="@color/white"
-            android:textSize="14sp"
-            android:textStyle="bold"
-            android:gravity="center"
-            android:singleLine="true"
-            android:maxLines="1"
-            android:minWidth="0dp"
-            android:minHeight="0dp"
-            android:includeFontPadding="false"
-            android:paddingLeft="4dp"
-            android:paddingRight="4dp"
-            android:paddingTop="0dp"
-            android:paddingBottom="0dp"
-            android:visibility="visible"
-            android:clickable="true"
-            android:focusable="true" />
-
-        <!-- 发送按钮 - 最右边 -->
-        <Button
-            android:id="@+id/send_btn"
-            android:layout_width="70dp"
-            android:layout_height="48dp"
-            android:layout_alignParentEnd="true"
-            android:layout_centerVertical="true"
-            android:layout_marginEnd="8dp"
-            android:backgroundTint="@color/purple"
-            android:contentDescription="Send Message"
-            android:text="发送"
-            android:textColor="@color/white"
-            android:textSize="14sp"
-            android:textStyle="bold"
-            android:gravity="center"
-            android:singleLine="true"
-            android:maxLines="1"
-            android:minWidth="0dp"
-            android:minHeight="0dp"
-            android:includeFontPadding="false"
-            android:paddingLeft="4dp"
-            android:paddingRight="4dp"
-            android:paddingTop="0dp"
-            android:paddingBottom="0dp"
-            android:visibility="visible"
-            android:clickable="true"
-            android:focusable="true" />
-
-        <!-- 输入框 - 占据中间空间 -->
-        <EditText
-            android:id="@+id/message_edit_text"
-            android:layout_width="match_parent"
+        <TextView
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_toRightOf="@id/copy_button"
-            android:layout_toLeftOf="@id/send_btn"
-            android:layout_centerVertical="true"
-            android:layout_marginStart="8dp"
-            android:layout_marginEnd="8dp"
-            android:background="@drawable/rounded_corner"
-            android:textColor="#000000"
-            android:inputType="text"
-            android:padding="16dp" />
+            android:text="👋"
+            android:textSize="48sp" />
 
-    </RelativeLayout>
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="你好！我是 MobiAgent"
+            android:textColor="@color/text_primary"
+            android:textSize="24sp"
+            android:textStyle="bold" />
 
-</RelativeLayout>
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:gravity="center"
+            android:lineSpacingExtra="4dp"
+            android:text="你的智能手机助手\n告诉我你想做什么，我会帮你完成"
+            android:textColor="@color/text_secondary"
+            android:textSize="16sp" />
 
-</ScrollView>
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:background="@drawable/bg_bot_bubble"
+            android:gravity="center"
+            android:lineSpacingExtra="2dp"
+            android:padding="12dp"
+            android:text="💡 首次使用请点击右上角查看详情"
+            android:textColor="@color/text_secondary"
+            android:textSize="14sp" />
+
+    </LinearLayout>
+
+    <!-- 底部输入区域 -->
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/bottom_layout"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:background="@color/background_white"
+        android:elevation="8dp"
+        android:paddingStart="8dp"
+        android:paddingTop="8dp"
+        android:paddingEnd="8dp"
+        android:paddingBottom="8dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent">
+
+        <!-- 终止按钮 -->
+        <ImageButton
+            android:id="@+id/copy_button"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:background="@drawable/bg_icon_button"
+            android:contentDescription="终止任务"
+            android:padding="5dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_stop_custom_24"
+            android:tint="@color/error"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent" />
+
+        <!-- 输入框容器 -->
+        <androidx.constraintlayout.widget.ConstraintLayout
+            android:id="@+id/input_container"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="2dp"
+            android:layout_marginEnd="2dp"
+            android:background="@drawable/bg_input_field"
+            android:minHeight="44dp"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toStartOf="@id/send_btn"
+            app:layout_constraintStart_toEndOf="@id/copy_button"
+            app:layout_constraintTop_toTopOf="parent">
+
+            <EditText
+                android:id="@+id/message_edit_text"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:background="@android:color/transparent"
+                android:hint="向 MobiAgent 发送任务"
+                android:inputType="textCapSentences|textMultiLine"
+                android:maxHeight="120dp"
+                android:maxLines="5"
+                android:paddingStart="16dp"
+                android:paddingTop="12dp"
+                android:paddingEnd="16dp"
+                android:paddingBottom="12dp"
+                android:textColor="@color/text_primary"
+                android:textColorHint="@color/text_hint"
+                android:textSize="16sp"
+                app:layout_constraintBottom_toBottomOf="parent"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toTopOf="parent" />
+
+        </androidx.constraintlayout.widget.ConstraintLayout>
+
+        <!-- 发送按钮 -->
+        <ImageButton
+            android:id="@+id/send_btn"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:background="@drawable/bg_icon_button"
+            android:contentDescription="发送"
+            android:padding="8dp"
+            android:scaleType="centerInside"
+            android:src="@drawable/baseline_send_24"
+            android:tint="@color/primary"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintTop_toTopOf="parent" />
+
+    </androidx.constraintlayout.widget.ConstraintLayout>
+
+</androidx.constraintlayout.widget.ConstraintLayout>

@@ -1,0 +1,19 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    
+    <!-- 外圆圈（空心） -->
+    <path
+        android:pathData="M12,12m-9,0a9,9 0,1,1 18,0a9,9 0,1,1 -18,0"
+        android:strokeColor="@android:color/white"
+        android:strokeWidth="1.5"
+        android:fillColor="@android:color/transparent"/>
+    
+    <!-- 内部实心圆角正方形 -->
+    <path
+        android:pathData="M9,8.5 L15,8.5 A0.5,0.5 0,0,1 15.5,9 L15.5,15 A0.5,0.5 0,0,1 15,15.5 L9,15.5 A0.5,0.5 0,0,1 8.5,15 L8.5,9 A0.5,0.5 0,0,1 9,8.5 z"
+        android:fillColor="@android:color/white"/>
+</vector>
+

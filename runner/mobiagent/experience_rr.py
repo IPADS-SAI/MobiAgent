@@ -880,8 +880,6 @@ class ExperienceRRTest:
             max_tasks_per_template = 100
             for item in task_data:
                 task_fmt = item["task"]
-                if "外卖" not in task_fmt:
-                    continue
                 fixed_vars = item["variables"]["fixed"]
                 dynamic_vars = item["variables"]["dynamic"]
                 if fixed_vars == []:
@@ -930,6 +928,25 @@ class ExperienceRRTest:
                 json.dump(task_dict_serializable, f, ensure_ascii=False)
 
         records = []
+        power_law = False
+        if power_law:
+            def div_ceil(a: int, b: int) -> int:
+                return (a + b - 1) // b
+            new_task_dict: dict[str, list[dict[str, str]]] = defaultdict(list)
+            for task_fmt, var_dicts in task_dict.items():
+                # sample 1/4 of var_dicts
+                var_dicts = random.sample(var_dicts, div_ceil(len(var_dicts), 4))
+                # split by 1/5
+                random.shuffle(var_dicts)
+                num_majority = div_ceil(len(var_dicts), 5)
+                majority = var_dicts[:num_majority]
+                minority = var_dicts[num_majority:]
+                # repeat majority 16 times
+                majority = majority * 16
+                var_dicts = majority + minority
+                random.shuffle(var_dicts)
+                new_task_dict[task_fmt] = var_dicts
+            task_dict = new_task_dict
         for task_fmt, var_dicts in task_dict.items():
             for var_dict in var_dicts:
                 task_description = task_fmt

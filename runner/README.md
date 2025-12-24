@@ -81,6 +81,20 @@ python -m runner.mobiagent.mobiagent --service_ip <服务IP> --decider_port <决
 - `--data_dir <path>`：结果数据保存目录，默认为脚本目录下的 `data/`（若不存在会自动创建）。
 - `--task_file <path>`：任务列表文件路径，默认为脚本目录下的 `task.json`。
 
+### 基于经验模板的 AgentRR（实验性功能）
+
+（这是一个实验性功能，可能导致任务执行出错或不稳定）
+
+要启用基于经验模板的AgentRR（通过经验模板提供的子任务拆分来回放历史操作，从而加速任务执行），需要同时设置 `--use_experience` 和 `--enable_agentrr`：
+
+```bash
+python -m runner.mobiagent.mobiagent \
+  ...
+  --use_experience \
+  --enable_agentrr
+```
+
+在执行 `task.json` 中指定的任务时，AgentRR 将搜索之前已完成任务中的可重用操作，并回放它们，从而绕过 agent 模型调用。
 
 ### 用户画像与偏好记忆（Mem0/GraphRAG）
 

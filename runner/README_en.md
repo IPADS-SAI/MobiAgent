@@ -73,6 +73,22 @@ Parameters
 - `--grounder_port`: Grounder service port (default: `8001`)
 - `--planner_port`: Planner service port (default: `8002`)
 
+### Experience Template-based AgentRR (experimental)
+
+(This is a experimental feature which can be unstable)
+
+To enable experience template-based Agent Record & Replay, which accelerates task execution by replaying historical actions based on the subtask splitting provided by experience templates, set both `--use_experience` and `--enable_agentrr`:
+
+```bash
+python -m runner.mobiagent.mobiagent \
+  ...
+  --use_experience \
+  --enable_agentrr
+```
+
+When executing a task in `task.json`, AgentRR will search for reuseable actions in previously completed tasks and replay them, bypassing agent model invocation.
+
+
 ### User Profile & Preference Memory (Mem0/GraphRAG)
 
 MobiAgent integrates a user preference memory system (Mem0) to provide personalized context for planning.

@@ -40,7 +40,7 @@ MobiAgent: A Systematic Framework for Customizable Mobile Agents
   - 4-bit 权重量化（W4A16）版本：[MobiMind-Reasoning-4B-1208-AWQ](https://huggingface.co/IPADS-SAI/MobiMind-Reasoning-4B-1208-AWQ)  
   使用 **vLLM** 部署量化版本时，请添加 `--dtype float16` 参数以确保兼容性。
 - `[2025.11.03]` ✅ 新增"多任务执行模块"与"用户偏好支持"。多任务的使用方式与配置说明见 [此处](runner/mobiagent/multi_task/README.md)。
-- `[2025.11.03]` 🧠 新增"用户画像偏好记忆"能力：基于 Mem0 的偏好存储与检索，任务完成后异步用 LLM 提取偏好（原文存储、原文检索，不做本地正则结构化），支持可选 GraphRAG（Neo4j）以增强语义关系检索；检索到的偏好原文会拼接进经验模板，个性化规划流程。详见 [此处](runner/mobiagent/README.md)。
+- `[2025.11.03]` 🧠 新增"用户画像偏好记忆"能力（Mem0）：任务完成后使用 LLM 异步提取偏好，原始文本存储与检索，双后端支持（向量检索 Milvus + 可选 GraphRAG Neo4j）。偏好以原始文本形式检索并直接通过 `combine_context(...)` 附加到经验模板后，用于个性化规划。通过 `--user_profile on|off` 和 `--use_graphrag on|off` 配置，详见 [此处](runner/README.md#用户画像与偏好记忆)。
 - `[2025.10.31]` 🔥 我们更新了基于 Qwen3-VL-4B-Instruct 的 MobiMind-Mixed 模型！下载地址：[MobiMind-Mixed-4B-1031](https://huggingface.co/IPADS-SAI/MobiMind-Mixed-4B-1031)，运行数据集创建和智能体执行器脚本时请添加 `--use_qwen3` 参数。
 - `[2025.9.30]` 🚀 增加"本地经验检索"模块，支持基于任务描述的经验模版检索，显著提升任务规划的智能性与效率。
 - `[2025.9.29]` 🔥 开源 MobiMind 混合版本，可同时胜任 Decider 与 Grounder 任务！下载试用：[MobiMind-Mixed-7B](https://huggingface.co/IPADS-SAI/MobiMind-Mixed-7B)
@@ -161,30 +161,86 @@ vllm serve IPADS-SAI/MobiMind-Grounder-3B --port <grounder port>
 vllm serve Qwen/Qwen3-4B-Instruct --port <planner port>
 ```
 
+#### 用户画像偏好记忆设置（可选）
+
+如果您想启用用户偏好记忆系统（Mem0），需要先设置后端存储：
+
+**1) Milvus（向量数据库）- 向量检索必需：**
+
+```bash
+# 下载安装脚本
+curl -sfL https://raw.githubusercontent.com/milvus-io/milvus/master/scripts/standalone_embed.sh -o standalone_embed.sh
+# 启动 Docker 容器
+bash standalone_embed.sh start
+```
+
+在 `.env` 文件中添加：
+```bash
+MILVUS_URL=http://localhost:19530
+EMBEDDING_MODEL=BAAI/bge-small-zh
+EMBEDDING_MODEL_DIMS=384
+OPENAI_API_KEY=your_key_here
+OPENAI_BASE_URL=your_llm_endpoint_here
+```
+
+**2) Neo4j（GraphRAG）- 图检索可选：**
+
+```bash
+docker run -d --name neo4j \
+  -p 7474:7474 -p 7687:7687 \
+  -e NEO4J_AUTH=neo4j/testpassword \
+  neo4j:5.23.0
+```
+
+在 `.env` 文件中添加：
+```bash
+NEO4J_URL=neo4j://localhost:7687
+NEO4J_USERNAME=neo4j
+NEO4J_PASSWORD=testpassword
+```
+
+详细配置说明见 [runner README](runner/README.md#用户画像与偏好记忆)。
+
 #### 启动Agent执行器
 
 在 `runner/mobiagent/task.json` 中写入想要测试的任务列表，然后启动Agent执行器
 
+**基础启动：**
+```bash
+python -m runner.mobiagent.mobiagent \
+  --service_ip <服务IP> \
+  --decider_port <Decider模型端口> \
+  --grounder_port <Grounder模型端口> \
+  --planner_port <Planner模型端口>
+```
+
+**启用用户画像记忆：**
 ```bash
 python -m runner.mobiagent.mobiagent \
   --service_ip <服务IP> \
   --decider_port <Decider模型端口> \
   --grounder_port <Grounder模型端口> \
   --planner_port <Planner模型端口> \
-  --device <Harmony/Android>
+  --user_profile on \
+  --use_graphrag off  # 使用 'on' 启用 GraphRAG (Neo4j)，'off' 使用向量检索 (Milvus)
 ```
 
-**参数说明**
+**常用参数：**
 
 - `--service_ip`：服务IP（默认：`localhost`）
 - `--decider_port`：决策服务端口（默认：`8000`）
 - `--grounder_port`：定位服务端口（默认：`8001`）
 - `--planner_port`：规划服务端口（默认：`8002`）
-- `--device`: 运行的设备（默认：Android）
+- `--device`：设备类型，`Android` 或 `Harmony`（默认：`Android`）
+- `--user_profile`：启用用户画像记忆，`on` 或 `off`（默认：`off`）
+- `--use_graphrag`：使用 GraphRAG (Neo4j) 进行检索，`on` 或 `off`（默认：`off`）
+- `--use_experience`：启用基于经验的任务改写（默认：`False`）
 
 执行器启动后，将会自动控制手机并调用Agent模型，完成列表中指定的任务。
 
 **重要提示**：如果您部署的是 MobiMind-Mixed 模型，请将 decider/grounder 端口都设置为 `<mixed port>`。
+
+所有可用参数说明见 [runner README](runner/README.md#项目启动)。
 
 ## 子模块详细使用方式
 

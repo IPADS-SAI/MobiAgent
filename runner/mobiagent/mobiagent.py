@@ -989,7 +989,7 @@ if __name__ == "__main__":
     parser.add_argument("--use_graphrag", choices=["on", "off"], default="off", help="Use GraphRAG for user profile preference memory (on/off). Default: off")
     parser.add_argument("--clear_memory", action="store_true", help="Force clear all stored user memories and exit")
     parser.add_argument("--device", type=str, default="Android", choices=["Android", "Harmony"], help="Device type: Android or Harmony (default: Android)")
-    parser.add_argument("--use_qwen3", action="store_true", default=True, help="Whether to use Qwen3 model (default: False)")
+    parser.add_argument("--use_qwen3", action="store_true", default=True, help="Whether to use Qwen3 model (default: True)")
     parser.add_argument("--use_experience", action="store_true", default=False, help="Whether to use experience (use planner for task rewriting) (default: False)")
     parser.add_argument("--data_dir", type=str, default=None, help="Directory to save data (default: ./data relative to script location)")
     parser.add_argument("--task_file", type=str, default=None, help="Path to task.json file (default: ./task.json relative to script location)")

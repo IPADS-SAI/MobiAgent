@@ -66,7 +66,7 @@ MobiAgent: A Systematic Framework for Customizable Mobile Agents
 
 **移动端应用演示**:
 <div align="center">
-  <video src="https://github.com/user-attachments/assets/fd0ca393-b0ae-4f58-92a1-ef9f514b1233"/>
+  <video src="https://github.com/user-attachments/assets/ab748578-7d17-47e1-a47c-4d9c3d34b28f"/>
 </div>
 
 **AgentRR 演示** (左：首次任务；右：后续任务)
@@ -100,7 +100,7 @@ MobiAgent: A Systematic Framework for Customizable Mobile Agents
 
 如果您想通过 Python 脚本来使用 MobiAgent，并借助Android Debug Bridge (ADB) 来控制您的手机，请遵循以下步骤进行：
 
-#### 环境配置
+#### 1. 环境配置
 
 创建虚拟环境，例如，使用conda：
 
@@ -136,13 +136,13 @@ python -m pip install paddlepaddle-gpu>=3.1.0 -i https://www.paddlepaddle.org.cn
 
 ```
 
-#### 手机配置
+#### 2. 手机配置
 
 - 在Android设备上下载并安装 [ADBKeyboard](https://github.com/senzhk/ADBKeyBoard/blob/master/ADBKeyboard.apk)
 - 在Android设备上，开启开发者选项，并允许USB调试
 - 使用USB数据线连接手机和电脑
 
-#### 模型部署
+#### 3. 模型部署
 
 下载好模型检查点后，使用 vLLM 部署模型推理服务：
 
@@ -161,11 +161,15 @@ vllm serve IPADS-SAI/MobiMind-Grounder-3B --port <grounder port>
 vllm serve Qwen/Qwen3-4B-Instruct --port <planner port>
 ```
 
-#### 用户画像偏好记忆设置（可选）
+#### 4. Agent 记忆系统设置（可选）
 
-如果您想启用用户偏好记忆系统（Mem0），需要先设置后端存储：
+MobiAgent 支持三种类型的记忆系统以提升智能体性能：
 
-**1) Milvus（向量数据库）- 向量检索必需：**
+##### 4.1 用户画像记忆
+
+用户偏好记忆系统（Mem0）为规划阶段提供个性化上下文。要启用它，需要先设置后端存储：
+
+**Milvus（向量数据库）- 向量检索必需：**
 
 ```bash
 # 下载安装脚本
@@ -183,7 +187,7 @@ OPENAI_API_KEY=your_key_here
 OPENAI_BASE_URL=your_llm_endpoint_here
 ```
 
-**2) Neo4j（GraphRAG）- 图检索可选：**
+**Neo4j（GraphRAG）- 图检索可选：**
 
 ```bash
 docker run -d --name neo4j \
@@ -201,7 +205,15 @@ NEO4J_PASSWORD=testpassword
 
 详细配置说明见 [runner README](runner/README.md#用户画像与偏好记忆)。
 
-#### 启动Agent执行器
+##### 4.2 经验记忆
+
+经验记忆使规划器能够检索并使用类似的过往任务执行经验。启动 Agent 执行器时添加 `--use_experience` 参数即可启用。
+
+##### 4.3 动作记忆
+
+动作记忆（AgentRR）缓存并复用成功的动作序列以加速任务执行。设置和使用说明见 [AgentRR README](agent_rr/README.md)。
+
+#### 5. 启动Agent执行器
 
 在 `runner/mobiagent/task.json` 中写入想要测试的任务列表，然后启动Agent执行器
 

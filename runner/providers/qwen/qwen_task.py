@@ -14,9 +14,8 @@ from providers.qwen.utils import process_screenshot
 from providers.qwen.prompts import SYSTEM_PROMPT, USER_PROMPT_TEMPLATE
 import sys
 
-# 使用模块级别的logger
+# 使用模块级别的logger（级别由 setup_logging() 统一配置）
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
 
 # base64编码图像的辅助函数
 def image_to_base64(image):

@@ -13,9 +13,8 @@ import re
 import textwrap
 from PIL import Image, ImageDraw, ImageFont
 
-# 使用模块级别的logger
+# 使用模块级别的logger（级别由 setup_logging() 统一配置）
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
 
 # 绘图常量
 RED_DOT_COLOR = (255, 0, 0, 200)

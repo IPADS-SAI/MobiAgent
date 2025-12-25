@@ -7,9 +7,8 @@ import logging
 from typing import Dict, List, Optional
 from openai import OpenAI
 
-# 使用模块级别的logger
+# 使用模块级别的logger（级别由 setup_logging() 统一配置）
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
 
 # 导入UI-TARS所需的模块
 runner_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

@@ -11,9 +11,8 @@ from typing import Dict, List, Optional
 from PIL import Image
 from openai import OpenAI
 
-# 使用模块级别的logger
+# 使用模块级别的logger（级别由 setup_logging() 统一配置）
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
 
 # 添加父目录到路径以导入base_task
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))

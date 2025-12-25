@@ -25,10 +25,10 @@ from device import create_device, AndroidDevice, HarmonyDevice
 
 def setup_logging(log_level: str = "INFO"):
     """
-    设置日志
+    设置日志 - 配置根logger和所有模块logger
     
     Args:
-        log_level: 日志级别
+        log_level: 日志级别 ('DEBUG', 'INFO', 'WARNING', 'ERROR')
     """
     numeric_level = getattr(logging, log_level.upper(), None)
     if not isinstance(numeric_level, int):
@@ -37,17 +37,50 @@ def setup_logging(log_level: str = "INFO"):
     # 清除已有的handlers以避免重复
     root = logging.getLogger()
     if root.handlers:
-        for handler in root.handlers:
+        for handler in root.handlers[:]:
             root.removeHandler(handler)
-            
-    logging.basicConfig(
-        level=numeric_level,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.StreamHandler(sys.stdout),
-            logging.FileHandler('runner.log', encoding='utf-8')
-        ]
+    
+    # 设置根logger级别
+    root.setLevel(numeric_level)
+    
+    # 创建日志格式化器
+    formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
     )
+    
+    # 添加标准输出处理器
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(numeric_level)
+    console_handler.setFormatter(formatter)
+    root.addHandler(console_handler)
+    
+    # 添加文件处理器
+    try:
+        file_handler = logging.FileHandler('runner.log', encoding='utf-8')
+        file_handler.setLevel(numeric_level)
+        file_handler.setFormatter(formatter)
+        root.addHandler(file_handler)
+    except Exception as e:
+        print(f"Warning: Failed to setup file logging: {e}")
+    
+    # 配置所有已知模块的logger
+    module_loggers = [
+        'task_manager',
+        'base_task',
+        'device',
+        'providers.mobiagent.mobile_task',
+        'providers.mobiagent.load_md_prompt',
+        'providers.qwen.qwen_task',
+        'providers.qwen.utils',
+        'providers.uitars.uitars_task',
+        'providers.uitars.ui_tars_helper',
+        'providers.autoglm.autoglm_task',
+    ]
+    
+    for logger_name in module_loggers:
+        module_logger = logging.getLogger(logger_name)
+        module_logger.setLevel(numeric_level)
     
     sys.stdout.flush()
 

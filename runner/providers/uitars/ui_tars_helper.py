@@ -2,8 +2,8 @@ import re
 import logging
 from typing import Dict, List, Tuple, Optional, Any
 
+# 使用模块级别的logger（级别由 setup_logging() 统一配置）
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
 
 # 内置提示词模板
 PROMPT_TEMPLATE = """You are a GUI agent. You are given a task and your action history, with screenshots. You need to perform the next action to complete the task. 

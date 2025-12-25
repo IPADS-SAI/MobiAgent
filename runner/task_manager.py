@@ -31,6 +31,7 @@ class TaskManager:
             device_type: 设备类型
             max_steps: 最大步骤数
             draw: 是否在截图上绘制操作
+            log_level: 日志级别
             **kwargs: 传递给具体任务类的其他参数
         """
         self.provider = provider

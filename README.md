@@ -37,7 +37,7 @@ MobiAgent: A Systematic Framework for Customizable Mobile Agents
 ## News
 - `[2025.12.08]` 🔥 We've released a new reasoning model (support both Android and HarmonyOS): MobiMind-Reasoning-4B [MobiMind-Reasoning-4B-1208](https://huggingface.co/IPADS-SAI/MobiMind-Reasoning-4B-1208), and 4-bit weight quantized (W4A16) [MobiMind-Reasoning-4B-1208-AWQ](https://huggingface.co/IPADS-SAI/MobiMind-Reasoning-4B-1208-AWQ) version. When serving with vLLM, please add the flag `--dtype float16` for quantized model to ensure compatibility.
 - `[2025.11.03]` ✅ Added multi-task execution module support and user preference support. For details about multi-task usage and configuration, see [here](runner/mobiagent/multi_task/README.md). 
-- `[2025.11.03]` 🧠 Introduced a user profile memory system: async preference extraction with LLM, raw-text preference storage and retrieval, optional GraphRAG via Neo4j. Preferences are retrieved as original texts and appended to experience prompts to personalize planning, see [here](runner/mobiagent/README.md).
+- `[2025.11.03]` 🧠 Introduced a user profile memory system (Mem0): async preference extraction with LLM after task completion, raw-text preference storage and retrieval, dual backend support (vector search via Milvus and optional GraphRAG via Neo4j). Preferences are retrieved as original texts and directly appended to experience prompts via `combine_context(...)` to personalize planning. Configure via `--user_profile on|off` and `--use_graphrag on|off`, see [here](runner/README.md#用户画像与偏好记忆) for details.
 - `[2025.10.31]` 🔥We've updated the MobiMind-Mixed model based on Qwen3-VL-4B-Instruct! Download it at [MobiMind-Mixed-4B-1031](https://huggingface.co/IPADS-SAI/MobiMind-Mixed-4B-1031), and add `--use_qwen3` flag when running dataset creation and agent runner scripts.
 - `[2025.9.30]` 🚀 added a local experience retrieval module, supporting experience query based on task description, enhancing the intelligence and efficiency of task planning!
 - `[2025.9.29]` We've open-sourced a mixed version of MobiMind, capable of handling **both Decider and Grounder tasks**! Feel free to download and try it at [MobiMind-Mixed-7B](https://huggingface.co/IPADS-SAI/MobiMind-Mixed-7B).
@@ -158,31 +158,86 @@ vllm serve IPADS-SAI/MobiMind-Grounder-3B --port <grounder port>
 vllm serve Qwen/Qwen3-4B-Instruct --port <planner port>
 ```
 
+#### User Profile Memory Setup (Optional)
+
+If you want to enable user preference memory system (Mem0), you need to set up the backend storage first:
+
+**1) Milvus (Vector Database) - Required for vector search:**
+
+```bash
+# Download the installation script
+curl -sfL https://raw.githubusercontent.com/milvus-io/milvus/master/scripts/standalone_embed.sh -o standalone_embed.sh
+# Start the Docker container
+bash standalone_embed.sh start
+```
+
+Add to your `.env` file:
+```bash
+MILVUS_URL=http://localhost:19530
+EMBEDDING_MODEL=BAAI/bge-small-zh
+EMBEDDING_MODEL_DIMS=384
+OPENAI_API_KEY=your_key_here
+OPENAI_BASE_URL=your_llm_endpoint_here
+```
+
+**2) Neo4j (GraphRAG) - Optional for graph-based retrieval:**
+
+```bash
+docker run -d --name neo4j \
+  -p 7474:7474 -p 7687:7687 \
+  -e NEO4J_AUTH=neo4j/testpassword \
+  neo4j:5.23.0
+```
+
+Add to your `.env` file:
+```bash
+NEO4J_URL=neo4j://localhost:7687
+NEO4J_USERNAME=neo4j
+NEO4J_PASSWORD=testpassword
+```
+
+For detailed configuration, see [runner README](runner/README.md#用户画像与偏好记忆).
 
 #### Launch Agent Runner
 
 Write the list of tasks that you would like to test in `runner/mobiagent/task.json`, then launch agent runner:
 
+**Basic launch:**
+```bash
+python -m runner.mobiagent.mobiagent \
+  --service_ip <Service IP> \
+  --decider_port <Decider Service Port> \
+  --grounder_port <Grounder Service Port> \
+  --planner_port <Planner Service Port>
+```
+
+**With user profile memory:**
 ```bash
 python -m runner.mobiagent.mobiagent \
   --service_ip <Service IP> \
   --decider_port <Decider Service Port> \
   --grounder_port <Grounder Service Port> \
   --planner_port <Planner Service Port> \
-  --device <Harmony/Android>
+  --user_profile on \
+  --use_graphrag off  # Use 'on' for GraphRAG (Neo4j), 'off' for vector search (Milvus)
 ```
 
-Parameters:
+**Common parameters:**
 
 - `--service_ip`: Service IP (default: `localhost`)
 - `--decider_port`: Decider service port (default: `8000`)
 - `--grounder_port`: Grounder service port (default: `8001`)
 - `--planner_port`: Planner service port (default: `8002`)
-- `--device`: Device type (default: Android)
+- `--device`: Device type, `Android` or `Harmony` (default: `Android`)
+- `--user_profile`: Enable user profile memory, `on` or `off` (default: `off`)
+- `--use_graphrag`: Use GraphRAG (Neo4j) for retrieval, `on` or `off` (default: `off`)
+- `--use_experience`: Enable experience-based task rewriting (default: `False`)
 
 The runner automatically controls the device and invoke agent models to complete the pre-defined tasks.
 
 **Important**: If you deploy MobiMind-Mixed model inference, set both decider/grounder ports to `<mixed port>`.
+
+For all available parameters, see [runner README](runner/README.md#项目启动).
 
 ## Detailed Sub-module Usage
 

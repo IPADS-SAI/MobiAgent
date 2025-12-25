@@ -143,14 +143,14 @@ python -m pip install paddlepaddle-gpu>=3.1.0 -i https://www.paddlepaddle.org.cn
 
 After downloading the model checkpoints, use vLLM to deploy model inference services:
 
-**For MobiMind-Mixed/Reasoning Model (based on Qwen3-VL-4B)**:
+For MobiMind-Mixed/Reasoning Model (based on Qwen3-VL-4B):
 
 ```bash
 vllm serve IPADS-SAI/MobiMind-Mixed-4B --port <mixed port>
 vllm serve Qwen/Qwen3-4B-Instruct --port <planner port>
 ```
 
-**For Legacy MobiMind-Decider/Grounder Models**:
+For Legacy MobiMind-Decider/Grounder Models:
 
 ```bash
 vllm serve IPADS-SAI/MobiMind-Decider-7B --port <decider port>
@@ -166,7 +166,7 @@ MobiAgent supports three types of memory systems to enhance agent performance:
 
 User preference memory system (Mem0) provides personalized context for planning. To enable it, set up the backend storage:
 
-**Milvus (Vector Database) - Required for vector search:**
+Milvus (Vector Database) - Required for vector search:
 
 ```bash
 # Download the installation script
@@ -184,7 +184,7 @@ OPENAI_API_KEY=your_key_here
 OPENAI_BASE_URL=your_llm_endpoint_here
 ```
 
-**Neo4j (GraphRAG) - Optional for graph-based retrieval:**
+Neo4j (GraphRAG) - Optional for graph-based retrieval:
 
 ```bash
 docker run -d --name neo4j \
@@ -214,7 +214,7 @@ Action memory (AgentRR) caches and reuses successful action sequences to acceler
 
 Write the list of tasks that you would like to test in `runner/mobiagent/task.json`, then launch agent runner:
 
-**Basic launch:**
+Basic launch:
 ```bash
 python -m runner.mobiagent.mobiagent \
   --service_ip <Service IP> \
@@ -223,7 +223,7 @@ python -m runner.mobiagent.mobiagent \
   --planner_port <Planner Service Port>
 ```
 
-**With user profile memory:**
+With user profile memory:
 ```bash
 python -m runner.mobiagent.mobiagent \
   --service_ip <Service IP> \
@@ -234,7 +234,7 @@ python -m runner.mobiagent.mobiagent \
   --use_graphrag off  # Use 'on' for GraphRAG (Neo4j), 'off' for vector search (Milvus)
 ```
 
-**Common parameters:**
+Common parameters:
 
 - `--service_ip`: Service IP (default: `localhost`)
 - `--decider_port`: Decider service port (default: `8000`)

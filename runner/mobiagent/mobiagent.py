@@ -985,12 +985,12 @@ if __name__ == "__main__":
     parser.add_argument("--decider_port", type=int, default=8000, help="Port for decider service (default: 8000)")
     parser.add_argument("--grounder_port", type=int, default=8001, help="Port for grounder service (default: 8001)")
     parser.add_argument("--planner_port", type=int, default=8002, help="Port for planner service (default: 8002)")
-    parser.add_argument("--user_profile", choices=["on", "off"], default="off", help="Enable user profile memory (on/off). Default: off")
-    parser.add_argument("--use_graphrag", choices=["on", "off"], default="off", help="Use GraphRAG for user profile preference memory (on/off). Default: off")
+    parser.add_argument("--user_profile", choices=["on", "off"], default="off", help="Enable user profile memory (default: off)")
+    parser.add_argument("--use_graphrag", choices=["on", "off"], default="off", help="Use GraphRAG for user profile preference memory (default: off)")
     parser.add_argument("--clear_memory", action="store_true", help="Force clear all stored user memories and exit")
     parser.add_argument("--device", type=str, default="Android", choices=["Android", "Harmony"], help="Device type: Android or Harmony (default: Android)")
-    parser.add_argument("--use_qwen3", action="store_true", default=True, help="Whether to use Qwen3 model (default: True)")
-    parser.add_argument("--use_experience", action="store_true", default=False, help="Whether to use experience (use planner for task rewriting) (default: False)")
+    parser.add_argument("--use_qwen3", choices=["on", "off"], default="on", help="Whether to use Qwen3VL-based model (default: on)")
+    parser.add_argument("--use_experience", choices=["on", "off"], default="off", help="Whether to use experience (use planner for task rewriting) (default: off)")
     parser.add_argument("--data_dir", type=str, default=None, help="Directory to save data (default: ./data relative to script location)")
     parser.add_argument("--task_file", type=str, default=None, help="Path to task.json file (default: ./task.json relative to script location)")
     args = parser.parse_args()
@@ -1023,8 +1023,8 @@ if __name__ == "__main__":
         raise ValueError(f"Unknown device type: {args.device}")
     
     logging.info(f"Connected to device: {args.device}")
-    use_qwen3_model = args.use_qwen3
-    use_experience = args.use_experience
+    use_qwen3_model = (args.use_qwen3 == "on")
+    use_experience = (args.use_experience == "on")
     current_device_type = args.device  # 保存设备类型用于后续使用
     logging.info(f"Use Qwen3 model: {use_qwen3_model}")
     logging.info(f"Use experience (planner task rewriting): {use_experience}")

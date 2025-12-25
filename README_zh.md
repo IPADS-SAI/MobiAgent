@@ -169,7 +169,7 @@ MobiAgent 支持三种类型的记忆系统以提升智能体性能：
 
 用户偏好记忆系统（Mem0）为规划阶段提供个性化上下文。要启用它，需要先设置后端存储：
 
-**Milvus（向量数据库）- 向量检索必需：**
+Milvus（向量数据库）- 向量检索必需：
 
 ```bash
 # 下载安装脚本
@@ -187,7 +187,7 @@ OPENAI_API_KEY=your_key_here
 OPENAI_BASE_URL=your_llm_endpoint_here
 ```
 
-**Neo4j（GraphRAG）- 图检索可选：**
+Neo4j（GraphRAG）- 图检索可选：
 
 ```bash
 docker run -d --name neo4j \
@@ -217,7 +217,7 @@ NEO4J_PASSWORD=testpassword
 
 在 `runner/mobiagent/task.json` 中写入想要测试的任务列表，然后启动Agent执行器
 
-**基础启动：**
+基础启动：
 ```bash
 python -m runner.mobiagent.mobiagent \
   --service_ip <服务IP> \
@@ -226,7 +226,7 @@ python -m runner.mobiagent.mobiagent \
   --planner_port <Planner模型端口>
 ```
 
-**启用用户画像记忆：**
+启用用户画像记忆：
 ```bash
 python -m runner.mobiagent.mobiagent \
   --service_ip <服务IP> \
@@ -237,7 +237,7 @@ python -m runner.mobiagent.mobiagent \
   --use_graphrag off  # 使用 'on' 启用 GraphRAG (Neo4j)，'off' 使用向量检索 (Milvus)
 ```
 
-**常用参数：**
+常用参数：
 
 - `--service_ip`：服务IP（默认：`localhost`）
 - `--decider_port`：决策服务端口（默认：`8000`）

@@ -63,7 +63,7 @@ MobiAgent: A Systematic Framework for Customizable Mobile Agents
 
 **Mobile App Demo**:
 <div align="center">
-  <video src="https://github.com/user-attachments/assets/fd0ca393-b0ae-4f58-92a1-ef9f514b1233"/>
+  <video src="https://github.com/user-attachments/assets/ab748578-7d17-47e1-a47c-4d9c3d34b28f"/>
 </div>
 
 **AgentRR Demo** (Left: first task; Right: subsequent task)
@@ -97,7 +97,7 @@ If you would like to try MobiAgent directly with our APP, please download it in 
 
 If you would like to try MobiAgent with python scripts which leverage Android Debug Bridge (ADB) to control your phone, please follow these steps:
 
-#### Environment Setup
+#### 1. Environment Setup
 
 Create virtual environment, e.g., using conda:
 
@@ -133,24 +133,24 @@ python -m pip install paddlepaddle-gpu>=3.1.0 -i https://www.paddlepaddle.org.cn
 
 ```
 
-#### Mobile Device Setup
+#### 2. Mobile Device Setup
 
 - Download and install [ADBKeyboard](https://github.com/senzhk/ADBKeyBoard/blob/master/ADBKeyboard.apk) on your Android device
 - Enable Developer Options on your Android device and allow USB debugging
 - Connect your phone to the computer using a USB cable
 
-#### Model Deployment
+#### 3. Model Deployment
 
 After downloading the model checkpoints, use vLLM to deploy model inference services:
 
-**For MobiMind-Mixed/Reasoning Model (based on Qwen3-VL-4B)**:
+For MobiMind-Mixed/Reasoning Model (based on Qwen3-VL-4B):
 
 ```bash
 vllm serve IPADS-SAI/MobiMind-Mixed-4B --port <mixed port>
 vllm serve Qwen/Qwen3-4B-Instruct --port <planner port>
 ```
 
-**For Legacy MobiMind-Decider/Grounder Models**:
+For Legacy MobiMind-Decider/Grounder Models:
 
 ```bash
 vllm serve IPADS-SAI/MobiMind-Decider-7B --port <decider port>
@@ -158,11 +158,15 @@ vllm serve IPADS-SAI/MobiMind-Grounder-3B --port <grounder port>
 vllm serve Qwen/Qwen3-4B-Instruct --port <planner port>
 ```
 
-#### User Profile Memory Setup (Optional)
+#### 4. Agent Memory Setup (Optional)
 
-If you want to enable user preference memory system (Mem0), you need to set up the backend storage first:
+MobiAgent supports three types of memory systems to enhance agent performance:
 
-**1) Milvus (Vector Database) - Required for vector search:**
+##### 4.1 User Profile Memory
+
+User preference memory system (Mem0) provides personalized context for planning. To enable it, set up the backend storage:
+
+Milvus (Vector Database) - Required for vector search:
 
 ```bash
 # Download the installation script
@@ -180,7 +184,7 @@ OPENAI_API_KEY=your_key_here
 OPENAI_BASE_URL=your_llm_endpoint_here
 ```
 
-**2) Neo4j (GraphRAG) - Optional for graph-based retrieval:**
+Neo4j (GraphRAG) - Optional for graph-based retrieval:
 
 ```bash
 docker run -d --name neo4j \
@@ -198,11 +202,19 @@ NEO4J_PASSWORD=testpassword
 
 For detailed configuration, see [runner README](runner/README.md#用户画像与偏好记忆).
 
-#### Launch Agent Runner
+##### 4.2 Experience Memory
+
+Experience memory enables the planner to retrieve and use similar past task execution experiences. Enable it by adding the `--use_experience` flag when launching the agent runner.
+
+##### 4.3 Action Memory
+
+Action memory (AgentRR) caches and reuses successful action sequences to accelerate task execution. For setup and usage, see the [AgentRR README](agent_rr/README.md).
+
+#### 5. Launch Agent Runner
 
 Write the list of tasks that you would like to test in `runner/mobiagent/task.json`, then launch agent runner:
 
-**Basic launch:**
+Basic launch:
 ```bash
 python -m runner.mobiagent.mobiagent \
   --service_ip <Service IP> \
@@ -211,7 +223,7 @@ python -m runner.mobiagent.mobiagent \
   --planner_port <Planner Service Port>
 ```
 
-**With user profile memory:**
+With user profile memory:
 ```bash
 python -m runner.mobiagent.mobiagent \
   --service_ip <Service IP> \
@@ -222,7 +234,7 @@ python -m runner.mobiagent.mobiagent \
   --use_graphrag off  # Use 'on' for GraphRAG (Neo4j), 'off' for vector search (Milvus)
 ```
 
-**Common parameters:**
+Common parameters:
 
 - `--service_ip`: Service IP (default: `localhost`)
 - `--decider_port`: Decider service port (default: `8000`)

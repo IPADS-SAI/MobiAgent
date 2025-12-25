@@ -36,26 +36,39 @@ class QwenTask(BaseTask):
         device,
         data_dir: str,
         device_type: str = "Android",
-        model_name: str = "Qwen3-VL-30B-A3B-Instruct",
         use_step_loop: bool = True,
+        # 统一参数
         api_base: str = None,
-        api_key: str = None,
+        api_key: str = "",
+        model: str = None,
+        temperature: float = None,
+        # 向后兼容的旧参数
+        model_name: str = None,
         **kwargs
     ):
-        super().__init__(task_description=task_description, device=device, data_dir=data_dir, device_type=device_type, use_step_loop=use_step_loop, **kwargs)
+        super().__init__(
+            task_description=task_description,
+            device=device,
+            data_dir=data_dir,
+            device_type=device_type,
+            use_step_loop=use_step_loop,
+            **kwargs
+        )
         
-        self.model_name = model_name
+        # 处理参数优先级: 新参数 > 旧参数 > 默认值
+        self.model_name = model if model is not None else model_name 
         self.api_base = api_base
         self.api_key = api_key
+        self.temperature = temperature if temperature is not None else 0.0
         
         # 初始化OpenAI客户端
         try:
             from openai import OpenAI
             self.client = OpenAI(
                 base_url=self.api_base,
-                api_key=self.api_key
+                api_key=self.api_key or "EMPTY"
             )
-            logger.info(f"Initialized OpenAI client for {model_name} at {api_base}")
+            logger.info(f"Initialized OpenAI client for {self.model_name} at {self.api_base}")
         except ImportError:
             logger.error("OpenAI package not found. Please install it: pip install openai")
             raise

@@ -13,6 +13,10 @@ import re
 import textwrap
 from PIL import Image, ImageDraw, ImageFont
 
+# 使用模块级别的logger
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
 # 绘图常量
 RED_DOT_COLOR = (255, 0, 0, 200)
 SCROLL_COLOR = (0, 122, 255, 210)
@@ -31,6 +35,72 @@ ACTION_LABELS = {
     "home": "Home",
     "retry": "Retry",
     "wait": "Wait",
+}
+
+# 统一动作类型映射表：将各模型特定的动作名称映射为统一格式
+# 格式: 原始名称 -> 规范名称
+ACTION_TYPE_ALIASES = {
+    # ==================== 点击相关 ====================
+    'click': 'click',
+    'tap': 'click',
+    'left_single': 'click',
+    'right_single': 'click',
+    'hover': 'click',
+    
+    # ==================== 长按相关 ====================
+    'longclick': 'longclick',
+    'long_press': 'longclick',
+    'long_click': 'longclick',
+    
+    # ==================== 双击相关 ====================
+    'doubleclick': 'doubleclick',
+    'double_tap': 'doubleclick',
+    'double_click': 'doubleclick',
+    'left_double': 'doubleclick',
+    
+    # ==================== 输入相关 ====================
+    'input_text': 'input_text',
+    'type': 'input_text',
+    'input': 'input_text',
+    'set_text': 'input_text',
+    
+    # ==================== 滑动相关 ====================
+    'scroll': 'scroll',
+    'swipe': 'scroll',
+    'drag': 'scroll',
+    
+    # ==================== 启动应用 ====================
+    'open_app': 'open_app',
+    'open': 'open_app',
+    'start_app': 'open_app',
+    'launch': 'open_app',
+    
+    # ==================== 系统按键 ====================
+    'home': 'home',
+    'press_home': 'home',
+    'key_home': 'home',
+    'back': 'back',
+    'press_back': 'back',
+    'key_back': 'back',
+    
+    # ==================== 等待 ====================
+    'wait': 'wait',
+    
+    # ==================== 任务终止 ====================
+    'done': 'done',
+    'finished': 'done',
+    'complete': 'done',
+    
+    # ==================== 重试/失败 ====================
+    'retry': 'retry',
+    'fail': 'retry',
+    'error': 'retry',
+    
+    # ==================== AutoGLM 特有动作 ====================
+    'take_over': 'wait',   # 用户接管，暂时映射为等待
+    'note': 'wait',        # 记录页面，暂不实现
+    'call_api': 'wait',    # 调用API，暂不实现
+    'interact': 'wait',    # 用户交互，暂时映射为等待
 }
 
 class BaseTask(ABC):
@@ -96,12 +166,12 @@ class BaseTask(ABC):
         self.package_name = None
         self.planning_info = {}  # 存储 planning 返回的其他信息
         
-        logging.info(f"初始化任务: {task_description}")
-        logging.info(f"数据目录: {data_dir}")
-        logging.info(f"设备类型: {device_type}")
-        logging.info(f"使用步骤循环: {use_step_loop}")
-        logging.info(f"绘制可视化: {draw}")
-        logging.info(f"启用规划: {enable_planning}")
+        logger.info(f"初始化任务: {task_description}")
+        logger.info(f"数据目录: {data_dir}")
+        logger.info(f"设备类型: {device_type}")
+        logger.info(f"使用步骤循环: {use_step_loop}")
+        logger.info(f"绘制可视化: {draw}")
+        logger.info(f"启用规划: {enable_planning}")
     
     def execute(self) -> Dict:
         """
@@ -110,65 +180,70 @@ class BaseTask(ABC):
         Returns:
             包含任务执行结果的字典
         """
-        logging.info(f"开始执行任务: {self.task_description}")
+        logger.info(f"开始执行任务: {self.task_description}")
         start_time = time.time()
         
         try:
             # 如果启用 planning，先进行任务规划
             if self.enable_planning:
-                logging.info("执行 planning...")
+                logger.info("执行 planning...")
                 try:
                     planning_result = self._plan_task()
                     if planning_result:
                         # 更新任务描述（如果 planning 返回了优化后的描述）
                         if 'task_description' in planning_result:
                             self.task_description = planning_result['task_description']
-                            logging.info(f"任务描述已优化: {self.task_description}")
+                            logger.info(f"任务描述已优化: {self.task_description}")
                         
                         # 更新 APP 信息
                         if 'app_name' in planning_result:
                             self.app_name = planning_result['app_name']
-                            logging.info(f"目标 APP: {self.app_name}")
+                            logger.info(f"目标 APP: {self.app_name}")
                         
                         if 'package_name' in planning_result:
                             self.package_name = planning_result['package_name']
-                            logging.info(f"包名: {self.package_name}")
+                            logger.info(f"包名: {self.package_name}")
                         
                         # 保存其他 planning 信息
                         self.planning_info = planning_result
                         
                         # 如果需要启动应用
                         if self.package_name:
-                            logging.info(f"启动应用: {self.package_name}")
+                            logger.info(f"启动应用: {self.package_name}")
                             self.device.app_start(self.package_name)
                 except Exception as e:
-                    logging.warning(f"planning 失败，继续使用原始任务: {e}")
+                    logger.warning(f"planning 失败，继续使用原始任务: {e}")
             
+            logger.info(60*"=")
+            logger.info(f"step_count: {self.step_count}")
+            logger.info(60*"=")
             if self.use_step_loop:
                 # 步骤循环模式：框架控制循环
                 result = self._execute_with_step_loop()
+                
             else:
                 # 一次性执行模式：子类自己控制循环
                 result = self._execute_task()
-            
+            logger.info(60*"=")
+
             # 如果启动了应用，执行完成后停止应用
             if self.enable_planning and self.package_name:
                 try:
-                    logging.info(f"停止应用: {self.package_name}")
+                    logger.info(f"停止应用: {self.package_name}")
                     self.device.app_stop(self.package_name)
                 except Exception as e:
-                    logging.warning(f"停止应用失败: {e}")
+                    logger.warning(f"停止应用失败: {e}")
             
             self.total_time = time.time() - start_time
             
             # 保存结果
             self._save_results(result)
             
-            logging.info(f"任务已完成，耗时{self.total_time:.2f}秒")
+            logger.info(f"任务已完成，耗时{self.total_time:.2f}秒")
             return result
             
         except Exception as e:
-            logging.error(f"任务执行失败: {e}", exc_info=True)
+            logger.error(f"任务执行失败: {e}", exc_info=True)
             self.total_time = time.time() - start_time
             result = {
                 "status": "error",
@@ -186,11 +261,11 @@ class BaseTask(ABC):
         Returns:
             任务执行结果字典
         """
-        logging.info("使用步骤循环模式")
+        logger.info("使用步骤循环模式")
         
         while True:
             if self.step_count >= self.max_steps:
-                logging.warning(f"达到最大步数: {self.max_steps}")
+                logger.warning(f"达到最大步数: {self.max_steps}")
                 return {
                     "status": "max_steps_reached",
                     "step_count": self.step_count,
@@ -198,22 +273,26 @@ class BaseTask(ABC):
                 }
             
             self.step_count += 1
-            logging.info(f"\n{'='*50}")
-            logging.info(f"Step {self.step_count}/{self.max_steps}")
-            logging.info(f"{'='*50}")
+            logger.info(f"\n{'='*50}")
+            logger.info(f"Step {self.step_count}/{self.max_steps}")
+            logger.info(f"{'='*50}")
             
             try:
                 screenshot_path = self._save_screenshot(self.step_count)
                 hierarchy_path = self._save_hierarchy(self.step_count)
             except Exception as e:
-                logging.error(f"保存状态失败: {e}")
+                logger.error(f"保存状态失败: {e}")
             
             try:
                 step_start_time = time.time()
                 action_seq = self.execute_step(self.step_count)
                 step_elapsed_time = time.time() - step_start_time
                 
-                logging.info(f"Step {self.step_count} 动作: {json.dumps(action_seq, ensure_ascii=False)}")
+                logger.info(f"Step {self.step_count} 动作: {json.dumps(action_seq, ensure_ascii=False)}")
+                
+                # 统一规范化动作类型
+                action_seq = [self._normalize_action(a) for a in action_seq]
+                logger.debug(f"规范化后动作: {json.dumps(action_seq, ensure_ascii=False)}")
                 
                 should_continue = self._execute_action_seq(action_seq)
 
@@ -221,7 +300,7 @@ class BaseTask(ABC):
                     try:
                         self._draw_actions_on_image(self.step_count, action_seq)
                     except Exception as e:
-                        logging.warning(f"绘制失败: {e}")
+                        logger.warning(f"绘制失败: {e}")
                 
                 if not should_continue:
                     status = "completed"
@@ -247,10 +326,10 @@ class BaseTask(ABC):
                         self.reflect_action(self.step_count)
                         step_elapsed_time += time.time() - reflect_start_time
                     except Exception as e:
-                        logging.warning(f"反思失败: {e}")
+                        logger.warning(f"反思失败: {e}")
                 
             except Exception as e:
-                logging.error(f"Step {self.step_count} 失败: {e}", exc_info=True)
+                logger.error(f"Step {self.step_count} 失败: {e}", exc_info=True)
                 return {
                     "status": "error",
                     "step_count": self.step_count,
@@ -289,6 +368,74 @@ class BaseTask(ABC):
             "or implement _execute_task() for one-time execution"
         )
     
+    def _normalize_action(self, action: Dict) -> Dict:
+        """
+        规范化动作字典，将各模型特定的动作名称映射为统一格式
+        
+        Args:
+            action: 原始动作字典，包含 type 和 params
+            
+        Returns:
+            规范化后的动作字典
+        """
+        if not isinstance(action, dict):
+            return action
+            
+        action_type = action.get('type', '').lower()
+        params = action.get('params', {})
+        
+        # 映射动作类型
+        normalized_type = ACTION_TYPE_ALIASES.get(action_type, action_type)
+        
+        # 规范化参数名称
+        normalized_params = self._normalize_params(normalized_type, params)
+        
+        return {'type': normalized_type, 'params': normalized_params}
+    
+    def _normalize_params(self, action_type: str, params: Dict) -> Dict:
+        """
+        规范化参数格式，统一坐标参数名称
+        
+        Args:
+            action_type: 规范化后的动作类型
+            params: 原始参数字典
+            
+        Returns:
+            规范化后的参数字典
+        """
+        if not isinstance(params, dict):
+            return params
+            
+        result = dict(params)
+        
+        # 点击/长按/双击动作的坐标参数统一
+        if action_type in ['click', 'longclick', 'doubleclick']:
+            # 将 'points' 格式转换为 'coordinate' 格式
+            if 'points' in result and 'coordinate' not in result:
+                points = result['points']
+                if isinstance(points, list) and len(points) >= 2:
+                    result['coordinate'] = [points[0], points[1]]
+            
+            # 将 'position_x'/'position_y' 格式转换为 'coordinate' 格式
+            if 'position_x' in result and 'position_y' in result and 'coordinate' not in result:
+                result['coordinate'] = [result['position_x'], result['position_y']]
+        
+        # 滑动动作的坐标参数统一
+        if action_type == 'scroll':
+            # 将 'start'/'end' 格式转换为 'start_coordinate'/'end_coordinate'
+            if 'start' in result and 'start_coordinate' not in result:
+                result['start_coordinate'] = result.pop('start')
+            if 'end' in result and 'end_coordinate' not in result:
+                result['end_coordinate'] = result.pop('end')
+        
+        # 输入动作的文本参数统一
+        if action_type == 'input_text':
+            # 将 'content' 格式转换为 'text' 格式
+            if 'content' in result and 'text' not in result:
+                result['text'] = result.pop('content')
+        
+        return result
+    
     def _execute_action_seq(self, action_seq: List[Dict]) -> bool:
         """
         执行动作序列
@@ -305,9 +452,9 @@ class BaseTask(ABC):
             
             if action_type == 'retry':
                 self.retry_count += 1
-                logging.warning(f"重试次数: {self.retry_count}/{self.max_retries}")
+                logger.warning(f"重试次数: {self.retry_count}/{self.max_retries}")
                 if self.retry_count >= self.max_retries:
-                    logging.error(f"达到最大重试次数 ({self.max_retries})")
+                    logger.error(f"达到最大重试次数 ({self.max_retries})")
                     return False
                 continue
             else:
@@ -315,7 +462,7 @@ class BaseTask(ABC):
             
             if action_type == 'done':
                 status = params.get('status', 'completed')
-                logging.info(f"任务完成，状态: {status}")
+                logger.info(f"任务完成，状态: {status}")
                 return False
             
             try:
@@ -326,7 +473,7 @@ class BaseTask(ABC):
                     **params
                 )
             except Exception as e:
-                logging.error(f"执行动作 {action_type} 失败: {e}")
+                logger.error(f"执行动作 {action_type} 失败: {e}")
                 raise
         
         return True
@@ -339,7 +486,7 @@ class BaseTask(ABC):
             action_type: 动作类型
             params: 动作参数
         """
-        logging.info(f"执行 {action_type}：{params}")
+        logger.info(f"执行 {action_type}：{params}")
         
         action_type = action_type.lower()
         
@@ -405,16 +552,19 @@ class BaseTask(ABC):
             self.device.keyevent('HOME')
             
         elif action_type in ['open', 'start_app', 'launch', 'open_app']:
-            app_name = params.get('app_name') or params.get('package_name')
+            app_name = params.get('app_name')
+            package_name = params.get('package_name')
             if app_name:
                 self.device.start_app(app_name)
+            elif package_name:
+                self.device.app_start(package_name)
                 
         elif action_type == 'wait':
             seconds = params.get('seconds', 1)
             time.sleep(seconds)
             
         else:
-            logging.warning(f"未知的动作类型: {action_type}")
+            logger.warning(f"未知的动作类型: {action_type}")
     
     def reflect_action(self, step_index: int):
         """
@@ -454,7 +604,7 @@ class BaseTask(ABC):
         """
         # 默认实现：不进行 planning
         # 子类可以覆盖此方法实现具体的 planning 逻辑
-        logging.debug("Default _plan_task implementation: no planning performed")
+        logger.debug("Default _plan_task implementation: no planning performed")
         return None
     
     def _save_screenshot(self, step_index: int) -> str:
@@ -488,7 +638,7 @@ class BaseTask(ABC):
             return hierarchy_path
             
         except Exception as e:
-            logging.error(f"保存 Step {step_index} 的 UI 层级失败: {e}")
+            logger.error(f"保存 Step {step_index} 的 UI 层级失败: {e}")
             return ""
     
     def _save_results(self, result: Dict):
@@ -520,7 +670,7 @@ class BaseTask(ABC):
         with open(react_path, "w", encoding="utf-8") as f:
             json.dump(self.reacts, f, ensure_ascii=False, indent=2)
         
-        logging.info(f"结果已保存到 {self.data_dir}")
+        logger.info(f"结果已保存到 {self.data_dir}")
     
     def _add_action(self, action_type: str, step_index: int, **kwargs):
         """添加动作记录"""
@@ -553,7 +703,7 @@ class BaseTask(ABC):
         dst_path = os.path.join(self.data_dir, f"{step_index}_draw.jpg")
         
         if not os.path.exists(src_path):
-            logging.warning(f"源截图不存在: {src_path}")
+            logger.warning(f"源截图不存在: {src_path}")
             return
 
         try:
@@ -652,12 +802,12 @@ class BaseTask(ABC):
             
             if modified:
                 image.convert("RGB").save(dst_path)
-                logging.info(f"保存可视化图像：{dst_path}")
+                logger.info(f"保存可视化图像：{dst_path}")
             else:
                 shutil.copy(src_path, dst_path)
 
         except Exception as e:
-            logging.warning(f"绘制动作失败: {e}")
+            logger.warning(f"绘制动作失败: {e}")
 
     def _draw_tap_overlay(self, image: Image.Image, coordinates: tuple, radius: int = 20) -> Image.Image:
         base = image.convert("RGBA")

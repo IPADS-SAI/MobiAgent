@@ -36,6 +36,7 @@ class MobiAgentStepTask(BaseTask):
         device_type: str = "Android",
         max_steps: int = 40,
         max_retries: int = 3,
+        api_base: str = None,
         service_ip: str = "localhost",
         decider_port: int = 8000,
         grounder_port: int = 8001,
@@ -80,12 +81,24 @@ class MobiAgentStepTask(BaseTask):
             enable_planning=enable_planning,
             **kwargs
         )
-        
+
         # 配置服务URL
-        if service_ip.startswith("http://") or service_ip.startswith("https://"):
+        if api_base is not None and service_ip is None:
+            if api_base.startswith("http://") or api_base.startswith("https://"):
+                self.api_base = api_base
+            else:
+                logger.error("Invalid API base URL: %s", api_base)
+                logger.error("API base URL must start with http:// or https://")
+                return
+            decider_base_url = self.api_base
+            grounder_base_url = self.api_base
+            planner_base_url = self.api_base
+            logger.info("Using API base URL: %s", self.api_base)
+        elif service_ip is not None and (service_ip.startswith("http://") or service_ip.startswith("https://")):
             decider_base_url = f"{service_ip}:{decider_port}/v1"
             grounder_base_url = f"{service_ip}:{grounder_port}/v1"
             planner_base_url = f"{service_ip}:{planner_port}/v1"
+            logger.info("Using service IP: %s", service_ip)
         else:
             decider_base_url = f"http://{service_ip}:{decider_port}/v1"
             grounder_base_url = f"http://{service_ip}:{grounder_port}/v1"

@@ -2,14 +2,14 @@
 # 示例1: 使用MobiAgent执行单个任务
 
 python run.py \
-  --provider mobiagent_step \
-  --task "在淘宝上搜索电动牙刷，选最畅销的那款并加入购物车" \
+  --provider mobiagent \
   --service-ip localhost \
   --decider-port 9002 \
   --grounder-port 9002 \
   --planner-port 8080 \
+  --max-steps 30 \
+  --output-dir results \
   --enable-planning \
   --use-e2e \
-  --max-steps 30 \
-  --draw \
-  --output-dir results
+  --task "在淘宝上搜索电动牙刷，选最畅销的那款" \
+  --device-type Harmony

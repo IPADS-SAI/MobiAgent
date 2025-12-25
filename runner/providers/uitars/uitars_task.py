@@ -30,11 +30,16 @@ class UITARSTask(BaseTask):
         data_dir: str,
         device_type: str = "Android",
         max_steps: int = 40,
-        model_base_url: str = "http://localhost:8000/v1",
-        model_name: str = "UI-TARS-1.5-7B",
+        # 统一参数
+        api_base: str = None,
+        model: str = "UI-TARS-1.5-7B",
         temperature: float = 0.0,
+        # UI-TARS 专属参数
         step_delay: float = 2.0,
         device_ip: Optional[str] = None,
+        # 向后兼容的旧参数
+        model_base_url: str = None,
+        model_name: str = None,
         **kwargs
     ):
         super().__init__(
@@ -47,11 +52,11 @@ class UITARSTask(BaseTask):
             **kwargs
         )
         
-        self.model_base_url = model_base_url
-        self.model_name = model_name
-        self.temperature = temperature
+        # 处理参数优先级: 新参数 > 旧参数 > 默认值
+        self.model_base_url = api_base or model_base_url or "http://localhost:8000/v1"
+        self.model_name = model or model_name or "UI-TARS-1.5-7B"
+        self.temperature = temperature if temperature is not None else 0.0
         self.step_delay = step_delay
-        
         # 初始化OpenAI客户端
         try:
             self.client = OpenAI(

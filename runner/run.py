@@ -67,14 +67,58 @@ def load_tasks(task_file: str) -> List:
     return tasks
 
 
+# Provider 默认配置
+PROVIDER_DEFAULTS = {
+    'mobiagent': {
+        'api_base': 'http://localhost:8000/v1',
+        'model': 'MobiMind-1.5-4B',
+        'temperature': 0.1,
+    },
+    'mobiagent_step': {
+        'api_base': 'http://localhost:8000/v1',
+        'model': 'MobiMind-1.5-4B',
+        'temperature': 0.1,
+    },
+    'uitars': {
+        'api_base': 'http://localhost:8000/v1',
+        'model': 'UI-TARS-1.5-7B',
+        'temperature': 0.0,
+    },
+    'qwen': {
+        'api_base': 'http://localhost:8080/v1',
+        'model': 'Qwen3-VL-30B-A3B-Instruct',
+        'temperature': 0.0,
+    },
+    'autoglm': {
+        'api_base': 'http://localhost:8000/v1',
+        'model': 'autoglm-phone-9b',
+        'temperature': 0.0,
+    },
+}
+
+
 def parse_args():
     """解析命令行参数"""
-    parser = argparse.ArgumentParser(description='统一的GUI Agent任务执行器')
+    parser = argparse.ArgumentParser(
+        description='统一的GUI Agent任务执行器',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+示例:
+  # 使用 MobiAgent 执行单任务
+  python run.py --provider mobiagent --task "打开淘宝搜索手机" --api-base http://localhost:8000/v1
+  
+  # 使用 UI-TARS 执行任务
+  python run.py --provider uitars --task "打开微信" --api-base http://localhost:8000/v1 --model UI-TARS-1.5-7B
+  
+  # 使用 Qwen VLM 执行任务
+  python run.py --provider qwen --task "在微博查看新闻" --api-base http://localhost:8080/v1
+"""
+    )
     
-    # 基础参数
+    # ==================== 基础参数 ====================
     parser.add_argument('--provider', type=str, default='mobiagent_step',
-                      choices=['mobiagent_step', 'uitars', 'qwen'],
-                      help='模型提供者 (默认: mobiagent_step)')
+                      choices=['mobiagent', 'mobiagent_step', 'uitars', 'qwen', 'autoglm'],
+                      help='模型提供者 (默认: mobiagent_step, mobiagent是mobiagent_step的别名)')
     parser.add_argument('--device-type', type=str, default='Android',
                       choices=['Android', 'Harmony'],
                       help='设备类型 (默认: Android)')
@@ -86,7 +130,7 @@ def parse_args():
                       choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
                       help='日志级别 (默认: INFO)')
     
-    # 任务相关
+    # ==================== 任务相关 ====================
     parser.add_argument('--task-file', type=str, default=None,
                       help='任务文件路径 (task.json 或 task_mobiflow.json)')
     parser.add_argument('--task', type=str, default=None,
@@ -94,55 +138,88 @@ def parse_args():
     parser.add_argument('--output-dir', type=str, default='results',
                       help='结果输出目录 (默认: results)')
     
-    # MobiAgent特定参数
-    parser.add_argument('--service-ip', type=str, default='localhost',
-                      help='MobiAgent服务IP (默认: localhost)')
-    parser.add_argument('--decider-port', type=int, default=8000,
-                      help='MobiAgent Decider端口 (默认: 8000)')
-    parser.add_argument('--grounder-port', type=int, default=8001,
-                      help='MobiAgent Grounder端口 (默认: 8001)')
-    parser.add_argument('--planner-port', type=int, default=8080,
-                      help='MobiAgent Planner端口 (默认: 8080)')
-    parser.add_argument('--planner-model', type=str, default='Qwen3-VL-30B-A3B-Instruct',
-                      help='Planner模型名称 (默认: Qwen3-VL-30B-A3B-Instruct)')
-    parser.add_argument('--enable-planning', action='store_true', default=False,
-                      help='启用任务规划（自动分析APP和优化任务描述）')
-    parser.add_argument('--use-qwen3', action='store_true', default=True,
-                      help='使用Qwen3模型')
-    parser.add_argument('--use-e2e', action='store_true', default=False,
-                      help='使用端到端模式')
-    parser.add_argument('--decider-model', type=str, default='MobiMind-1.5-4B',
-                      help='Decider模型名称 (默认: MobiMind-1.5-4B)')
-    parser.add_argument('--grounder-model', type=str, default='MobiMind-1.5-4B',
-                      help='Grounder模型名称 (默认: MobiMind-1.5-4B)')
-    parser.add_argument('--use-experience', action='store_true', default=False,
-                      help='使用经验')
-    parser.add_argument('--use-graphrag', action='store_true', default=False,
-                      help='使用GraphRAG')
+    # ==================== 通用模型参数 ====================
+    parser.add_argument('--api-base', type=str, default=None,
+                      help='模型服务基础URL (通用参数, 默认按provider自动设置)')
+    parser.add_argument('--api-key', type=str, default='',
+                      help='API密钥 (通用参数, 无需验证时可留空)')
+    parser.add_argument('--model', type=str, default=None,
+                      help='模型名称 (通用参数, 默认按provider自动设置)')
+    parser.add_argument('--temperature', type=float, default=None,
+                      help='生成温度 (通用参数, 默认按provider自动设置)')
     
-    # UI-TARS特定参数
-    parser.add_argument('--model-url', type=str, default='http://123.60.91.241:9003/v1',
-                      help='UI-TARS模型服务地址')
-    parser.add_argument('--model-name', type=str, default='UI-TARS-1.5-7B',
-                      help='UI-TARS模型名称')
-    parser.add_argument('--temperature', type=float, default=0.7,
-                      help='温度参数 (默认: 0.7)')
-    parser.add_argument('--step-delay', type=float, default=2.0,
+    # ==================== MobiAgent 专属参数 ====================
+    mobiagent_group = parser.add_argument_group('MobiAgent 专属参数')
+    mobiagent_group.add_argument('--service-ip', type=str, default='localhost',
+                      help='MobiAgent服务IP (默认: localhost)')
+    mobiagent_group.add_argument('--decider-port', type=int, default=8000,
+                      help='Decider端口 (默认: 8000)')
+    mobiagent_group.add_argument('--grounder-port', type=int, default=8001,
+                      help='Grounder端口 (默认: 8001)')
+    mobiagent_group.add_argument('--planner-port', type=int, default=8080,
+                      help='Planner端口 (默认: 8080)')
+    mobiagent_group.add_argument('--planner-model', type=str, default='Qwen3-VL-30B-A3B-Instruct',
+                      help='Planner模型名称 (默认: Qwen3-VL-30B-A3B-Instruct)')
+    mobiagent_group.add_argument('--enable-planning', action='store_true', default=False,
+                      help='启用任务规划（自动分析APP和优化任务描述）')
+    mobiagent_group.add_argument('--use-e2e', action='store_true', default=True,
+                      help='使用端到端模式 (默认: True)')
+    mobiagent_group.add_argument('--decider-model', type=str, default='MobiMind-1.5-4B',
+                      help='Decider模型名称 (默认: MobiMind-1.5-4B)')
+    mobiagent_group.add_argument('--grounder-model', type=str, default='MobiMind-1.5-4B',
+                      help='Grounder模型名称 (默认: MobiMind-1.5-4B)')
+    mobiagent_group.add_argument('--use-experience', action='store_true', default=False,
+                      help='使用经验')
+    
+    # ==================== UI-TARS 专属参数 ====================
+    uitars_group = parser.add_argument_group('UI-TARS 专属参数')
+    uitars_group.add_argument('--step-delay', type=float, default=2.0,
                       help='步骤延迟秒数 (默认: 2.0)')
     
-    # Qwen/VLLM SPECIFIC ARGS
-    parser.add_argument('--qwen-api-key', type=str, default="",
-                      help='API Key for Qwen/VLLM')
-    parser.add_argument('--qwen-api-base', type=str, default="",
-                      help='API Base URL for Qwen/VLLM')
-    parser.add_argument('--qwen-model', type=str, default='Qwen3-VL-30B-A3B-Instruct',
-                      help='Model name for Qwen/VLLM')
+    # ==================== 向后兼容的旧参数 (deprecated) ====================
+    compat_group = parser.add_argument_group('向后兼容参数 (deprecated, 建议使用通用参数)')
+    compat_group.add_argument('--model-url', type=str, default=None,
+                      help='[deprecated] 模型服务地址, 请使用 --api-base')
+    compat_group.add_argument('--model-name', type=str, default=None,
+                      help='[deprecated] 模型名称, 请使用 --model')
+    compat_group.add_argument('--qwen-api-key', type=str, default=None,
+                      help='[deprecated] Qwen API密钥, 请使用 --api-key')
+    compat_group.add_argument('--qwen-api-base', type=str, default=None,
+                      help='[deprecated] Qwen API地址, 请使用 --api-base')
+    compat_group.add_argument('--qwen-model', type=str, default="Qwen3-VL-30B-A3B-Instruct",
+                      help='[deprecated] Qwen模型名称, 请使用 --model')
     
-    # 可视化参数
+    # ==================== 可视化参数 ====================
     parser.add_argument('--draw', action='store_true', default=False,
                       help='是否在截图上绘制操作可视化 (默认: False)')
     
-    return parser.parse_args()
+    args = parser.parse_args()
+    
+    # 处理 provider 别名
+    if args.provider == 'mobiagent':
+        args.provider = 'mobiagent_step'
+    
+    # 获取 provider 默认值
+    defaults = PROVIDER_DEFAULTS.get(args.provider, {})
+    
+    # 合并向后兼容参数到统一参数
+    # api-base 优先级: --api-base > --model-url > --qwen-api-base > provider默认值
+    if args.api_base is None:
+        args.api_base = args.model_url or args.qwen_api_base or defaults.get('api_base')
+    
+    # model 优先级: --model > --model-name > --qwen-model > provider默认值
+    if args.model is None:
+        args.model = args.model_name or args.qwen_model or defaults.get('model')
+    
+    # api-key 优先级: --api-key > --qwen-api-key
+    if not args.api_key and args.qwen_api_key:
+        args.api_key = args.qwen_api_key
+    
+    # temperature 使用 provider 默认值
+    if args.temperature is None:
+        args.temperature = defaults.get('temperature', 0.0)
+    
+    return args
 
 
 def create_device(device_type: str, device_id: Optional[str] = None):
@@ -209,8 +286,14 @@ def execute_single_task(
         logging.info(f"App: {app_name}, Type: {task_type}")
     logging.info(f"=" * 60)
     
-    # 准备kwargs参数
-    kwargs = {}
+    # 准备kwargs参数 - 使用统一的参数命名
+    kwargs = {
+        # 通用参数
+        "api_base": args.api_base,
+        "api_key": args.api_key,
+        "model": args.model,
+        "temperature": args.temperature,
+    }
     
     if provider == "mobiagent_step":
         kwargs.update({
@@ -227,17 +310,16 @@ def execute_single_task(
         })
     elif provider == "uitars":
         kwargs.update({
-            "model_base_url": args.model_url,
-            "model_name": args.model_name,
-            "temperature": args.temperature,
             "step_delay": args.step_delay,
             "device_ip": args.device_id,
+            # 向后兼容: 同时传递旧参数名
+            "model_base_url": args.api_base,
+            "model_name": args.model,
         })
     elif provider == "qwen":
         kwargs.update({
-            "api_key": args.qwen_api_key,
-            "api_base": args.qwen_api_base,
-            "model_name": args.qwen_model,
+            # 向后兼容: 同时传递旧参数名
+            "model_name": args.model,
         })
     
     # 创建任务管理器
@@ -312,7 +394,7 @@ def execute_batch_tasks(
     logging.info(f"开始批量执行 {total_tasks} 个任务")
     
     # 处理不同格式的任务文件
-    # 判断是否为MobiFlow格式
+    # 判断是否为MobiFlow格式(多APP多任务)
     is_mobiflow = False
     if isinstance(tasks, list) and len(tasks) > 0 and isinstance(tasks[0], dict):
         if "tasks" in tasks[0] and isinstance(tasks[0]["tasks"], list):

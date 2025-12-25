@@ -76,12 +76,14 @@ class TaskManager:
             from providers.uitars.uitars_task import UITARSTask
             from providers.mobiagent.mobile_task import MobiAgentStepTask
             from providers.qwen.qwen_task import QwenTask
+            from providers.autoglm.autoglm_task import AutoGLMTask
             
             task_map = {
-                # "mobiagent": MobiAgentTask,
+                "mobiagent": MobiAgentStepTask,  # 别名
                 "mobiagent_step": MobiAgentStepTask,
                 "uitars": UITARSTask,
                 "qwen": QwenTask,
+                "autoglm": AutoGLMTask,
             }
             
             return task_map

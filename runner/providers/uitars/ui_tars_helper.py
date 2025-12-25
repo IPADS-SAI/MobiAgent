@@ -3,6 +3,7 @@ import logging
 from typing import Dict, List, Tuple, Optional, Any
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 # 内置提示词模板
 PROMPT_TEMPLATE = """You are a GUI agent. You are given a task and your action history, with screenshots. You need to perform the next action to complete the task. 
@@ -42,15 +43,11 @@ class UITarsHelper:
             (thought, raw_action, parsed_actions_list)
         """
         try:
-            # utils模块应该由uitars_task.py添加到路径中
-            import utils as ui_tars_parser
+            # 由ui_tars添加到路径中
+            import ui_tars.action_parser as ui_tars_parser
         except ImportError:
-            # 某些环境的备选方案或名称不同
-            try:
-                import ui_tars.action_parser as ui_tars_parser
-            except ImportError:
-                logger.error("未能导入utils(UI-TARS)。请确保sys.path正确。")
-                raise
+            logger.error("未能导入utils(UI-TARS)。请确保sys.path正确。")
+            raise
         
         # 计算smart resize尺寸
         smart_height, smart_width = ui_tars_parser.smart_resize(
@@ -79,7 +76,7 @@ class UITarsHelper:
         pyautogui_code = ui_tars_parser.parsing_response_to_pyautogui_code(
             action, image_height, image_width
         )
-        logger.info(f"PyAutoGUI代码: {pyautogui_code}")
+        logger.debug(f"PyAutoGUI代码: {pyautogui_code}")
 
         # 转换为内部格式
         internal_action = UITarsHelper._convert_action_to_internal(action, pyautogui_code, image_width, image_height, model_name)
@@ -110,7 +107,7 @@ class UITarsHelper:
             return None
 
         # UI-TARS-1.5-7B特殊处理
-        
+        # 使用返回的绝对坐标
         if model_name == "UI-TARS-1.5-7B":
             # 点击/长按
             if action_type in ["click", "left_single", "left_double", "right_single", "hover", "long_press"]:
@@ -164,7 +161,7 @@ class UITarsHelper:
              content = action_inputs.get('content', 'success')
              return {'type': 'done', 'params': {'status': 'success', 'message': content}}
 
-        if action_type in ["click", "left_single", "left_double", "right_single", "hover"]:
+        if action_type in ["click", "long_press"]:
             click_match = re.search(r'pyautogui\.click\((\d+(?:\.\d+)?), (\d+(?:\.\d+)?)', pyautogui_code)
             if click_match:
                 x = float(click_match.group(1))
@@ -206,7 +203,16 @@ class UITarsHelper:
                 direction = 'up' if val < 0 else 'down'
             result_type = 'swipe'
             result_params = {'direction': direction}
-
+        elif action_type == "drag":
+            move_match = re.search(r'pyautogui\.moveTo\((\d+(?:\.\d+)?), (\d+(?:\.\d+)?)', pyautogui_code)
+            drag_match = re.search(r'pyautogui\.dragTo\((\d+(?:\.\d+)?), (\d+(?:\.\d+)?)', pyautogui_code)
+            if move_match and drag_match:
+                sx = float(move_match.group(1))
+                sy = float(move_match.group(2))
+                ex = float(drag_match.group(1))
+                ey = float(drag_match.group(2))
+                result_type = 'swipe'
+                result_params = {'points': [int(sx), int(sy), int(ex), int(ey)]}
         if result_type:
             return {'type': result_type, 'params': result_params}
             

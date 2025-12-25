@@ -86,27 +86,57 @@ class AndroidDevice(Device):
         
         # 常用应用的包名映射
         self.app_package_names = {
+            # 旅行出行类
+            "携程旅行": "ctrip.android.view",
             "携程": "ctrip.android.view",
-            "同城": "com.tongcheng.android",
+            "同程旅行": "com.tongcheng.android",
+            "同程": "com.tongcheng.android",
             "飞猪": "com.taobao.trip",
             "去哪儿": "com.Qunar",
             "华住会": "com.htinns",
+            "滴滴出行": "com.sdu.didi.psnger",
+            "高德地图": "com.autonavi.minimap",
+
+            # 生活服务类
             "饿了么": "me.ele",
             "支付宝": "com.eg.android.AlipayGphone",
+            "美团": "com.sankuai.meituan",
+            "大众点评": "com.dianping.v1",
+
+            # 购物电商类
             "淘宝": "com.taobao.taobao",
             "京东": "com.jingdong.app.mall",
-            "美团": "com.sankuai.meituan",
-            "滴滴出行": "com.sdu.didi.psnger",
-            "微信": "com.tencent.mm",
-            "微博": "com.sina.weibo",
+            "拼多多": "com.xunmeng.pinduoduo",
             "华为商城": "com.vmall.client",
+            "闲鱼": "com.taobao.idlefish",  # 修正原"咸鱼"错别字
+
+            # 社交通讯类
+            "微信": "com.tencent.mm",
+            "QQ": "com.tencent.mobileqq",
+            "新浪微博": "com.sina.weibo",
+            "微博": "com.sina.weibo",  
+            "小红书": "com.xingin.xhs",
+
+            # 影音娱乐类
+            "bilibili": "tv.danmaku.bili",
+            "哔哩哔哩": "tv.danmaku.bili",  
+            "爱奇艺": "com.qiyi.video",
+            "腾讯视频": "com.tencent.qqlive",
+            "优酷": "com.youku.phone",
+            "QQ音乐": "com.tencent.qqmusic",
+            "网易云音乐": "com.netease.cloudmusic",
+            "酷狗音乐": "com.kugou.android",
+            "抖音": "com.ss.android.ugc.aweme",
+            "快手": "com.smile.gifmaker",
+            "今日头条": "com.ss.android.article.news",
+            "知乎": "com.zhihu.android",
             "华为视频": "com.huawei.himovie",
             "华为音乐": "com.huawei.music",
+
+            # 系统工具类
+            "浏览器": "com.microsoft.emmx",
             "华为应用市场": "com.huawei.appmarket",
-            "拼多多": "com.xunmeng.pinduoduo",
-            "大众点评": "com.dianping.v1",
-            "小红书": "com.xingin.xhs",
-            "浏览器": "com.microsoft.emmx"
+            "备忘录": "com.huawei.notepad"
         }
 
     def start_app(self, app):
@@ -205,46 +235,60 @@ class HarmonyDevice(Device):
         
         # 常用应用的包名映射
         self.app_package_names = {
-            "携程": "com.ctrip.harmonynext",
-            "飞猪": "com.fliggy.hmos",
-            "IntelliOS": "ohos.hongmeng.intellios",
-            "同城": "com.tongcheng.hmos",
-            "携程旅行": "com.ctrip.harmonynext",
-            "饿了么": "me.ele.eleme",
-            "知乎": "com.zhihu.hmos",
-            "哔哩哔哩": "yylx.danmaku.bili",
-            "微信": "com.tencent.wechat",
-            "小红书": "com.xingin.xhs_hos",
-            "QQ音乐": "com.tencent.hm.qqmusic",
-            "高德地图": "com.amap.hmapp",
-            "淘宝": "com.taobao.taobao4hmos",
-            "微博": "com.sina.weibo.stage",
-            "京东": "com.jd.hm.mall",
-            "飞猪旅行": "com.fliggy.hmos",
-            "天气": "com.huawei.hmsapp.totemweather",
-            "什么值得买": "com.smzdm.client.hmos",
-            "闲鱼": "com.taobao.idlefish4ohos",
-            "慧通差旅": "com.smartcom.itravelhm",
-            "PowerAgent": "com.example.osagent",
-            "航旅纵横": "com.umetrip.hm.app",
-            "滴滴出行": "com.sdu.didi.hmos.psnger",
-            "电子邮件": "com.huawei.hmos.email",
-            "图库": "com.huawei.hmos.photos",
-            "日历": "com.huawei.hmos.calendar",
-            "心声社区": "com.huawei.it.hmxinsheng",
-            "信息": "com.ohos.mms",
-            "文件管理": "com.huawei.hmos.files",
-            "运动健康": "com.huawei.hmos.health",
-            "智慧生活": "com.huawei.hmos.ailife",
-            "豆包": "com.larus.nova.hm",
-            "WeLink": "com.huawei.it.welink",
-            "设置": "com.huawei.hmos.settings",
-            "懂车帝": "com.ss.dcar.auto",
-            "美团外卖": "com.meituan.takeaway",
-            "大众点评": "com.sankuai.dianping",
-            "美团": "com.sankuai.hmeituan",
-            "浏览器": "com.huawei.hmos.browser",
-            "拼多多": "com.xunmeng.pinduoduo.hos"
+        # 旅行出行类
+        "携程旅行": "com.ctrip.harmonynext",  
+        "携程": "com.ctrip.harmonynext",  
+        "飞猪旅行": "com.fliggy.hmos",
+        "飞猪": "com.fliggy.hmos",
+        "同程旅行": "com.tongcheng.hmos",
+        "同程": "com.tongcheng.hmos",
+        "航旅纵横": "com.umetrip.hm.app",
+        "慧通差旅": "com.smartcom.itravelhm",
+        "滴滴出行": "com.sdu.didi.hmos.psnger",
+        
+        # 生活服务类
+        "饿了么": "me.ele.eleme",
+        "美团": "com.sankuai.hmeituan",
+        "美团外卖": "com.meituan.takeaway",
+        "大众点评": "com.sankuai.dianping",
+        "支付宝": "com.alipay.mobile.client",
+        "微信": "com.tencent.wechat",
+        "天气": "com.huawei.hmsapp.totemweather",
+        "什么值得买": "com.smzdm.client.hmos",
+        
+        # 购物电商类
+        "淘宝": "com.taobao.taobao4hmos",
+        "京东": "com.jd.hm.mall",
+        "闲鱼": "com.taobao.idlefish4ohos",
+        "拼多多": "com.xunmeng.pinduoduo.hos",
+        "华为商城": "com.huawei.hmos.vmall",
+        "高德地图": "com.amap.hmapp",
+        
+        # 社交娱乐类
+        "知乎": "com.zhihu.hmos",
+        "哔哩哔哩": "yylx.danmaku.bili",
+        "小红书": "com.xingin.xhs_hos",
+        "微博": "com.sina.weibo.stage",
+        "QQ音乐": "com.tencent.hm.qqmusic",
+        "豆包": "com.larus.nova.hm",
+        "懂车帝": "com.ss.dcar.auto",
+        
+        # 华为系统/应用类
+        "电子邮件": "com.huawei.hmos.email",
+        "图库": "com.huawei.hmos.photos",
+        "日历": "com.huawei.hmos.calendar",
+        "心声社区": "com.huawei.it.hmxinsheng",
+        "信息": "com.ohos.mms",
+        "文件管理": "com.huawei.hmos.files",
+        "运动健康": "com.huawei.hmos.health",
+        "智慧生活": "com.huawei.hmos.ailife",
+        "WeLink": "com.huawei.it.welink",
+        "设置": "com.huawei.hmos.settings",
+        "浏览器": "com.huawei.hmos.browser",
+        "华为阅读": "com.huawei.hmsapp.books",
+        
+        # 其他类
+        "PowerAgent": "com.example.osagent"
         }
 
     def start_app(self, app):

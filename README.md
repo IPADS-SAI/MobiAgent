@@ -35,6 +35,7 @@ MobiAgent: A Systematic Framework for Customizable Mobile Agents
 </div>
 
 ## News
+- `[2025.12.26]` 📱 **Pure on-device inference on smartphones is now supported!** Run MobiAgent entirely locally on your Android device—no cloud dependency required. See the detailed guide in [`phone_runner/README.md`](phone_runner/README.md).
 - `[2025.12.08]` 🔥 We've released a new reasoning model (support both Android and HarmonyOS): MobiMind-Reasoning-4B [MobiMind-Reasoning-4B-1208](https://huggingface.co/IPADS-SAI/MobiMind-Reasoning-4B-1208), and 4-bit weight quantized (W4A16) [MobiMind-Reasoning-4B-1208-AWQ](https://huggingface.co/IPADS-SAI/MobiMind-Reasoning-4B-1208-AWQ) version. When serving with vLLM, please add the flag `--dtype float16` for quantized model to ensure compatibility.
 - `[2025.11.03]` ✅ Added multi-task execution module support and user preference support. For details about multi-task usage and configuration, see [here](runner/mobiagent/multi_task/README.md). 
 - `[2025.11.03]` 🧠 Introduced a user profile memory system (Mem0): async preference extraction with LLM after task completion, raw-text preference storage and retrieval, dual backend support (vector search via Milvus and optional GraphRAG via Neo4j). Preferences are retrieved as original texts and directly appended to experience prompts via `combine_context(...)` to personalize planning. Configure via `--user_profile on|off` and `--use_graphrag on|off`, see [here](runner/README.md#用户画像与偏好记忆) for details.

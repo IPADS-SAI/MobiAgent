@@ -35,6 +35,7 @@ MobiAgent: A Systematic Framework for Customizable Mobile Agents
 </div>
 
 ## 新闻
+- `[2025.12.26]` 📱 新增手机端纯本地推理支持！无需联网，可在 Android 设备上完全本地运行 MobiAgent。详见 [`phone_runner/README.md`](phone_runner/README.md)。
 - `[2025.12.08]` 🔥 我们发布了全新的推理模型（同时支持 Android 与鸿蒙系统）：**MobiMind-Reasoning-4B**  
   - 原始版本：[MobiMind-Reasoning-4B-1208](https://huggingface.co/IPADS-SAI/MobiMind-Reasoning-4B-1208)  
   - 4-bit 权重量化（W4A16）版本：[MobiMind-Reasoning-4B-1208-AWQ](https://huggingface.co/IPADS-SAI/MobiMind-Reasoning-4B-1208-AWQ)  

@@ -5,7 +5,7 @@
 
 ## 📱 适配设备
 
-- 一台 Android 设备（建议 Android 10+，RAM ≥ 12GB 以获得较好体验）
+- 一台 Android 设备（建议 Android 10+，RAM ≥ 12GB 以获得较好体验, 高通 8gen3 或者 8elite）
 - 安装 [Termux](https://github.com/termux/termux-app)（推荐从 [F-Droid](https://f-droid.org/packages/com.termux/) 安装以获得最新版）
 
 

@@ -208,7 +208,7 @@ Experience memory enables the planner to retrieve and use similar past task exec
 
 ##### 4.3 Action Memory
 
-Action memory (AgentRR) caches and reuses successful action sequences to accelerate task execution. For setup and usage, see the [AgentRR README](agent_rr/README.md).
+Action memory (AgentRR) caches and reuses successful action sequences to accelerate task execution. For ActTree reproduction and evaluation, see [AgentRR README (ActTree)](agent_rr/README.md). For ActChain (experience-based action memory) which is being integrated with Agent Runner as an experimental feature, see [#49](https://github.com/IPADS-SAI/MobiAgent/pull/49).
 
 #### 5. Launch Agent Runner
 

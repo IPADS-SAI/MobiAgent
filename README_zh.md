@@ -211,7 +211,7 @@ NEO4J_PASSWORD=testpassword
 
 ##### 4.3 动作记忆
 
-动作记忆（AgentRR）缓存并复用成功的动作序列以加速任务执行。设置和使用说明见 [AgentRR README](agent_rr/README.md)。
+动作记忆（AgentRR）缓存并复用成功的动作序列以加速任务执行。关于 ActTree 的复现与评测，见 [AgentRR README (ActTree)](agent_rr/README.md)。ActChain（基于经验的动作记忆）正在作为实验特性集成到 Agent Runner 中，见 [#49](https://github.com/IPADS-SAI/MobiAgent/pull/49)。
 
 #### 5. 启动Agent执行器
 

@@ -36,6 +36,7 @@ MobiAgent: A Systematic Framework for Customizable Mobile Agents
 
 ## 新闻
 - [2025.12.26] 📱 **支持手机端纯本地推理！** 详见 [`phone_runner/README.md`](phone_runner/README.md)。
+- [2025.12.25] 🛠️ 我们发布了一个[通用GUIAgent执行框架](https://github.com/IPADS-SAI/MobiAgent/blob/unify-runner/runner/RUNNER_README.md)（位于unify-runner分支下的[runner](https://github.com/IPADS-SAI/MobiAgent/blob/unify-runner/runner/RUNNER_README.md)），支持一键配置运行各GUIAgent模型（Mobiagent、UI-TARS、AutoGLM等、以及以Qwen-VL Gemini为代表的VL-LLM）。
 - [2025.12.08] 🔥 我们发布了 [MobiMind-Reasoning-4B](https://huggingface.co/IPADS-SAI/MobiMind-Reasoning-4B-1208) 及其量化版本 [MobiMind-Reasoning-4B-AWQ](https://huggingface.co/IPADS-SAI/MobiMind-Reasoning-4B-1208-AWQ)。
 - [2025.11.03] 新增多任务执行支持。详见 [多任务 README](runner/mobiagent/multi_task/README.md)。
 - [2025.11.03] 引入用户画像记忆系统，通过`--user_profile on`启用。详见 [用户画像 README](runner/README.md#用户画像与偏好记忆)。
@@ -80,7 +81,7 @@ MobiAgent: A Systematic Framework for Customizable Mobile Agents
 
 **多任务演示**
 
-任务：`帮我在小红书找一下推荐的最畅销的男士牛仔裤，然后在淘宝搜这一款裤子，把淘宝中裤子品牌、名称和价格用微信发给小赵`
+任务：`在小红书查找2025年性价比最高的单反相机推荐，然后在淘宝搜索该相机，并将淘宝中的相机品牌、名称和价格通过微信发送给小赵。`
 <div align="center">
   <video src="https://github.com/user-attachments/assets/92fdf23c-71d6-4c67-b02a-c3fa13fcc0e7"/>
 </div>
@@ -150,20 +151,19 @@ python -m pip install paddlepaddle-gpu>=3.1.0 -i https://www.paddlepaddle.org.cn
 
 下载好模型检查点后，使用 vLLM 部署模型推理服务：
 
-**对于 MobiMind-Mixed/Reasoning 模型（基于 Qwen3-VL-4B）**:
+download 地址：
+- MobiMind-1.5-4B(***fastest&experimental**, support [e2e](https://github.com/IPADS-SAI/MobiAgent/blob/a782deae95fa33159ada0bb04d449be6e71e5e1c/runner/mobiagent/mobiagent.py#L1089)*):
+  -  [huggingface](https://huggingface.co/IPADS-SAI/MobiMind-1.5-4B-1220)
+  -  [modelscope](https://www.modelscope.cn/models/fengerhu1/MobiMind-1.5-4B-1220)
+- MobiMind-Reasoning-4B(**stable**):
+  - [huggingface](https://huggingface.co/IPADS-SAI/MobiMind-Reasoning-4B-1208)
+  - [modelscope](https://www.modelscope.cn/models/fengerhu1/MobiMind-Reasoning-4B-1208)
 
 ```bash
-vllm serve IPADS-SAI/MobiMind-Mixed-4B --port <mixed port>
+vllm serve MobiMind-Reasoning-4B --port <mixed port>
 vllm serve Qwen/Qwen3-4B-Instruct --port <planner port>
 ```
 
-**对于旧版 MobiMind-Decider/Grounder 模型**:
-
-```bash
-vllm serve IPADS-SAI/MobiMind-Decider-7B --port <decider port>
-vllm serve IPADS-SAI/MobiMind-Grounder-3B --port <grounder port>
-vllm serve Qwen/Qwen3-4B-Instruct --port <planner port>
-```
 
 #### 4. Agent 记忆系统设置（可选）
 
@@ -225,8 +225,8 @@ NEO4J_PASSWORD=testpassword
 ```bash
 python -m runner.mobiagent.mobiagent \
   --service_ip <服务IP> \
-  --decider_port <Decider模型端口> \
-  --grounder_port <Grounder模型端口> \
+  --decider_port <Decider模型端口/Mixed 端口> \
+  --grounder_port <Grounder模型端口/Mixed 端口> \
   --planner_port <Planner模型端口>
 ```
 

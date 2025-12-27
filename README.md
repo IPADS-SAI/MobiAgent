@@ -36,6 +36,7 @@ MobiAgent: A Systematic Framework for Customizable Mobile Agents
 
 ## News
 - [2025.12.26] 📱 **Pure on-device inference on smartphones is now supported!** See [`phone_runner/README.md`](phone_runner/README.md) to get started.
+- [2025.12.25] 🛠️ We've released **unified General GUIAgent execution framework** (in [runner](https://github.com/IPADS-SAI/MobiAgent/blob/unify-runner/runner/RUNNER_README.md)) supporting one-click config of multiple models(`Mobiagent`, `UI-TARS`, `AutoGLM` and general vision models e.g., `Qwen-VL`, `Gemini`) for single-command APP task execution.
 - [2025.12.08] 🔥 We've released [MobiMind-Reasoning-4B](https://huggingface.co/IPADS-SAI/MobiMind-Reasoning-4B-1208) and its quantized version [MobiMind-Reasoning-4B-AWQ](https://huggingface.co/IPADS-SAI/MobiMind-Reasoning-4B-1208-AWQ). 
 - [2025.11.03] Added multi-task execution support. See [Multi-task README](runner/mobiagent/multi_task/README.md) for details. 
 - [2025.11.03] Introduced a user profile memory system, enabled via `--user_profile on`. See [User Profile README](runner/README.md#user-profile--preference-memory-mem0graphrag) for details.
@@ -150,18 +151,16 @@ python -m pip install paddlepaddle-gpu>=3.1.0 -i https://www.paddlepaddle.org.cn
 
 After downloading the model checkpoints, use vLLM to deploy model inference services:
 
-For MobiMind-Mixed/Reasoning Model (based on Qwen3-VL-4B):
+download urls:
+- MobiMind-1.5-4B(***fastest&experimental**, support [e2e](https://github.com/IPADS-SAI/MobiAgent/blob/a782deae95fa33159ada0bb04d449be6e71e5e1c/runner/mobiagent/mobiagent.py#L1089)*):
+  -  [huggingface](https://huggingface.co/IPADS-SAI/MobiMind-1.5-4B-1220)
+  -  [modelscope](https://www.modelscope.cn/models/fengerhu1/MobiMind-1.5-4B-1220)
+- MobiMind-Reasoning-4B(**stable**):
+  - [huggingface](https://huggingface.co/IPADS-SAI/MobiMind-Reasoning-4B-1208)
+  - [modelscope](https://www.modelscope.cn/models/fengerhu1/MobiMind-Reasoning-4B-1208)
 
 ```bash
-vllm serve IPADS-SAI/MobiMind-Mixed-4B --port <mixed port>
-vllm serve Qwen/Qwen3-4B-Instruct --port <planner port>
-```
-
-For Legacy MobiMind-Decider/Grounder Models:
-
-```bash
-vllm serve IPADS-SAI/MobiMind-Decider-7B --port <decider port>
-vllm serve IPADS-SAI/MobiMind-Grounder-3B --port <grounder port>
+vllm serve MobiMind-Reasoning-4B --port <mixed port>
 vllm serve Qwen/Qwen3-4B-Instruct --port <planner port>
 ```
 
@@ -234,8 +233,8 @@ With user profile memory:
 ```bash
 python -m runner.mobiagent.mobiagent \
   --service_ip <Service IP> \
-  --decider_port <Decider Service Port> \
-  --grounder_port <Grounder Service Port> \
+  --decider_port <Decider Service Port/Mixed Port> \
+  --grounder_port <Grounder Service Port/Mixed Port> \
   --planner_port <Planner Service Port> \
   --user_profile on \
   --use_graphrag off  # Use 'on' for GraphRAG (Neo4j), 'off' for vector search (Milvus)

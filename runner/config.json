@@ -1,0 +1,27 @@
+{
+  "mobiagent": {
+    "service_ip": "localhost",
+    "decider_port": 8000,
+    "grounder_port": 8001,
+    "planner_port": 8002,
+    "use_qwen3": true,
+    "use_e2e": true,
+    "use_experience": false,
+    "use_graphrag": false
+  },
+  "uitars": {
+    "model_base_url": "http://localhost:8000/v1",
+    "model_name": "UI-TARS-7B-SFT",
+    "temperature": 0.7,
+    "step_delay": 2.0
+  },
+  "device": {
+    "type": "Android",
+    "device_id": null
+  },
+  "execution": {
+    "max_steps": 40,
+    "log_level": "INFO",
+    "output_dir": "results"
+  }
+}

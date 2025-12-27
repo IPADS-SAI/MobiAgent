@@ -9,7 +9,7 @@ MobiAgent: A Systematic Framework for Customizable Mobile Agents
 </h3>
 
 <p align="center">
-| <a href="https://arxiv.org/abs/2509.00531"><b>Paper</b></a> | <a href="https://huggingface.co/collections/IPADS-SAI/mobimind-68b2aad150ccafd9d9e10e4d"><b>Huggingface</b></a> | <a href="https://github.com/IPADS-SAI/MobiAgent/releases/tag/v1.0.1"><b>App</b></a> |
+| <a href="https://arxiv.org/abs/2509.00531"><b>MobiAgent Paper</b></a> | <a href="https://arxiv.org/abs/2512.15784"><b>MobiMem Paper</b></a> | <a href="https://huggingface.co/collections/IPADS-SAI/mobimind-68b2aad150ccafd9d9e10e4d"><b>Huggingface</b></a> | <a href="https://github.com/IPADS-SAI/MobiAgent/releases/tag/v1.0.1"><b>App</b></a> |
 </p> 
 
 <p align="center">
@@ -35,14 +35,20 @@ MobiAgent: A Systematic Framework for Customizable Mobile Agents
 </div>
 
 ## News
-- `[2025.12.26]` 📱 **Pure on-device inference on smartphones is now supported!** Run MobiAgent entirely locally on your Android device—no cloud dependency required. See the detailed guide in [`phone_runner/README.md`](phone_runner/README.md).
-- `[2025.12.08]` 🔥 We've released a new reasoning model (support both Android and HarmonyOS): MobiMind-Reasoning-4B [MobiMind-Reasoning-4B-1208](https://huggingface.co/IPADS-SAI/MobiMind-Reasoning-4B-1208), and 4-bit weight quantized (W4A16) [MobiMind-Reasoning-4B-1208-AWQ](https://huggingface.co/IPADS-SAI/MobiMind-Reasoning-4B-1208-AWQ) version. When serving with vLLM, please add the flag `--dtype float16` for quantized model to ensure compatibility.
-- `[2025.11.03]` ✅ Added multi-task execution module support and user preference support. For details about multi-task usage and configuration, see [here](runner/mobiagent/multi_task/README.md). 
-- `[2025.11.03]` 🧠 Introduced a user profile memory system (Mem0): async preference extraction with LLM after task completion, raw-text preference storage and retrieval, dual backend support (vector search via Milvus and optional GraphRAG via Neo4j). Preferences are retrieved as original texts and directly appended to experience prompts via `combine_context(...)` to personalize planning. Configure via `--user_profile on|off` and `--use_graphrag on|off`, see [here](runner/README.md#用户画像与偏好记忆) for details.
-- `[2025.10.31]` 🔥We've updated the MobiMind-Mixed model based on Qwen3-VL-4B-Instruct! Download it at [MobiMind-Mixed-4B-1031](https://huggingface.co/IPADS-SAI/MobiMind-Mixed-4B-1031), and add `--use_qwen3` flag when running dataset creation and agent runner scripts.
-- `[2025.9.30]` 🚀 added a local experience retrieval module, supporting experience query based on task description, enhancing the intelligence and efficiency of task planning!
-- `[2025.9.29]` We've open-sourced a mixed version of MobiMind, capable of handling **both Decider and Grounder tasks**! Feel free to download and try it at [MobiMind-Mixed-7B](https://huggingface.co/IPADS-SAI/MobiMind-Mixed-7B).
-- `[2025.8.30]` We've open-sourced the MobiAgent!
+- [2025.12.26] 📱 **Pure on-device inference on smartphones is now supported!** See [`phone_runner/README.md`](phone_runner/README.md) to get started.
+- [2025.12.08] 🔥 We've released [MobiMind-Reasoning-4B](https://huggingface.co/IPADS-SAI/MobiMind-Reasoning-4B-1208) and its quantized version [MobiMind-Reasoning-4B-AWQ](https://huggingface.co/IPADS-SAI/MobiMind-Reasoning-4B-1208-AWQ). 
+- [2025.11.03] Added multi-task execution support. See [Multi-task README](runner/mobiagent/multi_task/README.md) for details. 
+- [2025.11.03] Introduced a user profile memory system, enabled via `--user_profile on`. See [User Profile README](runner/README.md#user-profile--preference-memory-mem0graphrag) for details.
+
+<details><summary>Full News</summary>
+<ul>
+  <li>[2025.10.31] We've updated the MobiMind-Mixed model based on Qwen3-VL-4B-Instruct! Download it at <a href="https://huggingface.co/IPADS-SAI/MobiMind-Mixed-4B-1031">MobiMind-Mixed-4B-1031</a>.</li>
+  <li>[2025.9.30] Added an experience memory module.</li>
+  <li>[2025.9.29] We've open-sourced a mixed version of MobiMind, capable of both Decider and Grounder tasks! Download it at <a href="https://huggingface.co/IPADS-SAI/MobiMind-Mixed-7B">MobiMind-Mixed-7B</a>.</li>
+</ul>
+</details>
+
+- [2025.8.30] We've open-sourced MobiAgent!
 
 ## Evaluation Results
 
@@ -269,6 +275,15 @@ If you find MobiAgent useful in your research, please feel free to cite our [pap
   archivePrefix={arXiv},
   primaryClass={cs.MA},
   url={https://arxiv.org/abs/2509.00531}, 
+}
+@misc{liu2025trainingenablingselfevolutionagents,
+  title={Beyond Training: Enabling Self-Evolution of Agents with MOBIMEM}, 
+  author={Zibin Liu and Cheng Zhang and Xi Zhao and Yunfei Feng and Bingyu Bai and Dahu Feng and Erhu Feng and Yubin Xia and Haibo Chen},
+  year={2025},
+  eprint={2512.15784},
+  archivePrefix={arXiv},
+  primaryClass={cs.AI},
+  url={https://arxiv.org/abs/2512.15784}, 
 }
 ```
 

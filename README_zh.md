@@ -225,8 +225,8 @@ NEO4J_PASSWORD=testpassword
 ```bash
 python -m runner.mobiagent.mobiagent \
   --service_ip <服务IP> \
-  --decider_port <Decider模型端口> \
-  --grounder_port <Grounder模型端口> \
+  --decider_port <Decider模型端口/Mixed 端口> \
+  --grounder_port <Grounder模型端口/Mixed 端口> \
   --planner_port <Planner模型端口>
 ```
 

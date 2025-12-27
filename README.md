@@ -233,8 +233,8 @@ With user profile memory:
 ```bash
 python -m runner.mobiagent.mobiagent \
   --service_ip <Service IP> \
-  --decider_port <Decider Service Port> \
-  --grounder_port <Grounder Service Port> \
+  --decider_port <Decider Service Port/Mixed Port> \
+  --grounder_port <Grounder Service Port/Mixed Port> \
   --planner_port <Planner Service Port> \
   --user_profile on \
   --use_graphrag off  # Use 'on' for GraphRAG (Neo4j), 'off' for vector search (Milvus)

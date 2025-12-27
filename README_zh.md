@@ -9,7 +9,7 @@ MobiAgent: A Systematic Framework for Customizable Mobile Agents
 </h3>
 
 <p align="center">
-| <a href="https://arxiv.org/abs/2509.00531"><b>论文</b></a> | <a href="https://huggingface.co/collections/IPADS-SAI/mobimind-68b2aad150ccafd9d9e10e4d"><b>Huggingface</b></a> | <a href="https://github.com/IPADS-SAI/MobiAgent/releases/tag/v1.0.1"><b>App</b></a> |
+| <a href="https://arxiv.org/abs/2509.00531"><b>MobiAgent论文</b></a> | <a href="https://arxiv.org/abs/2512.15784"><b>MobiMem论文</b></a> | <a href="https://huggingface.co/collections/IPADS-SAI/mobimind-68b2aad150ccafd9d9e10e4d"><b>Huggingface</b></a> | <a href="https://github.com/IPADS-SAI/MobiAgent/releases/tag/v1.0.1"><b>App</b></a> |
 </p> 
 
 <p align="center">
@@ -35,17 +35,20 @@ MobiAgent: A Systematic Framework for Customizable Mobile Agents
 </div>
 
 ## 新闻
-- `[2025.12.26]` 📱 新增手机端纯本地推理支持！无需联网，可在 Android 设备上完全本地运行 MobiAgent。详见 [`phone_runner/README.md`](phone_runner/README.md)。
-- `[2025.12.08]` 🔥 我们发布了全新的推理模型（同时支持 Android 与鸿蒙系统）：**MobiMind-Reasoning-4B**  
-  - 原始版本：[MobiMind-Reasoning-4B-1208](https://huggingface.co/IPADS-SAI/MobiMind-Reasoning-4B-1208)  
-  - 4-bit 权重量化（W4A16）版本：[MobiMind-Reasoning-4B-1208-AWQ](https://huggingface.co/IPADS-SAI/MobiMind-Reasoning-4B-1208-AWQ)  
-  使用 **vLLM** 部署量化版本时，请添加 `--dtype float16` 参数以确保兼容性。
-- `[2025.11.03]` ✅ 新增"多任务执行模块"与"用户偏好支持"。多任务的使用方式与配置说明见 [此处](runner/mobiagent/multi_task/README.md)。
-- `[2025.11.03]` 🧠 新增"用户画像偏好记忆"能力（Mem0）：任务完成后使用 LLM 异步提取偏好，原始文本存储与检索，双后端支持（向量检索 Milvus + 可选 GraphRAG Neo4j）。偏好以原始文本形式检索并直接通过 `combine_context(...)` 附加到经验模板后，用于个性化规划。通过 `--user_profile on|off` 和 `--use_graphrag on|off` 配置，详见 [此处](runner/README.md#用户画像与偏好记忆)。
-- `[2025.10.31]` 🔥 我们更新了基于 Qwen3-VL-4B-Instruct 的 MobiMind-Mixed 模型！下载地址：[MobiMind-Mixed-4B-1031](https://huggingface.co/IPADS-SAI/MobiMind-Mixed-4B-1031)，运行数据集创建和智能体执行器脚本时请添加 `--use_qwen3` 参数。
-- `[2025.9.30]` 🚀 增加"本地经验检索"模块，支持基于任务描述的经验模版检索，显著提升任务规划的智能性与效率。
-- `[2025.9.29]` 🔥 开源 MobiMind 混合版本，可同时胜任 Decider 与 Grounder 任务！下载试用：[MobiMind-Mixed-7B](https://huggingface.co/IPADS-SAI/MobiMind-Mixed-7B)
-- `[2025.8.30]` 我们开源了 MobiAgent！
+- [2025.12.26] 📱 **支持手机端纯本地推理！** 详见 [`phone_runner/README.md`](phone_runner/README.md)。
+- [2025.12.08] 🔥 我们发布了 [MobiMind-Reasoning-4B](https://huggingface.co/IPADS-SAI/MobiMind-Reasoning-4B-1208) 及其量化版本 [MobiMind-Reasoning-4B-AWQ](https://huggingface.co/IPADS-SAI/MobiMind-Reasoning-4B-1208-AWQ)。
+- [2025.11.03] 新增多任务执行支持。详见 [多任务 README](runner/mobiagent/multi_task/README.md)。
+- [2025.11.03] 引入用户画像记忆系统，通过`--user_profile on`启用。详见 [用户画像 README](runner/README.md#用户画像与偏好记忆)。
+
+<details><summary>完整新闻</summary>
+<ul>
+  <li>[2025.10.31] 我们更新了基于 Qwen3-VL-4B-Instruct 的 MobiMind-Mixed 模型！下载地址：<a href="https://huggingface.co/IPADS-SAI/MobiMind-Mixed-4B-1031">MobiMind-Mixed-4B-1031</a>。</li>
+  <li>[2025.9.30] 新增经验记忆模块。</li>
+  <li>[2025.9.29] 我们开源了 MobiMind 混合版本，可同时胜任 Decider 和 Grounder 任务！下载地址：<a href="https://huggingface.co/IPADS-SAI/MobiMind-Mixed-7B">MobiMind-Mixed-7B</a>。</li>
+</ul>
+</details>
+
+- [2025.8.30] 我们开源了 MobiAgent！
 
 ## 评测结果
 
@@ -272,6 +275,15 @@ python -m runner.mobiagent.mobiagent \
   archivePrefix={arXiv},
   primaryClass={cs.MA},
   url={https://arxiv.org/abs/2509.00531}, 
+}
+@misc{liu2025trainingenablingselfevolutionagents,
+  title={Beyond Training: Enabling Self-Evolution of Agents with MOBIMEM}, 
+  author={Zibin Liu and Cheng Zhang and Xi Zhao and Yunfei Feng and Bingyu Bai and Dahu Feng and Erhu Feng and Yubin Xia and Haibo Chen},
+  year={2025},
+  eprint={2512.15784},
+  archivePrefix={arXiv},
+  primaryClass={cs.AI},
+  url={https://arxiv.org/abs/2512.15784}, 
 }
 ```
 

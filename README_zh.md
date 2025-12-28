@@ -99,7 +99,7 @@ MobiAgent: A Systematic Framework for Customizable Mobile Agents
 
 ### 通过 MobiAgent APP 使用
 
-如果您想直接通过我们的 APP 体验 MobiAgent，请通过 [下载链接](https://github.com/IPADS-SAI/MobiAgent/releases/tag/v1.0) 进行下载，祝您使用愉快！
+如果您想直接通过我们的 APP 体验 MobiAgent，请通过 [下载链接](https://github.com/IPADS-SAI/MobiAgent/releases/tag/v1.0.1) 进行下载，祝您使用愉快！
 
 ### 使用 Python 脚本
 
@@ -225,8 +225,8 @@ NEO4J_PASSWORD=testpassword
 ```bash
 python -m runner.mobiagent.mobiagent \
   --service_ip <服务IP> \
-  --decider_port <Decider模型端口/Mixed 端口> \
-  --grounder_port <Grounder模型端口/Mixed 端口> # 和Decider模型端口一致，在使用--e2e标识后grounder_port可以忽略 \
+  --decider_port <Decider模型端口> \
+  --grounder_port <Grounder模型端口> # 和Decider模型端口一致，在使用--e2e标识后grounder_port可以忽略 \
   --planner_port <Planner模型端口>
 ```
 
@@ -255,7 +255,7 @@ python -m runner.mobiagent.mobiagent \
 
 执行器启动后，将会自动控制手机并调用Agent模型，完成列表中指定的任务。
 
-**重要提示**：如果您部署的是 MobiMind-Mixed 模型，请将 decider/grounder 端口都设置为 `<mixed port>`。
+**重要提示**：如果您部署的是 MobiMind-Reasoning-4B 模型，请将 decider/grounder 端口都设置为统一个端口 `<decider/grounder port>`。
 
 所有可用参数说明见 [runner README](runner/README.md#项目启动)。
 

@@ -252,6 +252,8 @@ python -m runner.mobiagent.mobiagent \
 - `--user_profile`：启用用户画像记忆，`on` 或 `off`（默认：`off`）
 - `--use_graphrag`：使用 GraphRAG (Neo4j) 进行检索，`on` 或 `off`（默认：`off`）
 - `--use_experience`：启用基于经验的任务改写（默认：`False`）
+- `--data_dir <path>`：结果数据保存目录，默认为`runner/mobiagent`目录下的 `data/`
+- `--task_file <path>`：任务列表文件路径，默认为`runner/mobiagent`目录下的 `task.json`
 
 执行器启动后，将会自动控制手机并调用Agent模型，完成列表中指定的任务。
 

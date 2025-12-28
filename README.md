@@ -251,6 +251,8 @@ Common parameters:
 - `--user_profile`: Enable user profile memory, `on` or `off` (default: `off`)
 - `--use_graphrag`: Use GraphRAG (Neo4j) for retrieval, `on` or `off` (default: `off`)
 - `--use_experience`: Enable experience-based task rewriting (default: `False`)
+- `--data_dir`: Directory to save result data (default: `runner/mobiagent/data/`)
+- `--task_file`: Path to the task list file (default: `runner/mobiagent/task.json`)
 
 The runner automatically controls the device and invoke agent models to complete the pre-defined tasks.
 

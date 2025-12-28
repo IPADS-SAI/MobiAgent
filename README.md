@@ -99,7 +99,7 @@ task: `在小红书查找2025年性价比最高的单反相机推荐，然后在
 
 ### Use with MobiAgent APP
 
-If you would like to try MobiAgent directly with our APP, please download it in [Download Link](https://github.com/IPADS-SAI/MobiAgent/releases/tag/v1.0) and enjoy yourself!
+If you would like to try MobiAgent directly with our APP, please download it in [Download Link](https://github.com/IPADS-SAI/MobiAgent/releases/tag/v1.0.1) and enjoy yourself!
 
 ### Use with Python Scripts
 
@@ -233,8 +233,8 @@ With user profile memory:
 ```bash
 python -m runner.mobiagent.mobiagent \
   --service_ip <Service IP> \
-  --decider_port <Decider Service Port/Mixed Port> \
-  --grounder_port <Grounder Service Port/Mixed Port> # Same as Decider Port, be ignored when using --e2e flag \
+  --decider_port <Decider Service Port> \
+  --grounder_port <Grounder Service Port> # Same as Decider Port, be ignored when using --e2e flag \
   --planner_port <Planner Service Port> \
   --user_profile on \
   --use_graphrag off  # Use 'on' for GraphRAG (Neo4j), 'off' for vector search (Milvus)
@@ -254,7 +254,7 @@ Common parameters:
 
 The runner automatically controls the device and invoke agent models to complete the pre-defined tasks.
 
-**Important**: If you deploy MobiMind-Mixed model inference, set both decider/grounder ports to `<mixed port>`.
+**Important**: If you deploy MobiMind-Reasoning-4B model inference, set both decider/grounder ports to `<decider/grounder port>`.
 
 For all available parameters, see [runner README](runner/README.md#项目启动).
 

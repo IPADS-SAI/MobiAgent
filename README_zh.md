@@ -160,7 +160,7 @@ download 地址：
   - [modelscope](https://www.modelscope.cn/models/fengerhu1/MobiMind-Reasoning-4B-1208)
 
 ```bash
-vllm serve MobiMind-Reasoning-4B --port <mixed port>
+vllm serve MobiMind-Reasoning-4B --port <decider/grounder port>
 vllm serve Qwen/Qwen3-4B-Instruct --port <planner port>
 ```
 
@@ -226,7 +226,7 @@ NEO4J_PASSWORD=testpassword
 python -m runner.mobiagent.mobiagent \
   --service_ip <服务IP> \
   --decider_port <Decider模型端口/Mixed 端口> \
-  --grounder_port <Grounder模型端口/Mixed 端口> \
+  --grounder_port <Grounder模型端口/Mixed 端口> # 和Decider模型端口一致，在使用--e2e标识后grounder_port可以忽略 \
   --planner_port <Planner模型端口>
 ```
 
@@ -235,7 +235,7 @@ python -m runner.mobiagent.mobiagent \
 python -m runner.mobiagent.mobiagent \
   --service_ip <服务IP> \
   --decider_port <Decider模型端口> \
-  --grounder_port <Grounder模型端口> \
+  --grounder_port <Grounder模型端口> # 和Decider模型端口一致，在使用--e2e标识后grounder_port可以忽略 \
   --planner_port <Planner模型端口> \
   --user_profile on \
   --use_graphrag off  # 使用 'on' 启用 GraphRAG (Neo4j)，'off' 使用向量检索 (Milvus)
@@ -247,6 +247,7 @@ python -m runner.mobiagent.mobiagent \
 - `--decider_port`：决策服务端口（默认：`8000`）
 - `--grounder_port`：定位服务端口（默认：`8001`）
 - `--planner_port`：规划服务端口（默认：`8002`）
+- `--e2e`：端到端推理模式，减少grounder调用（默认：`False`）
 - `--device`：设备类型，`Android` 或 `Harmony`（默认：`Android`）
 - `--user_profile`：启用用户画像记忆，`on` 或 `off`（默认：`off`）
 - `--use_graphrag`：使用 GraphRAG (Neo4j) 进行检索，`on` 或 `off`（默认：`off`）

@@ -160,7 +160,7 @@ download urls:
   - [modelscope](https://www.modelscope.cn/models/fengerhu1/MobiMind-Reasoning-4B-1208)
 
 ```bash
-vllm serve MobiMind-Reasoning-4B --port <mixed port>
+vllm serve MobiMind-Reasoning-4B --port <decider/grounder port>
 vllm serve Qwen/Qwen3-4B-Instruct --port <planner port>
 ```
 
@@ -225,7 +225,7 @@ Basic launch:
 python -m runner.mobiagent.mobiagent \
   --service_ip <Service IP> \
   --decider_port <Decider Service Port> \
-  --grounder_port <Grounder Service Port> \
+  --grounder_port <Grounder Service Port> # Same as Decider Port, be ignored when using --e2e flag \
   --planner_port <Planner Service Port>
 ```
 
@@ -234,7 +234,7 @@ With user profile memory:
 python -m runner.mobiagent.mobiagent \
   --service_ip <Service IP> \
   --decider_port <Decider Service Port/Mixed Port> \
-  --grounder_port <Grounder Service Port/Mixed Port> \
+  --grounder_port <Grounder Service Port/Mixed Port> # Same as Decider Port, be ignored when using --e2e flag \
   --planner_port <Planner Service Port> \
   --user_profile on \
   --use_graphrag off  # Use 'on' for GraphRAG (Neo4j), 'off' for vector search (Milvus)
@@ -246,6 +246,7 @@ Common parameters:
 - `--decider_port`: Decider service port (default: `8000`)
 - `--grounder_port`: Grounder service port (default: `8001`)
 - `--planner_port`: Planner service port (default: `8002`)
+- `--e2e`:End-to-end mode, reducing grounder calls
 - `--device`: Device type, `Android` or `Harmony` (default: `Android`)
 - `--user_profile`: Enable user profile memory, `on` or `off` (default: `off`)
 - `--use_graphrag`: Use GraphRAG (Neo4j) for retrieval, `on` or `off` (default: `off`)

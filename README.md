@@ -36,7 +36,7 @@ MobiAgent: A Systematic Framework for Customizable Mobile Agents
 
 ## News
 - [2025.12.26] 📱 **Pure on-device inference on smartphones is now supported!** See [`phone_runner/README.md`](phone_runner/README.md) to get started.
-- [2025.12.25] 🛠️ We've released **unified General GUIAgent execution framework** (in [runner](https://github.com/IPADS-SAI/MobiAgent/blob/unify-runner/runner/RUNNER_README.md)) supporting one-click config of multiple models(`Mobiagent`, `UI-TARS`, `AutoGLM` and general vision models e.g., `Qwen-VL`, `Gemini`) for single-command APP task execution.
+- [2025.12.25] 🛠️ We've released **unified GUI agent runner** supporting one-click config of multiple models (`MobiAgent`, `UI-TARS`, `AutoGLM`, `Qwen-VL`, `Gemini`, etc.). See [Unify Runner README](https://github.com/IPADS-SAI/MobiAgent/blob/unify-runner/runner/RUNNER_README.md) to get started.
 - [2025.12.08] 🔥 We've released [MobiMind-Reasoning-4B](https://huggingface.co/IPADS-SAI/MobiMind-Reasoning-4B-1208) and its quantized version [MobiMind-Reasoning-4B-AWQ](https://huggingface.co/IPADS-SAI/MobiMind-Reasoning-4B-1208-AWQ). 
 - [2025.11.03] Added multi-task execution support. See [Multi-task README](runner/mobiagent/multi_task/README.md) for details. 
 - [2025.11.03] Introduced a user profile memory system, enabled via `--user_profile on`. See [User Profile README](runner/README.md#user-profile--preference-memory-mem0graphrag) for details.

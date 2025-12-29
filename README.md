@@ -246,7 +246,7 @@ Common parameters:
 - `--decider_port`: Decider service port (default: `8000`)
 - `--grounder_port`: Grounder service port (default: `8001`)
 - `--planner_port`: Planner service port (default: `8002`)
-- `--e2e`:End-to-end mode, reducing grounder calls (default: `false`)
+- `--e2e`: Use end-to-end model and elinimates grounder calls to accelerate execution (default: `false`)
 - `--device`: Device type, `Android` or `Harmony` (default: `Android`)
 - `--user_profile`: Enable user profile memory, `on` or `off` (default: `off`)
 - `--use_graphrag`: Use GraphRAG (Neo4j) for retrieval, `on` or `off` (default: `off`)

@@ -36,7 +36,7 @@ MobiAgent: A Systematic Framework for Customizable Mobile Agents
 
 ## 新闻
 - [2025.12.26] 📱 **支持手机端纯本地推理！** 详见 [`phone_runner/README.md`](phone_runner/README.md)。
-- [2025.12.25] 🛠️ 我们发布了一个[通用GUIAgent执行框架](https://github.com/IPADS-SAI/MobiAgent/blob/unify-runner/runner/RUNNER_README.md)（位于unify-runner分支下的[runner](https://github.com/IPADS-SAI/MobiAgent/blob/unify-runner/runner/RUNNER_README.md)），支持一键配置运行各GUIAgent模型（Mobiagent、UI-TARS、AutoGLM等、以及以Qwen-VL Gemini为代表的VL-LLM）。
+- [2025.12.25] 🛠️ 我们发布了**统一GUIAgent执行框架**，支持一键配置运行各GUIAgent模型（Mobiagent、UI-TARS、AutoGLM、Qwen-VL、Gemini等）。详见[Unify Runner README](https://github.com/IPADS-SAI/MobiAgent/blob/unify-runner/runner/RUNNER_README.md)。
 - [2025.12.08] 🔥 我们发布了 [MobiMind-Reasoning-4B](https://huggingface.co/IPADS-SAI/MobiMind-Reasoning-4B-1208) 及其量化版本 [MobiMind-Reasoning-4B-AWQ](https://huggingface.co/IPADS-SAI/MobiMind-Reasoning-4B-1208-AWQ)。
 - [2025.11.03] 新增多任务执行支持。详见 [多任务 README](runner/mobiagent/multi_task/README.md)。
 - [2025.11.03] 引入用户画像记忆系统，通过`--user_profile on`启用。详见 [用户画像 README](runner/README.md#用户画像与偏好记忆)。

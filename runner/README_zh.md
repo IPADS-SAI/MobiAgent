@@ -55,17 +55,17 @@ vllm serve Qwen/Qwen3-4B-Instruct --port <planner port>
 
 ### 项目启动
 
-**基本启动**（使用默认配置）
+基本启动方式：
+
 ```bash
-python -m runner.mobiagent.mobiagent
+python -m runner.mobiagent.mobiagent 、
+  --service_ip <服务IP> \
+  --decider_port <Decider模型端口> \
+  --grounder_port <Grounder模型端口> \
+  --planner_port <规划服务端口> 
 ```
 
-**自定义配置启动**
-```bash
-python -m runner.mobiagent.mobiagent --service_ip <服务IP> --decider_port <决策服务端口> --grounder_port <定位服务端口> --planner_port <规划服务端口>  --device Android --data_dir data --task_file task.json
-```
-
-**参数说明**
+参数说明：
 
 - `--service_ip <str>`：服务 IP，默认 `localhost`。用于连接 decider/grounder/planner 服务的主机地址。
 - `--decider_port <int>`：decider 服务端口，默认 `8000`。
@@ -77,6 +77,7 @@ python -m runner.mobiagent.mobiagent --service_ip <服务IP> --decider_port <决
 - `--device Android|Harmony`：连接的设备类型，默认 `Android`。
 - `--use_qwen3 on|off`：是否使用 Qwen3VL 作为基模的模型（例如`MobiMind-Mixed-4B`）。默认：`on`。
 - `--use_experience on|off`：是否使用经验改写功能。默认：`off`。
+- `--e2e`: 是否使用端到端模型(如[MobiMind-1.5](https://huggingface.co/IPADS-SAI/MobiMind-1.5-4B-1220))，消除Grounder模型调用。默认：`False`。
 - `--data_dir <path>`：结果数据保存目录，默认为脚本目录下的 `data/`（若不存在会自动创建）。
 - `--task_file <path>`：任务列表文件路径，默认为脚本目录下的 `task.json`。
 

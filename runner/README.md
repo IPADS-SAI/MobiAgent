@@ -57,16 +57,14 @@ Write the tasks to test in `runner/mobiagent/task.json`.
 
 ### Project Start
 
-Basic start (default configuration)
+Basic launch:
 
 ```bash
-python -m runner.mobiagent.mobiagent
-```
-
-Custom configuration start
-
-```bash
-python -m runner.mobiagent.mobiagent --service_ip <service IP> --decider_port <decider port> --grounder_port <grounder port> --planner_port <planner port>
+python -m runner.mobiagent.mobiagent \
+  --service_ip <Service IP> \
+  --decider_port <Decider Service Port> \
+  --grounder_port <Grounder Service Port> # Same as Decider Port, be ignored when using --e2e flag \
+  --planner_port <Planner Service Port>
 ```
 
 Parameters：
@@ -81,6 +79,7 @@ Parameters：
 - `--device Android|Harmony`: Device type, default `Android`.
 - `--use_qwen3 on|off`: Whether to use Qwen3VL-based models (e.g., `MobiMind-Mixed-4B`). Default: `on`.
 - `--use_experience on|off`: Whether to use experience rewriting. Default: `off`.
+- `--e2e`: Use end-to-end model (e.g., [MobiMind-1.5](https://huggingface.co/IPADS-SAI/MobiMind-1.5-4B-1220)) and elinimates grounder calls (default: `false`)
 - `--data_dir <path>`: Result data save directory, defaults to `data/` under the script directory (will be created automatically if it doesn't exist).
 - `--task_file <path>`: Task list file path, defaults to `task.json` under the script directory.
 

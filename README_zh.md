@@ -221,7 +221,7 @@ NEO4J_PASSWORD=testpassword
 
 在 `runner/mobiagent/task.json` 中写入想要测试的任务列表，然后启动Agent执行器
 
-基础启动：
+**基础启动**：
 ```bash
 python -m runner.mobiagent.mobiagent \
   --service_ip <服务IP> \
@@ -230,7 +230,7 @@ python -m runner.mobiagent.mobiagent \
   --planner_port <Planner模型端口>
 ```
 
-启用用户画像记忆：
+**启用用户画像记忆**：
 ```bash
 python -m runner.mobiagent.mobiagent \
   --service_ip <服务IP> \
@@ -260,6 +260,21 @@ python -m runner.mobiagent.mobiagent \
 **重要提示**：如果您部署的是 MobiMind-Reasoning-4B 模型，请将 decider/grounder 端口都设置为统一个端口 `<decider/grounder port>`。
 
 所有可用参数说明见 [runner README](runner/README.md#项目启动)。
+
+**多任务执行**
+
+对于需要与多个应用交互的复杂任务，使用多任务执行器：
+
+```bash
+python -m runner.mobiagent.multi_task.mobiagent_refactored \
+  --service_ip <服务IP> \
+  --decider_port <Decider模型端口> \
+  --grounder_port <Grounder模型端口> \
+  --planner_port <Planner模型端口> \
+  --task "您的多步骤任务描述"
+```
+
+有关详细的配置、多截图支持、OCR设置和经验记忆集成，请查看 [多任务README](runner/mobiagent/multi_task/README.md)。
 
 ## 子模块详细使用方式
 

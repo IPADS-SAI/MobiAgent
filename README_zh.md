@@ -261,7 +261,7 @@ python -m runner.mobiagent.mobiagent \
 
 所有可用参数说明见 [runner README](runner/README.md#项目启动)。
 
-**多任务执行**
+**多任务执行**：
 
 对于需要与多个应用交互的复杂任务，使用多任务执行器：
 

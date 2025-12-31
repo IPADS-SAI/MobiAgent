@@ -220,7 +220,7 @@ Action memory (AgentRR) caches and reuses successful action sequences to acceler
 
 Write the list of tasks that you would like to test in `runner/mobiagent/task.json`, then launch agent runner:
 
-Basic launch:
+**Basic launch:**
 ```bash
 python -m runner.mobiagent.mobiagent \
   --service_ip <Service IP> \
@@ -229,7 +229,7 @@ python -m runner.mobiagent.mobiagent \
   --planner_port <Planner Service Port>
 ```
 
-With user profile memory:
+**With user profile memory:**
 ```bash
 python -m runner.mobiagent.mobiagent \
   --service_ip <Service IP> \
@@ -256,9 +256,24 @@ Common parameters:
 
 The runner automatically controls the device and invoke agent models to complete the pre-defined tasks.
 
-**Important**: If you deploy MobiMind-Reasoning-4B model inference, set both decider/grounder ports to `<decider/grounder port>`.
+> **Important**: If you deploy MobiMind-Reasoning-4B model inference, set both decider/grounder ports to `<decider/grounder port>`.
 
 For all available parameters, see [runner README](runner/README.md#项目启动).
+
+**Multi-task Execution:**
+
+For complex tasks that require interaction with multiple applications, use the multi-task executor:
+
+```bash
+python -m runner.mobiagent.multi_task.mobiagent_refactored \
+  --service_ip <Service IP> \
+  --decider_port <Decider Service Port> \
+  --grounder_port <Grounder Service Port> \
+  --planner_port <Planner Service Port> \
+  --task "Your multi-step task description"
+```
+
+For detailed configuration, multi-screenshot support, OCR settings, and experience memory integration, see [Multi-task README](runner/mobiagent/multi_task/README.md).
 
 ## Detailed Sub-module Usage
 

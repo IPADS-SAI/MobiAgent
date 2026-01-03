@@ -613,6 +613,7 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3
 
                     timeout=30,
                     max_tokens=256,
+                    response_format={"type": "json_object"}
                 ).choices[0].message.content
                 decider_end_time = time.time()
                 logging.info(f"[evaluation] Decider time taken: {decider_end_time - decider_start_time} seconds")
@@ -740,6 +741,7 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3
                             temperature=temperature,
                             timeout=30,
                             max_tokens=128,
+                            response_format={"type": "json_object"}
                         ).choices[0].message.content
                         grounder_end_time = time.time()
                         logging.info(f"[evaluation] Grounder time taken: {grounder_end_time - grounder_start_time} seconds")

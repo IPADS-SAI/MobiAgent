@@ -1,4 +1,6 @@
+import keyword
 from openai import OpenAI
+from pyautogui import press
 import uiautomator2 as u2
 import base64
 from PIL import Image
@@ -10,6 +12,7 @@ import time
 import re
 import os
 import argparse
+import xml.etree.ElementTree as ET
 from PIL import Image, ImageDraw, ImageFont
 import textwrap
 import cv2
@@ -41,7 +44,27 @@ logging.basicConfig(
 )
 # >>>>>>>>>> logging 配置结束 <<<<<<<<<<
 
+
+
+# 截图缩放比例
+factor = 0.5
+
+# ============ 常数定义 ============
 MAX_STEPS = 35
+MAX_RETRIES = 5
+TEMP_INCREMENT = 0.1
+INITIAL_TEMP = 0.0
+API_TIMEOUT = 30
+DECIDER_MAX_TOKENS = 256
+GROUNDER_MAX_TOKENS = 128
+DEVICE_WAIT_TIME = 0.5
+APP_STOP_WAIT = 3
+
+# 滑动坐标缩放比例
+SWIPE_V_START = 0.3
+SWIPE_V_END = 0.7
+SWIPE_H_START = 0.3
+SWIPE_H_END = 0.7
 
 class Device(ABC):
     @abstractmethod
@@ -123,7 +146,7 @@ class AndroidDevice(Device):
     
     def app_start(self, package_name):
         self.d.app_start(package_name, stop=True)
-        time.sleep(1)
+        time.sleep(DEVICE_WAIT_TIME * 2)
         if not self.d.app_wait(package_name, timeout=10):
             raise RuntimeError(f"Failed to start package '{package_name}'")
 
@@ -135,7 +158,7 @@ class AndroidDevice(Device):
 
     def click(self, x, y):
         self.d.click(x, y)
-        time.sleep(0.5)
+        time.sleep(DEVICE_WAIT_TIME)
 
     def clear_input(self):
     # 按下全选（需要 Android 支持 keyevent META_CTRL_ON）
@@ -146,32 +169,32 @@ class AndroidDevice(Device):
     def input(self, text):
         current_ime = self.d.current_ime()
         self.d.shell(['settings', 'put', 'secure', 'default_input_method', 'com.android.adbkeyboard/.AdbIME'])
-        time.sleep(0.5)
+        time.sleep(DEVICE_WAIT_TIME)
         # add clear text command, depending on 'ADB Keyboard'
         self.d.shell(['am', 'broadcast', '-a', 'ADB_CLEAR_TEXT'])
         time.sleep(0.2)
 
         charsb64 = base64.b64encode(text.encode('utf-8')).decode('utf-8')
         self.d.shell(['am', 'broadcast', '-a', 'ADB_INPUT_B64', '--es', 'msg', charsb64])
-        time.sleep(0.5)
+        time.sleep(DEVICE_WAIT_TIME)
         self.d.shell(['settings', 'put', 'secure', 'default_input_method', current_ime])
-        time.sleep(0.5)
+        time.sleep(DEVICE_WAIT_TIME)
 
     def swipe(self, direction, scale=0.5):
         # self.d.swipe_ext(direction, scale)
         # self.d.swipe_ext(direction=direction, scale=scale)
         if direction.lower() == "up":
-            self.d.swipe(0.5,0.7,0.5,0.3)
+            self.d.swipe(0.5,SWIPE_V_END,0.5,SWIPE_V_START,duration=0.2)
         elif direction.lower() == "down":
-            self.d.swipe(0.5,0.3,0.5,0.7)
+            self.d.swipe(0.5,SWIPE_V_START,0.5,SWIPE_V_END,duration=0.2)
         elif direction.lower() == "left":
-            self.d.swipe(0.7,0.5,0.3,0.5)
+            self.d.swipe(SWIPE_H_END,0.5,SWIPE_H_START,0.5,duration=0.2)
         elif direction.lower() == "right":
-            self.d.swipe(0.3,0.5,0.7,0.5)
+            self.d.swipe(SWIPE_H_START,0.5,SWIPE_H_END,0.5,duration=0.2)
 
     def swipe_with_coords(self, start_x, start_y, end_x, end_y):
         """Swipe from (start_x, start_y) to (end_x, end_y)"""
-        self.d.swipe(start_x, start_y, end_x, end_y)
+        self.d.swipe(start_x, start_y, end_x, end_y, duration=0.2)
 
     def keyevent(self, key):
         self.d.keyevent(key)
@@ -248,7 +271,7 @@ class HarmonyDevice(Device):
 
     def click(self, x, y):
         self.d.click(x, y)
-        time.sleep(0.5)
+        time.sleep(DEVICE_WAIT_TIME)
 
     def input(self, text):
         self.d.shell("uitest uiInput keyEvent 2072 2017")
@@ -258,19 +281,19 @@ class HarmonyDevice(Device):
     def swipe(self, direction, scale=0.5):
         # self.d.swipe_ext(direction, scale=scale)
         if direction.lower() == "up":
-            self.d.swipe(0.5,0.7,0.5,0.3,speed=2000)
+            self.d.swipe(0.5,SWIPE_V_END,0.5,SWIPE_V_START,speed=1000)
         elif direction.lower() == "down":
-            self.d.swipe(0.5,0.3,0.5,0.7,speed=2000)
+            self.d.swipe(0.5,SWIPE_V_START,0.5,SWIPE_V_END,speed=1000)
         elif direction.lower() == "left":
-            self.d.swipe(0.7,0.5,0.3,0.5,speed=2000)
+            self.d.swipe(SWIPE_H_END,0.5,SWIPE_H_START,0.5,speed=1000)
         elif direction.lower() == "right":
-            self.d.swipe(0.3,0.5,0.7,0.5,speed=2000)
+            self.d.swipe(SWIPE_H_START,0.5,SWIPE_H_END,0.5,speed=1000)
 
     def swipe_with_coords(self, start_x, start_y, end_x, end_y):
         """Swipe from (start_x, start_y) to (end_x, end_y)"""
         # Convert absolute coordinates to normalized coordinates if needed
         # For Harmony Device, swipe expects coordinates in format (x, y, x, y)
-        self.d.swipe(start_x, start_y, end_x, end_y, speed=2000)
+        self.d.swipe(start_x, start_y, end_x, end_y, speed=1000)
 
     def keyevent(self, key):
         self.d.press_key(key)
@@ -314,8 +337,115 @@ def init(service_ip, decider_port, grounder_port, planner_port, enable_user_prof
     else:
         preference_extractor = None
     
-# 截图缩放比例
-factor = 0.5
+
+# ============ 工具函数 ============
+
+def call_model_with_validation_retry(client, model, messages, validator_func, max_retries=MAX_RETRIES, max_tokens=256, context="Model"):
+    """
+    通用模型API调用函数：支持JSON解析 + 自定义校验 + 校验失败自动重试和温度递增
+    
+    Args:
+        client: OpenAI客户端
+        model: 模型名称
+        messages: 消息列表
+        validator_func: 校验函数，接收解析后的JSON对象，如果校验失败则抛异常
+        max_retries: 最大重试次数
+        max_tokens: 最大生成Token数
+        context: 日志上下文（如"Decider", "Grounder"）
+    
+    Returns:
+        解析后的 JSON 响应对象（已通过校验）
+    
+    Raises:
+        Exception: 重试失败或校验一直失败后抛出异常
+    """
+    temperature = INITIAL_TEMP
+    for attempt in range(max_retries):
+        try:
+            start_time = time.time()
+            response_str = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=temperature,
+                timeout=API_TIMEOUT,
+                max_tokens=max_tokens,
+            ).choices[0].message.content
+            end_time = time.time()
+            logging.info(f"[evaluation] {context} time taken: {end_time - start_time:.2f} seconds")
+            logging.info(f"{context} response: \n{response_str}")
+            
+            # 尝试解析 JSON
+            parsed_response = robust_json_loads(response_str)
+            
+            # 执行校验函数
+            validator_func(parsed_response)
+            
+            return parsed_response
+            
+        except Exception as e:
+            temperature = INITIAL_TEMP + (attempt + 1) * TEMP_INCREMENT
+            logging.error(f"{context} 调用或校验失败: {e}, 正在重试 temperature={temperature:.1f}...")
+            if attempt < max_retries - 1:
+                time.sleep(2)
+            else:
+                raise
+    
+    raise RuntimeError(f"{context} API calls exhausted after {max_retries} attempts")
+
+
+def _load_json_from_text(raw_text):
+    """尝试从混杂文本中提取 JSON；失败返回 None。"""
+    if raw_text is None:
+        return None
+    if not isinstance(raw_text, str):
+        raw_text = str(raw_text)
+
+    text = raw_text.strip()
+
+    def _try_load(candidate):
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            return None
+
+    # 直接解析
+    parsed = _try_load(text)
+    if parsed is not None:
+        return parsed
+
+    # ```json ... ``` 或 ``` ... ``` 代码块
+    for pattern in [r"```json\s*([\s\S]*?)\s*```", r"```\s*([\s\S]*?)\s*```"]:
+        match = re.search(pattern, text, re.MULTILINE)
+        if match:
+            parsed = _try_load(match.group(1).strip())
+            if parsed is not None:
+                return parsed
+
+    # 中文省略号替换
+    normalized = text.replace("…", "...")
+    if normalized != text:
+        parsed = _try_load(normalized)
+        if parsed is not None:
+            return parsed
+        text = normalized
+
+    # 从最外层花括号截取
+    start_idx = text.find('{')
+    if start_idx != -1:
+        brace_count = 0
+        for i in range(start_idx, len(text)):
+            if text[i] == '{':
+                brace_count += 1
+            elif text[i] == '}':
+                brace_count -= 1
+                if brace_count == 0:
+                    candidate = text[start_idx:i+1]
+                    parsed = _try_load(candidate)
+                    if parsed is not None:
+                        return parsed
+
+    return None
+
 
 def parse_json_response(response_str: str, is_guided_decoding: bool = True) -> dict:
     """
@@ -332,59 +462,12 @@ def parse_json_response(response_str: str, is_guided_decoding: bool = True) -> d
         - 当启用 guided decoding 时，模型输出应该是纯 JSON 格式
         - 当禁用 guided decoding 时，可能包含 markdown code block 或其他文本
     """
-    if not response_str or not isinstance(response_str, str):
-        logging.error(f"Invalid response: {response_str}")
-        raise ValueError(f"无效的响应格式: {response_str}")
-    
-    response_str = response_str.strip()
-    
-    # 首先尝试直接解析 JSON（guided decoding 输出纯 JSON）
-    try:
-        return json.loads(response_str)
-    except json.JSONDecodeError:
-        pass
-    
-    # 如果直接解析失败，尝试提取 JSON 部分（兼容非 guided decoding 的情况）
-    try:
-        # 方法1: 提取 ```json ... ``` 代码块
-        json_match = re.search(r'```json\s*(\{[\s\S]*?\})\s*```', response_str, re.MULTILINE)
-        if json_match:
-            json_str = json_match.group(1).strip()
-            return json.loads(json_str)
-        
-        # 方法2: 提取 ``` ... ``` 代码块
-        json_match = re.search(r'```\s*(\{[\s\S]*?\})\s*```', response_str, re.MULTILINE)
-        if json_match:
-            json_str = json_match.group(1).strip()
-            return json.loads(json_str)
-        
-        # 方法3: 查找最外层的花括号包围的 JSON
-        # 这种方法需要更仔细的处理，避免误匹配嵌套结构
-        start_idx = response_str.find('{')
-        if start_idx != -1:
-            # 从第一个 { 开始，找到匹配的 }
-            brace_count = 0
-            for i in range(start_idx, len(response_str)):
-                if response_str[i] == '{':
-                    brace_count += 1
-                elif response_str[i] == '}':
-                    brace_count -= 1
-                    if brace_count == 0:
-                        json_str = response_str[start_idx:i+1]
-                        try:
-                            return json.loads(json_str)
-                        except json.JSONDecodeError:
-                            continue
-        
-        # 如果都失败了
+    parsed = _load_json_from_text(response_str)
+    if parsed is None:
         logging.error(f"无法在响应中找到有效的 JSON")
-        logging.error(f"原始响应: {response_str[:200]}...")
+        logging.error(f"原始响应: {str(response_str)[:200]}...")
         raise ValueError(f"无法解析 JSON 响应，响应格式不正确")
-        
-    except json.JSONDecodeError as e:
-        logging.error(f"JSON 解析失败: {e}")
-        logging.error(f"原始响应: {response_str[:200]}...")
-        raise ValueError(f"无法解析 JSON 响应: {e}")
+    return parsed
 
 def get_screenshot(device, device_type="Android"):
     """
@@ -440,6 +523,65 @@ def convert_qwen3_coordinates_to_absolute(bbox_or_coords, img_width, img_height,
         y = int(y / 1000 * img_height)
         return [x, y]
 
+def validate_action_parameters(decider_response):
+    """
+    校验不同动作的字段完整性
+    
+    Args:
+        decider_response: 解析后的 JSON 响应字典
+    
+    Raises:
+        ValueError: 当必需字段缺失时
+    """
+    action = decider_response.get("action")
+    parameters = decider_response.get("parameters", {})
+    
+    if not action:
+        raise ValueError("Missing required field: 'action'")
+    
+    if not decider_response.get("reasoning"):
+        raise ValueError("Missing required field: 'reasoning'")
+    
+    # 根据不同动作类型校验必需参数
+    if action == "click":
+        if not parameters.get("target_element"):
+            raise ValueError("Click action missing required parameter: 'target_element'")
+        # e2e模式下需要校验bbox
+        # 注意：这里不直接检查bbox，因为可能在非e2e模式下不需要
+    
+    elif action == "input":
+        if "text" not in parameters:
+            raise ValueError("Input action missing required parameter: 'text'")
+        # text可以为空字符串，所以只检查是否存在该字段
+    
+    elif action == "swipe":
+        direction = parameters.get("direction")
+        if not direction:
+            raise ValueError("Swipe action missing required parameter: 'direction'")
+        if direction.upper() not in ["UP", "DOWN", "LEFT", "RIGHT"]:
+            raise ValueError(f"Invalid swipe direction: '{direction}'. Must be one of: UP, DOWN, LEFT, RIGHT")
+    
+    elif action == "done":
+        status = parameters.get("status")
+        if not status:
+            raise ValueError("Done action missing required parameter: 'status'")
+    
+    elif action == "long_press":
+        if not parameters.get("target_element"):
+            raise ValueError("Long_press action missing required parameter: 'target_element'")
+    
+    elif action == "open_app":
+        if not parameters.get("app_name"):
+            raise ValueError("Open_app action missing required parameter: 'app_name'")
+    
+    elif action == "wait":
+        # wait动作通常不需要额外参数
+        pass
+    
+    else:
+        raise ValueError(f"Unknown action: '{action}'")
+    
+    return True
 def create_swipe_visualization(data_dir, image_index, direction, start_x=None, start_y=None, end_x=None, end_y=None):
     """为滑动动作创建可视化图像"""
     try:
@@ -496,67 +638,123 @@ def create_swipe_visualization(data_dir, image_index, direction, start_x=None, s
     except Exception as e:
         logging.warning(f"Failed to create swipe visualization: {e}")
 
-
-# 预处理 decider_response_str，增强健壮性
+# 预处理 response_str，增强健壮性
 def robust_json_loads(s):
+    """健壮解析 response_str，使用统一解析逻辑。"""
+    parsed = _load_json_from_text(s)
+    if parsed is None:
+        logging.error(f"解析 response_str 失败")
+        logging.error(f"原始内容: {str(s)[:300]}...")
+        raise ValueError(f"无法解析 JSON 响应: 响应格式不正确")
+    return parsed
+
+
+def get_device_paths(device_type, image_index=None):
     """
-    健壮的 JSON 加载函数
-    支持 guided decoding 和普通模式的混合输出
+    获取设备相关的文件路径
+    
+    Args:
+        device_type: 设备类型 ("Android" 或 "Harmony")
+        image_index: 图像索引（可选）
+    
+    Returns:
+        dict: 包含 img_path, screenshot_name, current_dir 的字典
     """
-    if not isinstance(s, str):
-        s = str(s)
+    current_dir = os.getcwd()
+    screenshot_name = "screenshot-Android.jpg" if device_type == "Android" else "screenshot-Harmony.jpg"
+    img_path = os.path.join(current_dir, screenshot_name)
+    return {
+        "img_path": img_path,
+        "screenshot_name": screenshot_name,
+        "current_dir": current_dir
+    }
+
+
+def validate_decider_response(response_dict, use_e2e=False):
+    """
+    校验 Decider 模型响应，包括基础参数校验和e2e模式特殊校验
     
-    s = s.strip()
+    Args:
+        response_dict: 解析后的JSON响应对象
+        use_e2e: 是否使用e2e模式
     
-    # 首先尝试直接解析 JSON（guided decoding 纯输出）
-    try:
-        return json.loads(s)
-    except json.JSONDecodeError:
-        pass
+    Raises:
+        ValueError: 校验失败时抛出异常
+    """
+    # 基础参数校验
+    validate_action_parameters(response_dict)
     
-    # 提取 ```json ... ``` 代码块
-    codeblock = re.search(r"```json\s*([\s\S]*?)\s*```", s, re.MULTILINE)
-    if codeblock:
-        s = codeblock.group(1).strip()
-        try:
-            return json.loads(s)
-        except json.JSONDecodeError:
-            pass
+    # e2e模式的特殊校验
+    if use_e2e:
+        action_name = response_dict["action"]
+        parameters = response_dict["parameters"]
+        
+        if action_name == "click":
+            # e2e模式下click动作需要bbox
+            if "bbox" not in parameters or parameters["bbox"] is None:
+                raise ValueError("E2E mode: click action missing required parameter: 'bbox'")
+        
+        elif action_name == "swipe":
+            # e2e模式下swipe动作可能需要起始和结束坐标
+            if "start_coords" in parameters and "end_coords" in parameters:
+                if parameters["start_coords"] is None or parameters["end_coords"] is None:
+                    logging.warning("E2E mode: swipe action has null start_coords or end_coords, will fall back to direction-based swipe")
+
+
+def validate_grounder_response(response_dict):
+    """
+    校验 Grounder 模型响应
     
-    # 替换中文省略号为英文 ...
-    s = s.replace("…", "...")
+    Args:
+        response_dict: 解析后的JSON响应对象
     
-    # 尝试再次解析
-    try:
-        return json.loads(s)
-    except json.JSONDecodeError:
-        pass
-    
-    # 尝试提取 JSON 对象（从第一个 { 到最后一个 }）
-    start_idx = s.find('{')
-    if start_idx != -1:
-        brace_count = 0
-        for i in range(start_idx, len(s)):
-            if s[i] == '{':
-                brace_count += 1
-            elif s[i] == '}':
-                brace_count -= 1
-                if brace_count == 0:
-                    json_str = s[start_idx:i+1]
-                    try:
-                        return json.loads(json_str)
-                    except json.JSONDecodeError:
-                        continue
-    
-    # 解析失败，记录错误
-    logging.error(f"解析 decider_response_str 失败")
-    logging.error(f"原始内容: {s[:300]}...")
-    raise ValueError(f"无法解析 JSON 响应: 响应格式不正确")
+    Raises:
+        ValueError: 校验失败时抛出异常
+    """
+    # Grounder需要至少返回coordinates或bbox
+    if "coordinates" not in response_dict and not any(
+        key.lower() in ["bbox", "bbox_2d", "bbox-2d", "bbox_2D", "bbox2d"]
+        for key in response_dict.keys()
+    ):
+        raise ValueError("Grounder response must contain 'coordinates' or 'bbox' field")
+
+def compute_swipe_positions(direction, img_width, img_height):
+        direction = direction.upper()
+        if direction == "DOWN":
+            return (
+                0.5 * img_width,
+                SWIPE_V_START * img_height,
+                0.5 * img_width,
+                SWIPE_V_END * img_height,
+            )
+        if direction == "UP":
+            return (
+                0.5 * img_width,
+                SWIPE_V_END * img_height,
+                0.5 * img_width,
+                SWIPE_V_START * img_height,
+            )
+        if direction == "LEFT":
+            return (
+                SWIPE_H_END * img_width,
+                0.5 * img_height,
+                SWIPE_H_START * img_width,
+                0.5 * img_height,
+            )
+        if direction == "RIGHT":
+            return (
+                SWIPE_H_START * img_width,
+                0.5 * img_height,
+                SWIPE_H_END * img_width,
+                0.5 * img_height,
+            )
+        raise ValueError(f"Unknown swipe direction: {direction}")
 
 def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3=True, device_type="Android", use_e2e=False):
     history = []
     actions = []
     reacts = []
+
     if use_e2e:
         # 在e2e模式下使用e2e_qwen3.md，否则使用decider_v2.md
         decider_prompt_template = load_prompt("e2e_qwen3.md")
@@ -590,46 +788,40 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3
         )
         # logging.info(f"Decider prompt: \n{decider_prompt}")
 
-        # --- 修改 API 调用 ---
-        # vLLM 将会强制输出一个符合 ActionPlan 结构的 JSON 字符串
-        # 若响应超时或者返回结果解析失败，则进行重试
-        temperature = 0.0
-        for attempt in range(5):  # 最多重试5次
-        # while True:
-            try:
-                decider_start_time = time.time()
-                decider_response_str = decider_client.chat.completions.create(
-                    model=decider_model,
-                    messages=[
-                        {
-                            "role": "user",
-                            "content": [
-                                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{screenshot_resize}"}},
-                                {"type": "text", "text": decider_prompt},
-                            ]
-                        }
-                    ],
-                    temperature=temperature,
-
-                    timeout=30,
-                    max_tokens=256,
-                ).choices[0].message.content
-                decider_end_time = time.time()
-                logging.info(f"[evaluation] Decider time taken: {decider_end_time - decider_start_time} seconds")
-                logging.info(f"Decider response: \n{decider_response_str}")
-                decider_response = robust_json_loads(decider_response_str)
-                converted_item = {
-                    "reasoning": decider_response["reasoning"],
-                    "function": {
-                        "name": decider_response["action"],
-                        "parameters": decider_response["parameters"]
+        # --- 调用 Decider 模型 ---
+        try:
+            # 为e2e模式创建特定的校验器
+            def decider_validator(response):
+                validate_decider_response(response, use_e2e=use_e2e)
+            
+            decider_response = call_model_with_validation_retry(
+                decider_client,
+                decider_model,
+                [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{screenshot_resize}"}},
+                            {"type": "text", "text": decider_prompt},
+                        ]
                     }
+                ],
+                validator_func=decider_validator,
+                max_retries=MAX_RETRIES,
+                max_tokens=DECIDER_MAX_TOKENS,
+                context="Decider"
+            )
+
+            converted_item = {
+                "reasoning": decider_response["reasoning"],
+                "function": {
+                    "name": decider_response["action"],
+                    "parameters": decider_response["parameters"]
                 }
-                break  # 成功获取响应，跳出重试循环
-            except Exception as e:
-                temperature = 0.1 + attempt * 0.1  # 每次重试时增加温度，增加多样性
-                logging.error(f"Decider 调用失败: {e}, 正在重试 temperature={temperature}...")
-                time.sleep(2)
+            }
+        except Exception as e:
+            logging.error(f"Decider 处理失败: {e}")
+            raise
 
         
         reacts.append(converted_item)
@@ -637,16 +829,11 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3
 
         # compute image index for this loop iteration (1-based)
         image_index = len(actions) + 1
-        current_dir = os.getcwd()
-        current_image = ""
-        if device_type == "Android":
-            img_path = os.path.join(current_dir, f"screenshot-Android.jpg")
-            save_path = os.path.join(data_dir, f"{image_index}.jpg")
-            current_image = f"screenshot-Android.jpg"
-        else:
-            img_path = os.path.join(current_dir, f"screenshot-Harmony.jpg")
-            save_path = os.path.join(data_dir, f"{image_index}.jpg")
-            current_image = f"screenshot-Harmony.jpg"
+        device_paths = get_device_paths(device_type)
+        img_path = device_paths["img_path"]
+        current_image = device_paths["screenshot_name"]
+        
+        save_path = os.path.join(data_dir, f"{image_index}.jpg")
         img = Image.open(img_path)
         img.save(save_path)
 
@@ -718,47 +905,41 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3
                     bbox = convert_qwen3_coordinates_to_absolute(bbox, img.width, img.height, is_bbox=True)
                 x1, y1, x2, y2 = bbox
             else:
-                # 非e2e模式：调用grounder获取bbox
+                # 调用 Grounder 获取坐标
                 grounder_prompt = (grounder_prompt_template_bbox if bbox_flag else grounder_prompt_template_no_bbox).format(reasoning=reasoning, description=target_element)
+                
+                try:
+                    grounder_response = call_model_with_validation_retry(
+                        grounder_client,
+                        grounder_model,
+                        [
+                            {
+                                "role": "user",
+                                "content": [
+                                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{screenshot_resize}"}},
+                                    {"type": "text", "text": grounder_prompt},
+                                ]
+                            }
+                        ],
+                        validator_func=validate_grounder_response,
+                        max_retries=MAX_RETRIES,
+                        max_tokens=GROUNDER_MAX_TOKENS,
+                        context="Grounder"
+                    )
+                except Exception as e:
+                    logging.error(f"Grounder 处理失败: {e}")
+                    raise
 
-                # 重试5次获取grounder响应，同时调整temperature
-                temperature = 0.0
-                for attempt in range(5):
-                    try:
-                        grounder_start_time = time.time()
-                        grounder_response_str = grounder_client.chat.completions.create(
-                            model=grounder_model,
-                            messages=[
-                                {
-                                    "role": "user",
-                                    "content": [
-                                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{screenshot_resize}"}},
-                                        {"type": "text", "text": grounder_prompt},
-                                    ]
-                                }
-                            ],
-                            temperature=temperature,
-                            timeout=30,
-                            max_tokens=128,
-                        ).choices[0].message.content
-                        grounder_end_time = time.time()
-                        logging.info(f"[evaluation] Grounder time taken: {grounder_end_time - grounder_start_time} seconds")
-                        logging.info(f"Grounder response: \n{grounder_response_str}")
-                        grounder_response = parse_json_response(grounder_response_str)
-                        break  # 成功获取响应，跳出重试循环
-                    except Exception as e:
-                        temperature = 0.1 + attempt * 0.1  # 每次重试时增加温度，增加多样性
-                        logging.error(f"Grounder 调用失败: {e}, 正在重试 temperature={temperature}...")
-                        time.sleep(2)
-
-                if(bbox_flag):
-                    # 直接尝试获取含有bbox的字段，而不要求完全匹配
+                if bbox_flag:
+                    # 获取bbox字段（validate_grounder_response已确保存在）
                     bbox = None
                     for key in grounder_response:
-                        if key.lower() in ["bbox", "bbox_2d", "bbox-2d", "bbox_2D", "bbox2d", "bbox_2009"]:
+                        if key.lower() in ["bbox", "bbox_2d", "bbox-2d", "bbox_2D", "bbox2d"]:
                             bbox = grounder_response[key]
                             break
                     
+                    if bbox is None:
+                        raise ValueError("Grounder response validation failed: no bbox field found")
 
                     # 如果使用 Qwen3 模型，进行坐标转换
                     if use_qwen3:
@@ -791,10 +972,10 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3
                     "bounds": [x1, y1, x2, y2],
                     "action_index": image_index
                 })
-                history.append(decider_response_str)
+                history.append(json.dumps(decider_response, ensure_ascii=False))
 
-                current_dir = os.getcwd()
-                img_path = os.path.join(current_dir, current_image)
+                # 创建可视化图像
+                img_path = os.path.join(device_paths["current_dir"], current_image)
                 save_path = os.path.join(data_dir, f"{image_index}_highlighted.jpg")
                 img = Image.open(img_path)
                 draw = ImageDraw.Draw(img)
@@ -805,14 +986,14 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3
                 draw.text((img.width / 2 - text_width / 2, 0), text, fill="red", font=font)
                 img.save(save_path)
 
-                # 拉框
+                # 绘制边界框
                 bounds_path = os.path.join(data_dir, f"{image_index}_bounds.jpg")
                 img_bounds = Image.open(save_path)
                 draw_bounds = ImageDraw.Draw(img_bounds)
                 draw_bounds.rectangle([x1, y1, x2, y2], outline='red', width=5)
                 img_bounds.save(bounds_path)
 
-                # 画点
+                # 绘制点
                 cv2image = cv2.imread(bounds_path)
                 if cv2image is not None:
                     # 在点击位置画圆点
@@ -829,7 +1010,7 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3
                     "position_y": y,
                     "action_index": image_index
                 })
-                history.append(decider_response_str)
+                history.append(json.dumps(decider_response, ensure_ascii=False))
           
 
         elif action == "input":
@@ -841,7 +1022,7 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3
                 "action_index": image_index
             })
             
-            history.append(decider_response_str)
+            history.append(json.dumps(decider_response, ensure_ascii=False))
 
         elif action == "swipe":
             direction = decider_response["parameters"]["direction"]
@@ -873,61 +1054,51 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3
                         "direction": direction.lower(),
                         "action_index": image_index
                     })
-                    history.append(decider_response_str)
+                    history.append(json.dumps(decider_response, ensure_ascii=False))
                     create_swipe_visualization(data_dir, image_index, direction.lower(), start_x, start_y, end_x, end_y)
                 else:
                     logging.warning("E2E mode: start_coords or end_coords not found, falling back to direction-based swipe")
-                    # 回退到方向based swipe
-                    if direction == "DOWN":
-                        device.swipe(direction.lower(), 0.4)
-                        press_position_x = img.width * 0.3
-                        press_position_y = img.height * 0.5
-                        release_position_x = img.width * 0.7
-                        release_position_y = img.height * 0.5
-                    elif direction in ["UP", "LEFT", "RIGHT"]:
-                        device.swipe(direction.lower(), 0.4)
-
-                    else:
-                        raise ValueError(f"Unknown swipe direction: {direction}")
-                    
+                    press_position_x, press_position_y, release_position_x, release_position_y = compute_swipe_positions(direction, img.width, img.height)
+                    device.swipe_with_coords(press_position_x, press_position_y, release_position_x, release_position_y,)
                     actions.append({
                         "type": "swipe",
-                        "press_position_x": None,
-                        "press_position_y": None,
-                        "release_position_x": None,
-                        "release_position_y": None,
+                        "press_position_x": press_position_x,
+                        "press_position_y": press_position_y,
+                        "release_position_x": release_position_x,
+                        "release_position_y": release_position_y,
                         "direction": direction.lower(),
                         "action_index": image_index
                     })
-                    history.append(decider_response_str)
+                    history.append(json.dumps(decider_response, ensure_ascii=False))
                     create_swipe_visualization(data_dir, image_index, direction.lower())
             else:
-                if direction in ["DOWN", "UP", "LEFT", "RIGHT"]:
-                    device.swipe(direction.lower(), 0.4)
-                    actions.append({
-                        "type": "swipe",
-                        "press_position_x": None,
-                        "press_position_y": None,
-                        "release_position_x": None,
-                        "release_position_y": None,
-                        "direction": direction.lower(),
-                        "action_index": image_index
-                    })
+                press_position_x, press_position_y, release_position_x, release_position_y = compute_swipe_positions(direction, img.width, img.height)
+                device.swipe_with_coords(press_position_x, press_position_y, release_position_x, release_position_y,)
+                actions.append({
+                    "type": "swipe",
+                    "press_position_x": press_position_x,
+                    "press_position_y": press_position_y,
+                    "release_position_x": release_position_x,
+                    "release_position_y": release_position_y,
+                    "direction": direction.lower(),
+                    "action_index": image_index
+                })
                     
-                    history.append(decider_response_str)
-                    
-                    # 为滑动创建可视化
-                    create_swipe_visualization(data_dir, image_index, direction.lower())
+                history.append(json.dumps(decider_response, ensure_ascii=False))
+                
+                # 为滑动创建可视化
+                create_swipe_visualization(data_dir, image_index, direction.lower())
 
-                else:
-                    raise ValueError(f"Unknown swipe direction: {direction}")
+            # else:
+            #     raise ValueError(f"Unknown swipe direction: {direction}")
         elif action == "wait":
             print("Waiting for a while...")
             actions.append({
                 "type": "wait",
                 "action_index": image_index
             })
-            history.append(decider_response_str)
+            time.sleep(DEVICE_WAIT_TIME)
+            history.append(json.dumps(decider_response, ensure_ascii=False))
         else:
             raise ValueError(f"Unknown action: {action}")
         
@@ -959,24 +1130,20 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3
 
 
 def parse_planner_response(response_str: str):
-
-    # 尝试匹配 ```json ... ``` 代码块
-    pattern = re.compile(r"```json\s*(.*?)\s*```", re.DOTALL)
-    match = pattern.search(response_str)
-
-    json_str = None
-    if match:
-        json_str = match.group(1)
-    else:
-        # 如果没有代码块，直接当成 JSON
-        json_str = response_str.strip()
-
-    try:
-        data = json.loads(json_str)
-        return data
-    except json.JSONDecodeError as e:
-        logging.error(f"解析 JSON 失败: {e}\n内容为:\n{json_str}")
-        return None
+    """
+    解析 Planner 模型响应，使用统一的 JSON 解析逻辑
+    
+    Args:
+        response_str: 模型返回的响应字符串
+    
+    Returns:
+        解析后的 JSON 对象，或 None 如果解析失败
+    """
+    parsed = _load_json_from_text(response_str)
+    if parsed is None:
+        logging.error(f"解析 Planner 响应失败")
+        logging.error(f"原始内容: {str(response_str)[:300]}...")
+    return parsed
 
 def get_app_package_name(task_description, use_graphrag=False, device_type="Android", use_experience=False):
     """单阶段：本地检索经验，调用模型完成应用选择和任务描述生成。"""
@@ -1066,6 +1233,7 @@ def execute_single_task(task_description, device, data_dir, use_experience, use_
     logging.info(f"Starting task in app: {app_name} (package: {package_name})")
     device.app_start(package_name)
     task_in_app(app_name, task_description, new_task_description, device, data_dir, True, use_qwen3_model, current_device_type, use_e2e)
+    time.sleep(APP_STOP_WAIT)  # 等待后再停止应用
     logging.info(f"Stopping app: {app_name} (package: {package_name})")
     device.app_stop(package_name)
 

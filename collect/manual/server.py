@@ -539,7 +539,8 @@ def get_app_packages(dev_type: str = "Android"):
             "网易云音乐": "com.netease.cloudmusic",
             "酷狗音乐": "com.kugou.android",
 
-            "高德地图": "com.autonavi.minimap"
+            "高德地图": "com.autonavi.minimap",
+            "华为商城": "com.vmall.client",
         }
     elif dev_type == "Harmony":
         return {
@@ -557,7 +558,8 @@ def get_app_packages(dev_type: str = "Android"):
             "微博": "com.sina.weibo.stage",
             "京东": "com.jd.hm.mall",
             "浏览器": "com.huawei.hmos.browser",
-            "拼多多": "com.xunmeng.pinduoduo.hos"
+            "拼多多": "com.xunmeng.pinduoduo.hos",
+            "华为商城": "com.huawei.hmos.vmall"
         }
     else:
         return {}

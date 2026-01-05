@@ -1,5 +1,6 @@
 import random
 from PIL import Image, ImageDraw, ImageFont
+from rich import print
 import textwrap
 import cv2
 import numpy as np
@@ -74,7 +75,8 @@ def compare_actions(actions, reacts):
             flag = False
             for desc, expected_direction in direction_mapping.items():
                 if desc in reasoning:
-                    if react_direction == expected_direction:
+                    # 对比大写内容
+                    if react_direction.upper() == expected_direction.upper():
                         flag = True
                         break
                     else:
@@ -340,10 +342,16 @@ def auto_annotate(root, chain, task_description, actions):
 
     for batch_index, batch in enumerate(image_batches):
         print(f"[Debug] Processing batch {batch_index + 1}/{len(image_batches)} with {len(batch)} images.")
+        # 当batch_index< len(image_batches) 时，修改task_description，增加上下文信息:最后一个动作不是done，提示后续还有动作
+        if batch_index < len(image_batches) - 1:
+            modified_task_description = task_description + "\n（请注意，当前第16步后续还有更多的界面截图和对应的操作，当前的最后一步reasoning动作不是done，请根据已有截图和操作进行分析和推理。）"
+        else:
+            modified_task_description = task_description
+
         for attempt in range(0, max_attempts):
             try:
                 response = chain.invoke({
-                    "goal": task_description,
+                    "goal": modified_task_description,
                     "screenshot_count": len(batch),
                     "messages": [
                         (
@@ -364,6 +372,10 @@ def auto_annotate(root, chain, task_description, actions):
                 # 在match中增加一个索引字段react_index，从1开始
                 for i, item in enumerate(match):
                     item['action_index'] = i + 1 + batch_index * max_images_per_request
+                #增加校验，当不是最后一个批次时，应该对应输出max_images_per_request个react
+                if batch_index < len(image_batches) - 1 and len(match) != max_images_per_request:
+                    print(f"[Invalid reasoning count: expected {max_images_per_request}, got {len(match)}]")
+                    raise Exception(f"[Invalid reasoning count: expected {max_images_per_request}, got {len(match)}]")
                 all_data.extend(match)  # 合并当前批次的结果
                 break
 
@@ -408,7 +420,7 @@ if __name__ == "__main__":
     )
 
     from utils.load_md_prompt import load_prompt
-    sys_prompt = load_prompt("annotation_zh_general.md")
+    sys_prompt = load_prompt("annotation_zh_general-gpt.md")
 
     prompt = ChatPromptTemplate.from_messages(
         [
@@ -430,6 +442,7 @@ if __name__ == "__main__":
       
             react_json = os.path.join(root, "react.json")
             if os.path.exists(react_json):
+                print ("react.json exists, skip")
                 continue
             parse_error = os.path.join(root, "parse.error")
             if os.path.exists(parse_error):
@@ -443,24 +456,28 @@ if __name__ == "__main__":
             task_description = data.get("task_description")
             actions = data.get("actions")
 
-            # actions = add_bounds_to_action(root, actions)
-            # data["actions"] = actions
-            # with open(actions_json, 'w', encoding='utf-8') as file:
-            #     json.dump(data, file, ensure_ascii=False, indent=4)
+            actions = add_bounds_to_action(root, actions)
+            data["actions"] = actions
+            with open(actions_json, 'w', encoding='utf-8') as file:
+                json.dump(data, file, ensure_ascii=False, indent=4)
             
             visual_prompt(root, actions)
+
+            # 如果 task_description 是列表，取第一个
+            if isinstance(task_description, list):
+                task_description = task_description[0]
             auto_annotate(root, chain, task_description, actions)
 
-            app_name = data.get("app_name")
-            if(isinstance(task_description, str)):
-                new_tasks = change_task_description(app_name, task_description)
-                all_tasks = [task_description] + new_tasks
-                data["task_description"] = all_tasks
+            # app_name = data.get("app_name")
+            # if(isinstance(task_description, str)):
+                # new_tasks = change_task_description(app_name, task_description)
+                # all_tasks = [task_description] + new_tasks
+                # data["task_description"] = all_tasks
 
-                with open(actions_json, 'w', encoding='utf-8') as file:
-                    json.dump(data, file, ensure_ascii=False, indent=4)
+                # with open(actions_json, 'w', encoding='utf-8') as file:
+                #     json.dump(data, file, ensure_ascii=False, indent=4)
 
-                print(f"[Increase Task] finished, saved to {actions_json}")
+                # print(f"[Increase Task] finished, saved to {actions_json}")
 
 
         except Exception as e:

@@ -1,26 +1,29 @@
 import keyword
 from openai import OpenAI
-from pyautogui import press
 import uiautomator2 as u2
 import base64
 from PIL import Image
 import json
 import io
 import logging
-from abc import ABC, abstractmethod
 import time
 import re
 import os
 import argparse
-import xml.etree.ElementTree as ET
-from PIL import Image, ImageDraw, ImageFont
 import textwrap
 import cv2
+import sys
+import random
+from abc import ABC, abstractmethod
+import xml.etree.ElementTree as ET
+from PIL import Image, ImageDraw, ImageFont
+
+
 import numpy as np
 from utils.local_experience import PromptTemplateSearch 
 from pathlib import Path
-import sys
 from hmdriver2.driver import Driver
+from hmdriver2.proto import KeyCode
 from utils.load_md_prompt import load_prompt
 from dotenv import load_dotenv
 from utils.local_experience import PromptTemplateSearch 
@@ -178,7 +181,10 @@ class AndroidDevice(Device):
         self.d.shell(['am', 'broadcast', '-a', 'ADB_INPUT_B64', '--es', 'msg', charsb64])
         time.sleep(DEVICE_WAIT_TIME)
         self.d.shell(['settings', 'put', 'secure', 'default_input_method', current_ime])
-        time.sleep(DEVICE_WAIT_TIME)
+        # time.sleep(DEVICE_WAIT_TIME)
+        # Press Enter key to confirm input
+        self.d.shell(['input', 'keyevent', 'KEYCODE_ENTER'])
+
 
     def swipe(self, direction, scale=0.5):
         # self.d.swipe_ext(direction, scale)
@@ -277,6 +283,9 @@ class HarmonyDevice(Device):
         self.d.shell("uitest uiInput keyEvent 2072 2017")
         self.d.press_key(2071)
         self.d.input_text(text)
+        # Press Enter key to confirm input
+        self.d.press_key(KeyCode.ENTER)
+        # self.d.press_key(KeyCode.SEND)
 
     def swipe(self, direction, scale=0.5):
         # self.d.swipe_ext(direction, scale=scale)
@@ -548,7 +557,14 @@ def validate_action_parameters(decider_response):
             raise ValueError("Click action missing required parameter: 'target_element'")
         # e2e模式下需要校验bbox
         # 注意：这里不直接检查bbox，因为可能在非e2e模式下不需要
-    
+    elif action == "click_input":
+        if not parameters.get("target_element"):
+            raise ValueError("Click_input action missing required parameter: 'target_element'")
+        if not parameters.get("bbox"):
+            raise ValueError("Click_input action missing required parameter: 'bbox'")
+        if not parameters.get("text"):
+            raise ValueError("Click_input action missing required parameter: 'text'")
+        
     elif action == "input":
         if "text" not in parameters:
             raise ValueError("Input action missing required parameter: 'text'")
@@ -719,36 +735,36 @@ def validate_grounder_response(response_dict):
         raise ValueError("Grounder response must contain 'coordinates' or 'bbox' field")
 
 def compute_swipe_positions(direction, img_width, img_height):
-        direction = direction.upper()
-        if direction == "DOWN":
-            return (
-                0.5 * img_width,
-                SWIPE_V_START * img_height,
-                0.5 * img_width,
-                SWIPE_V_END * img_height,
-            )
-        if direction == "UP":
-            return (
-                0.5 * img_width,
-                SWIPE_V_END * img_height,
-                0.5 * img_width,
-                SWIPE_V_START * img_height,
-            )
-        if direction == "LEFT":
-            return (
-                SWIPE_H_END * img_width,
-                0.5 * img_height,
-                SWIPE_H_START * img_width,
-                0.5 * img_height,
-            )
-        if direction == "RIGHT":
-            return (
-                SWIPE_H_START * img_width,
-                0.5 * img_height,
-                SWIPE_H_END * img_width,
-                0.5 * img_height,
-            )
-        raise ValueError(f"Unknown swipe direction: {direction}")
+    direction = direction.upper()
+    if direction == "DOWN":
+        return (
+            0.5 * img_width,
+            SWIPE_V_START * img_height,
+            0.5 * img_width,
+            SWIPE_V_END * img_height,
+        )
+    if direction == "UP":
+        return (
+            0.5 * img_width,
+            SWIPE_V_END * img_height,
+            0.5 * img_width,
+            SWIPE_V_START * img_height,
+        )
+    if direction == "LEFT":
+        return (
+            SWIPE_H_END * img_width,
+            0.5 * img_height,
+            SWIPE_H_START * img_width,
+            0.5 * img_height,
+        )
+    if direction == "RIGHT":
+        return (
+            SWIPE_H_START * img_width,
+            0.5 * img_height,
+            SWIPE_H_END * img_width,
+            0.5 * img_height,
+        )
+    raise ValueError(f"Unknown swipe direction: {direction}")
 
 def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3=True, device_type="Android", use_e2e=False):
     history = []
@@ -1011,7 +1027,29 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3
                     "action_index": image_index
                 })
                 history.append(json.dumps(decider_response, ensure_ascii=False))
-          
+                
+        elif action == "click_input":
+            reasoning = decider_response["reasoning"]
+            target_element = decider_response["parameters"]["target_element"]
+            text = decider_response["parameters"]["text"]
+            bbox = decider_response["parameters"]["bbox"]
+            bbox = convert_qwen3_coordinates_to_absolute(bbox, img.width, img.height, is_bbox=True)
+            x1, y1, x2, y2 = bbox
+            position_x = (x1 + x2) // 2
+            position_y = (y1 + y2) // 2
+
+            device.click(position_x, position_y)
+            actions.append({
+                "type": "click_input",
+                "position_x": position_x,
+                "position_y": position_y,
+                "bounds": [x1, y1, x2, y2],
+                "text": f"{text}",
+                "action_index": image_index
+            })
+
+            device.input(text)
+            history.append(json.dumps(decider_response, ensure_ascii=False))
 
         elif action == "input":
             text = decider_response["parameters"]["text"]
@@ -1097,7 +1135,7 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3
                 "type": "wait",
                 "action_index": image_index
             })
-            time.sleep(DEVICE_WAIT_TIME)
+            time.sleep(DEVICE_WAIT_TIME * 2)
             history.append(json.dumps(decider_response, ensure_ascii=False))
         else:
             raise ValueError(f"Unknown action: {action}")
@@ -1326,12 +1364,14 @@ if __name__ == "__main__":
             task_type = task_item.get("type", "default")
             tasks_list = task_item.get("tasks", [])
             
+            
             # 遍历该应用和类型下的所有任务
             for task_index, task_description in enumerate(tasks_list, 1):
                 # 创建 data_dir: data_base_dir/app/type/task_index
                 data_dir = os.path.join(data_base_dir, app_name_from_file, task_type, str(task_index))
                 os.makedirs(data_dir, exist_ok=True)
                 logging.info(f"Processing task {task_index} of {app_name_from_file}/{task_type}: {task_description}")
+
                 
                 execute_single_task(task_description, device, data_dir, use_experience, use_graphrag, current_device_type, use_qwen3_model, args.e2e)
         else:

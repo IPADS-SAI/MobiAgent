@@ -52,7 +52,16 @@
 - 华为商城: com.huawei.hmos.vmall
 - 华为阅读：com.huawei.hmsapp.books
 - 支付宝:com.alipay.mobile.client
-- 
+- 爱奇艺  com.qiyi.video.hmy
+- 唯品会:com.vip.hosapp
+- 千问:com.aliyun.tongyi4ohos
+- 12306:com.chinarailway.ticketingHM
+- 去哪旅行:com.qunar.hos
+- 钉钉:com.dingtalk.hmos
+- 今日头条:com.ss.hm.article.news
+- 喜马拉雅:com.ximalaya.ting.xmharmony
+- 百度:com.baidu.baiduapp
+- 手机管家:com.huawei.hmos.systemmanagerform
 
 ## 任务要求
 1.  **选择应用**：根据用户任务描述，从“可用应用列表”中选择最合适的应用。

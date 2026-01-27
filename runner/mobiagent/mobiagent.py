@@ -1,4 +1,3 @@
-import keyword
 from openai import OpenAI
 import uiautomator2 as u2
 import base64
@@ -34,7 +33,7 @@ from .user_preference_extractor import (
     should_extract_preferences,
     combine_context
 )
-
+ 
 # 清除可能已存在的 handlers，避免重复配置
 for handler in logging.root.handlers[:]:
     logging.root.removeHandler(handler)
@@ -766,6 +765,58 @@ def compute_swipe_positions(direction, img_width, img_height):
         )
     raise ValueError(f"Unknown swipe direction: {direction}")
 
+
+def build_decider_messages(task, history, screenshot, e2e):
+    from prompts.decider_qwen3_e2e import DECIDER_SYSTEM_PROMPT, DECIDER_USER_PROMPT, DECIDER_CURRENT_STEP_PROMPT
+    
+    # 1. 处理历史记录字符串
+    if len(history) == 0:
+        history_str = "(No history)"
+    else:
+        history_str = "\n".join(f"{idx}. {h}" for idx, h in enumerate(history, 1))
+
+    # 2. 准备前半部分文本（对应训练数据中 <image> 之前的内容）
+    # 包含：Task, History, Constraints
+    context_text = DECIDER_USER_PROMPT.format(task=task, history=history_str)
+    
+    # 3. 准备后半部分文本（对应训练数据中 <image> 之后的内容）
+    # 包含：Instruction (Please provide the next action...)
+    instruction_text = DECIDER_CURRENT_STEP_PROMPT
+
+    # 4. 构建单一的 User Message
+    # 结构严格遵循：[前半段文本] -> [图片] -> [后半段指令]
+    # 这样模型看到的输入序列就是：Text(Context) + ImageToken + Text(Instruction)
+    messages = [
+        {
+            "role": "system",
+            "content": DECIDER_SYSTEM_PROMPT
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": context_text  # 对应 <image> 上方的文本
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/jpeg;base64,{screenshot}"
+                    }
+                },
+                {
+                    "type": "text",
+                    "text": instruction_text  # 对应 <image> 下方的文本
+                }
+            ]
+        }
+    ]
+    
+    # 打印用于调试（实际生产建议去掉）
+    print(json.dumps(messages, ensure_ascii=False, indent=2)[:1000] + "...")
+    
+    return messages
+
 def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3=True, device_type="Android", use_e2e=False):
     history = []
     actions = []
@@ -798,11 +849,8 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3
         screenshot_resize = get_screenshot(device, device_type)
 
         
-        decider_prompt = decider_prompt_template.format(
-            task=task,
-            history=history_str
-        )
-        # logging.info(f"Decider prompt: \n{decider_prompt}")
+        messages = build_decider_messages(task, history, screenshot_resize, use_e2e)
+        logging.info(f"Decider messages[200]: \n{messages[200:]}")
 
         # --- 调用 Decider 模型 ---
         try:
@@ -813,15 +861,7 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3
             decider_response = call_model_with_validation_retry(
                 decider_client,
                 decider_model,
-                [
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{screenshot_resize}"}},
-                            {"type": "text", "text": decider_prompt},
-                        ]
-                    }
-                ],
+                messages,
                 validator_func=decider_validator,
                 max_retries=MAX_RETRIES,
                 max_tokens=DECIDER_MAX_TOKENS,

@@ -986,9 +986,13 @@ def get_app_package_name(task_description, use_graphrag=False, device_type="Andr
     logging.debug("Using template path: %s", default_template_path)
 
     # 本地检索经验
-    search_engine = PromptTemplateSearch(default_template_path)
-    experience_content = search_engine.get_experience(task_description, 1)
-    logging.debug("检索到的相关经验:\n%s", experience_content)
+    experience_content = ""
+    if use_experience:
+        search_engine = PromptTemplateSearch(default_template_path)
+        experience_content = search_engine.get_experience(task_description, 1)
+        logging.debug("检索到的相关经验:\n%s", experience_content)
+    else:
+        logging.debug("经验检索已禁用")
     if device_type == "Android":
         planner_prompt_template = load_prompt("planner_oneshot.md")
     elif device_type == "Harmony":

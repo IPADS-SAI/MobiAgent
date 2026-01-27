@@ -110,7 +110,8 @@ class AndroidDevice(Device):
             "网易云音乐": "com.netease.cloudmusic",
             "酷狗音乐": "com.kugou.android",
 
-            "高德地图": "com.autonavi.minimap"
+            "高德地图": "com.autonavi.minimap",
+            "华为商城": "com.vmall.client"
         }
 
     def start_app(self, app):
@@ -272,7 +273,8 @@ class HarmonyDevice(Device):
             "浏览器": "com.huawei.hmos.browser",
             "微博": "com.sina.weibo.stage",
             "饿了么": "me.ele.eleme",
-            "拼多多": "com.xunmeng.pinduoduo.hos"
+            "拼多多": "com.xunmeng.pinduoduo.hos",
+            "华为商城": "com.huawei.hmos.vmall"
         }
 
     def start_app(self, app):

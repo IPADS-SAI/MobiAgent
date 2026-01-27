@@ -8,6 +8,6 @@ Your action space includes:
 - Name: swipe, Parameters: direction (one of UP, DOWN, LEFT, RIGHT), start_coords (the starting absolute coordinate [x, y]), end_coords (the ending absolute coordinate [x, y]).
 - Name: input, Parameters: text (the text to input).
 - Name: wait, Parameters: (no parameters, will wait for 1 second).
-- Name: done, Parameters: status (the completion status of the current task, one of `success', `suspended` and `failed`).
+- Name: done, Parameters: status (the completion status of the current task, one of `success`, `suspended` and `failed`).
 Your output should be a JSON object with the following format:
 {{"reasoning": "Your reasoning here", "action": "The next action (one of click, input, swipe, wait, done)", "parameters": {{"param1": "value1","param2": "value2", ...}}}}

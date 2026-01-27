@@ -14,15 +14,16 @@
 - 微信: com.tencent.mm
 - QQ: com.tencent.mobileqq
 - 新浪微博: com.sina.weibo
-- 饿了么: me.ele
+- 今日头条: com.ss.android.article.news
+- [外卖默认]饿了么: me.ele
 - 美团: com.sankuai.meituan
 - bilibili: tv.danmaku.bili
 - 爱奇艺: com.qiyi.video
 - 腾讯视频: com.tencent.qqlive
 - 优酷: com.youku.phone
-- 淘宝: com.taobao.taobao
+- [购物默认]淘宝: com.taobao.taobao
 - 京东: com.jingdong.app.mall
-- 携程: ctrip.android.view
+- [旅行、酒店、机票默认]携程: ctrip.android.view
 - 同城: com.tongcheng.android
 - 飞猪: com.taobao.trip
 - 去哪儿: com.Qunar
@@ -33,7 +34,7 @@
 - 网易云音乐: com.netease.cloudmusic
 - 酷狗音乐: com.kugou.android
 - 抖音: com.ss.android.ugc.aweme
-- 高德地图: com.autonavi.minimap
+- [导航、打车默认]高德地图: com.autonavi.minimap
 - 咸鱼: com.taobao.idlefish
 - 华为商城：com.vmall.client
 - 华为音乐: com.huawei.music
@@ -42,9 +43,14 @@
 - 拼多多：com.xunmeng.pinduoduo
 - 大众点评: com.dianping.v1
 - 浏览器: com.microsoft.emmx
+- 同程旅行: com.tongcheng.android
+- 滴滴出行: com.sdu.didi.psnger
+- 快手:com.smile.gifmaker
+- 备忘录:com.huawei.notepad
+
 
 ## 任务要求
-1.  **选择应用**：根据用户任务描述，从“可用应用列表”中选择最合适的应用。
+1.  **选择应用**：根据用户任务描述，从“可用应用列表”中选择最合适的应用，未提及指定APP时选择该类任务默认应用。
 2.  **生成最终任务描述**：参考最合适的“相关的经验/模板”，将用户的原始任务描述转化为一个详细、完整、结构化的任务描述。
     - **语义保持一致**：最终描述必须与用户原始意图完全相同。
     - **填充与裁剪**：

@@ -635,7 +635,7 @@ def find_best_match_node(root, target_element):
     print(candidates)
     flag = False
     return candidates[0]['bounds']
-def task_in_app(app, old_task, task,  device, data_dir, bbox_flag=True, use_qwen3=True, device_type="Android"):
+def task_in_app(app, old_task, task,  device, data_dir, bbox_flag=True, use_qwen3=True, device_type="Android", use_grounder=True):
     history = []
     actions = []
     reacts = []
@@ -811,6 +811,8 @@ def task_in_app(app, old_task, task,  device, data_dir, bbox_flag=True, use_qwen
                     try:
                         root = load_and_parse_xml(xml_path)
                         bbox = find_best_match_node(root, target_element)
+                        if use_grounder:
+                            bbox = None
                         if bbox is None:
                             print("gggggggggggggggggggggggggggggggggg")
                             grounder_start_time = time.time()
@@ -1148,7 +1150,10 @@ if __name__ == "__main__":
     parser.add_argument("--local_planner", action="store_true", help="Use local LLM via local_llm_generate instead of OpenAI clients")
     parser.add_argument("--local_grounder", action="store_true", help="Use local LLM via local_llm_generate instead of OpenAI clients")
     parser.add_argument("--local_decider", action="store_true", help="Use local LLM via local_llm_generate instead of OpenAI clients")
-
+    parser.add_argument("--use_grounder", action="store_true", default=True, 
+                    help="Whether to use grounder model for localization (default: True). "
+                         "If disabled, prefer XML node matching and skip grounder when match succeeds.")
+    
     #parser.add_argument("--invalidate_singletask_storage", action="store_true", help="Delete utils/experience/singletask_storage before starting tasks")
     args = parser.parse_args()
 
@@ -1160,7 +1165,6 @@ if __name__ == "__main__":
     # 使用命令行参数初始化
     enable_user_profile = (args.user_profile == "on")
     use_graphrag = (args.use_graphrag == "on")
-    print("aaaaa")
     init(
         args.service_ip, 
         args.decider_port, 
@@ -1173,13 +1177,11 @@ if __name__ == "__main__":
         use_local_grounder=args.local_grounder,
         use_local_decider=args.local_decider,
     )
-    print("bbbbb")
- 
-    
+
+   
     device = AndroidDevice(args.device_endpoint)
-    print("ccccc")    #print("Using AndroidDevice")
-        
-    
+
+         
     print(f"Connected to device: {args.device}")
     use_qwen3_model = args.use_qwen3
     use_experience = args.use_experience
@@ -1213,6 +1215,21 @@ if __name__ == "__main__":
     "去淘宝买香蕉",
     "去淘宝买草莓",
     "去淘宝买一箱橙汁",    
+    "去淘宝买张小泉剪刀",
+    "去淘宝买雨伞",
+    "去淘宝买围巾",
+    "去淘宝买手套",
+    "去淘宝买苹果17promax,颜色要白色,内存512G"
+    "去淘宝买华为mate80手机",
+    "去淘宝买剪刀",
+    "去淘宝买雨伞",
+    "去淘宝买荣耀手机",
+    "去淘宝买华为mate80手机",
+    "去淘宝买荣耀手机",
+    "去淘宝买苹果17promax,颜色要白色,内存512G"
+    "去淘宝买荣耀手机",
+    "用携程帮我查询北京的汉庭酒店价格",
+    "帮我用携程查询上海的汉庭酒店价格",
 
 ]
     
@@ -1246,7 +1263,7 @@ if __name__ == "__main__":
             
         print(f"Starting task in app: {app_name} (package: {package_name})")
         device.app_start(package_name)
-        task_in_app(app_name, task_description, new_task_description, device, data_dir, True, use_qwen3_model, current_device_type)
+        task_in_app(app_name, task_description, new_task_description, device, data_dir, True, use_qwen3_model, current_device_type, args.use_grounder)
         print(f"Stopping app: {app_name} (package: {package_name})")
         # device.app_stop(package_name)
         

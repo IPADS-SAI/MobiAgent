@@ -66,8 +66,19 @@ decider_prompt_no_history = load_prompt("decider_nohistory_v2.md")
 decider_prompt_qwen3 = decider_prompt
 decider_prompt_qwen3_no_history = decider_prompt_no_history
 
-e2e_prompt = load_prompt("e2e.md")
-e2e_prompt_no_history = load_prompt("e2e_nohistory.md")
+e2e_prompt = load_prompt("e2e_qwen3.md")
+e2e_prompt_no_history = load_prompt("e2e_nohistory_qwen3.md")
+
+def dump_json_with_jsonl(out_path, data):
+    # Write standard JSON and, when possible, a line-delimited JSONL for easier downstream loading
+    with open(out_path, "w", encoding="UTF-8") as f:
+        json.dump(data, f, ensure_ascii=False)
+
+    if isinstance(data, list):
+        jsonl_path = os.path.splitext(out_path)[0] + ".jsonl"
+        with open(jsonl_path, "w", encoding="UTF-8") as jf:
+            for row in data:
+                jf.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 def history_str(history):
     if len(history) == 0:
@@ -105,6 +116,9 @@ def resize_and_copy_image(part, img_path, data_path, out_path, factor, do_copy=F
     new_width = int(width * factor)
     new_height = int(height * factor)
     if do_copy:
+        # 避免重复保存处理
+        if os.path.exists(out_relpath):
+            return os.path.abspath(out_relpath), new_width, new_height
         resized_img = pil_img.resize((new_width, new_height), Image.LANCZOS)
         resized_img.save(out_relpath)
 
@@ -113,17 +127,24 @@ def resize_and_copy_image(part, img_path, data_path, out_path, factor, do_copy=F
 
 def validate_action(action_type, param):
     if action_type == "done":
+        # 处理 done 类型的 status 参数, status(str) 可选 success / suspended / failed
+        if isinstance(param, dict) and "status" in param:
+            status = param["status"]
+            if status in ["success", "suspended", "failed"]:
+                return "done", {"status": status}
+            
         return "done", {"status": "success"}
+    # 一部分旧数据中存在 stop 和 terminate 两种类型，做兼容处理
     elif action_type == "stop":
         return "done", {"status": "suspended"}
     elif action_type == "terminate":
         return "done", {"status": "failed"}
     param_name_mapping = {
-        "click": ["target_element"],
+        "click": ["target_element","bbox"],
         "input": ["text"],
-        "swipe": ["direction"],
+        "swipe": ["direction", "start_coords", "end_coords"],
         "wait": [],
-        "done": []
+        "done": ["status"]
     }
     if action_type not in param_name_mapping:
         raise ValueError(f"Unknown action type: {action_type}")
@@ -143,44 +164,6 @@ def format_qwen3_decider_output(output_dict):
     # use the same format as qwen2.5 for now
     output_json = json.dumps(output_dict, ensure_ascii=False)
     return output_json, output_json
-    # the following format has not been validated yet
-    # fmt_str = 'Thought: {reasoning}\nAction: {brief_action}\n<tool_call>{tool_call}</tool_call>'
-    # action_type = output_dict["action"]
-    # tool_call_dict = {
-    #     "name": "mobile_use", 
-    #     "arguments": {
-    #         "action": action_type,
-    #     }
-    # }
-
-    # if action_type == "click":
-    #     target_element = output_dict["parameters"]["target_element"]
-    #     brief_action = f'点击{target_element}'
-    #     tool_call_dict["arguments"]["target_element"] = target_element
-    # elif action_type == "input":
-    #     text = output_dict["parameters"]["text"]
-    #     brief_action = f'在文本框中输入"{text}"'
-    #     tool_call_dict["arguments"]["text"] = text
-    # elif action_type == "swipe":
-    #     direction = output_dict["parameters"]["direction"]
-    #     direction_mapping = {
-    #         "UP": "上",
-    #         "DOWN": "下",
-    #         "LEFT": "左",
-    #         "RIGHT": "右"
-    #     }
-    #     brief_action = f'向{direction_mapping[direction]}滑动屏幕'
-    #     tool_call_dict["arguments"]["direction"] = direction
-    # elif action_type == "wait":
-    #     brief_action = '等待页面加载'
-    # elif action_type == "done":
-    #     brief_action = '任务已完成，结束操作'
-    
-    # return fmt_str.format(
-    #     reasoning=output_dict["reasoning"],
-    #     brief_action=brief_action,
-    #     tool_call=json.dumps(tool_call_dict, ensure_ascii=False)
-    # ), brief_action
 
 def relative_point(point, width, height):
     x, y = point
@@ -196,7 +179,7 @@ def relative_bbox(bbox, width, height):
     rel_y2 = y2 / height * 1000
     return [int(rel_x1), int(rel_y1), int(rel_x2), int(rel_y2)]
 
-def construct_ss_data(single_step_data_path, out_path, factor=0.5, train_ratio=0.9, do_copy=True, use_qwen3=False):
+def construct_ss_data(single_step_data_path, out_path, factor=0.5, train_ratio=0.9, do_copy=True, use_qwen3=False, e2e=False):
     if not os.path.exists(single_step_data_path):
         return [], [], [], []
 
@@ -223,6 +206,16 @@ def construct_ss_data(single_step_data_path, out_path, factor=0.5, train_ratio=0
             with open(react_path, "r", encoding="UTF-8") as f:
                 react_data = json.load(f)
 
+            actions_path = os.path.join(root, "actions.json")
+            actions = []
+            if os.path.exists(actions_path):
+                with open(actions_path, "r", encoding="UTF-8") as f:
+                    try:
+                        actions_data = json.load(f)
+                        actions = actions_data.get("actions", [])
+                    except:
+                        pass
+
             tasks_path = os.path.join(root, "tasks.json")
             with open(tasks_path, "r", encoding="UTF-8") as f:
                 tasks = json.load(f)
@@ -241,16 +234,52 @@ def construct_ss_data(single_step_data_path, out_path, factor=0.5, train_ratio=0
                 
                 action_type, param = validate_action(action_type, param)
 
-                random_tasks = random.sample(tasks, 1)
+                if e2e and action_type == "click":
+                    if i - 1 < len(actions):
+                        action = actions[i - 1]
+                        bbox = action.get("bounds", None)
+                        # 根据factor、width和height调整bbox,调整为1000*1000相对坐标
+                        bbox = [int(bbox[0] * factor/width * 1000), int(bbox[1] * factor/height * 1000), int(bbox[2] * factor/width * 1000), int(bbox[3] * factor/height * 1000)] if bbox else None
+                        if bbox:
+                            param.update(dict(bbox=bbox))
+                
+                if e2e and action_type == "swipe":
+                    if "direction" in param:
+                        if i - 1 < len(actions):
+                            action = actions[i - 1]
+                            start_coords = [int(action["press_position_x"] * factor/width * 1000), int(action["press_position_y"] * factor/height * 1000)] if "press_position_x" in action and "press_position_y" in action else None
+                            end_coords = [int(action["release_position_x"] * factor/width * 1000), int(action["release_position_y"] * factor/height * 1000)] if "release_position_x" in action and "release_position_y" in action else None
+                            if start_coords and end_coords:
+                                param.update(dict(start_coords=start_coords, end_coords=end_coords))
+                            else:
+                                print(f"[e2e]error: action {i} has no swipe coords in {root}")
+
+                # 随机选择一个任务进行训练
+                # random_tasks = random.sample(tasks, 1)
+                # 按照顺序选择任务进行训练
+                print_flag=False
+                if len(tasks) == len(react_data):
+                    random_tasks = [tasks[i - 1]]
+                    print_flag=False
+                else:
+                    random_tasks = random.sample(tasks, 1)
 
                 for task in random_tasks:
+                    if print_flag:
+                        print(f"Processing SS Decider - Train: {is_train}, Task: {task}")
                     output_dict = dict(reasoning=reasoning, action=action_type, parameters=param)
                     if use_qwen3:
                         output, _ = format_qwen3_decider_output(output_dict)
-                        instruction = decider_prompt_qwen3_no_history.format(task=task)
+                        if e2e:
+                            instruction = e2e_prompt_no_history.format(task=task)
+                        else:
+                            instruction = decider_prompt_qwen3_no_history.format(task=task)
                     else:
                         output = json.dumps(output_dict, ensure_ascii=False)
-                        instruction = decider_prompt_no_history.format(task=task)
+                        if e2e:
+                            instruction = e2e_prompt_no_history.format(task=task)
+                        else:
+                            instruction = decider_prompt_no_history.format(task=task)
 
                     aug_num_repeat = augment_num_repeat("decider_no_history", augment_rule, is_train)
                     entries = create_entries_for_one_step(
@@ -259,6 +288,8 @@ def construct_ss_data(single_step_data_path, out_path, factor=0.5, train_ratio=0
                         output=output,
                         image_path=out_abspath
                     )
+                    if print_flag:
+                        print(entries)
                     if is_train:
                         decider_ss_entry_train.extend(entries)
                     else:
@@ -275,6 +306,16 @@ def construct_ss_data(single_step_data_path, out_path, factor=0.5, train_ratio=0
             react_path = os.path.join(root, "react.json")
             with open(react_path, "r", encoding="UTF-8") as f:
                 react_data = json.load(f)
+
+            actions_path = os.path.join(root, "actions.json")
+            actions = []
+            if os.path.exists(actions_path):
+                with open(actions_path, "r", encoding="UTF-8") as f:
+                    try:
+                        actions_data = json.load(f)
+                        actions = actions_data.get("actions", [])
+                    except:
+                        pass
 
             for i, react in enumerate(react_data, 1):
                 is_train = random.random() < train_ratio
@@ -297,7 +338,7 @@ def construct_ss_data(single_step_data_path, out_path, factor=0.5, train_ratio=0
                     if use_qwen3:
                         instruction = grounder_prompt_qwen3_bbox.format(reasoning=reasoning, description=target_element)
                         rel_bbox = relative_bbox(bbox, width, height)
-                        output = format_qwen3_grounder_output(dict(bbox_2d=rel_bbox, label=target_element))
+                        output = format_qwen3_grounder_output(dict(bbox=rel_bbox, label=target_element))
                     else:
                         instruction = grounder_prompt_bbox.format(reasoning=reasoning, description=target_element)
                         output = json.dumps(dict(bbox=bbox))
@@ -329,6 +370,14 @@ def create_grounder_entries_for_one_trace(react_data, actions, root, data_path, 
         param = react["function"]["parameters"]
 
         if action_type == "click":
+            if "target_element" not in param:
+                print(f"Warning: 'target_element' missing in click action at {root}, step {i}. Skipping.")
+                continue
+
+            if i - 1 >= len(actions):
+                print(f"Warning: Action index {i-1} out of range for actions list (len={len(actions)}) at {root}. Skipping.")
+                continue
+
             action = actions[i - 1]
             if "position_x" in action and "position_y" in action:
                 coords = [int(action["position_x"]* factor), int(action["position_y"]* factor)]
@@ -356,7 +405,7 @@ def create_grounder_entries_for_one_trace(react_data, actions, root, data_path, 
                 if use_qwen3:
                     instruction = grounder_prompt_qwen3_bbox.format(reasoning=reasoning, description=target_element)
                     rel_bbox = relative_bbox(bbox, width, height)
-                    output = format_qwen3_grounder_output(dict(bbox_2d=rel_bbox, label=target_element))
+                    output = format_qwen3_grounder_output(dict(bbox=rel_bbox, label=target_element))
                 else:
                     instruction = grounder_prompt_bbox.format(reasoning=reasoning, description=target_element)
                     output = json.dumps(dict(bbox=bbox))
@@ -378,8 +427,8 @@ def create_decider_entries_for_one_task(task, react_data, actions, root, data_pa
 
     history = []
 
-    if e2e and use_qwen3:
-        raise ValueError("qwen3 e2e is not supported")
+    # if e2e and use_qwen3:
+    #     raise ValueError("qwen3 e2e is not supported")
 
     if e2e:
         prompt_template = e2e_prompt
@@ -393,12 +442,15 @@ def create_decider_entries_for_one_task(task, react_data, actions, root, data_pa
 
     for i, react in enumerate(react_data, 1):
         augment_rule = augment_data(react, rules)
-        pos_num_repeat = position_num_repeat(i, len(react_data))
-        reason_aug_num_repeat = augment_num_repeat("decider", augment_rule, is_train)
+        pos_num_repeat = position_num_repeat(i, len(react_data)) #根据步骤位置设置重复次数
+        reason_aug_num_repeat = augment_num_repeat("decider", augment_rule, is_train)  # 在训练时才进行数据扩充
         reason_no_history_aug_num_repeat = augment_num_repeat("decider_no_history", augment_rule, is_train)
 
         img_path = os.path.join(root, f"{i}.jpg")
-        out_abspath, width, height = resize_and_copy_image("main", img_path, data_path, out_path, factor, do_copy)
+        if e2e: 
+            out_abspath, width, height = resize_and_copy_image("main", img_path, data_path, out_path, factor, do_copy)
+        else:
+            out_abspath, width, height = resize_and_copy_image("main", img_path, data_path, out_path, factor, do_copy=False)
 
         # 获取相关参数
         reasoning = react["reasoning"]
@@ -408,13 +460,39 @@ def create_decider_entries_for_one_task(task, react_data, actions, root, data_pa
         action_type, param = validate_action(action_type, param)
         
         if e2e and action_type == "click":
-            action = actions[i - 1]
-            bbox = action.get("bounds", None)
+            if i - 1 < len(actions):
+                action = actions[i - 1]
+                bbox = action.get("bounds", None)
+                # 根据factor、width和height调整bbox,调整为1000*1000相对坐标
+                bbox = [int(bbox[0] * factor/width * 1000), int(bbox[1] * factor/height * 1000), int(bbox[2] * factor/width * 1000), int(bbox[3] * factor/height * 1000)] if bbox else None
+            else:
+                print(f"[e2e]Error: Action index {i-1} out of range for actions list (len={len(actions)}) at {root}. Skipping bbox.")
+                bbox = None
+                return [], [], []
 
             if bbox:
                 param.update(dict(bbox=bbox))
             else:
-                print(f"warning: action {i} has no bbox in {root}")
+                print(f"[e2e]error: action {i} has no bbox in {root}")
+                return [], [], []
+        
+        if e2e and action_type == "swipe":
+            if "direction" in param:
+                direction = param["direction"]
+                # 从actions中获取start_coords和end_coords
+                # start_coords :[press_position_x,press_position_y]
+                # end_coords :[release_position_x,release_position_y]
+                if i - 1 < len(actions):
+                    action = actions[i - 1]
+                    start_coords = [int(action["press_position_x"] * factor/width * 1000), int(action["press_position_y"] * factor/height * 1000)] if "press_position_x" in action and "press_position_y" in action else None
+                    end_coords = [int(action["release_position_x"] * factor/width * 1000), int(action["release_position_y"] * factor/height * 1000)] if "release_position_x" in action and "release_position_y" in action else None
+                    param.update(dict(start_coords=start_coords, end_coords=end_coords))
+                else:
+                    print(f"[e2e]Error: Action index {i-1} out of range for actions list (len={len(actions)}) at {root}. Skipping swipe coords.")
+                    return [], [], []
+            else:
+                print(f"[e2e]Error: action {i} has no direction in {root}")
+                return [], [], []
 
         output_dict = dict(reasoning=reasoning, action=action_type, parameters=param)
         if use_qwen3:
@@ -424,8 +502,8 @@ def create_decider_entries_for_one_task(task, react_data, actions, root, data_pa
 
         # partial_histories是当前action的前几个action
         # 对input类和done类型特殊处理
-        if action_type in ["input", "done"]:
-            min_history_length = min(3, len(history))
+        if action_type in ["input"]:
+            min_history_length = min(4, len(history))
             partial_histories = [history[i:] for i in range(len(history) + 1 - min_history_length)]
         else:
             partial_histories = [history[i:] for i in range(len(history) + 1)]
@@ -453,7 +531,8 @@ def create_decider_entries_for_one_task(task, react_data, actions, root, data_pa
                 "进入了错误的页面",
                 "打开了不合预期的页面",
                 "当前打开了错误页面",
-                "当前页面不合预期"
+                "当前页面不合预期",
+                "错误进入了其他应用的页面"
             ]
             terminate_reasoning_part2 = [
                 "需要用户介入",
@@ -491,7 +570,7 @@ def create_decider_entries_for_one_task(task, react_data, actions, root, data_pa
 
     return normal_entries, no_history_entries, terminate_entries
 
-def construct_ds(data_path, single_step_data_path, unexpected_img_path, out_path, factor=0.5, train_ratio=0.9, e2e=False, do_copy=True, use_qwen3=False):
+def construct_ds(data_path, single_step_data_path, unexpected_img_path, out_path, factor=0.5, train_ratio=0.9, e2e=False, do_copy=True, use_qwen3=False, json_dir=""):
     os.makedirs(out_path, exist_ok=True)
     
     e2e_entries_train = []
@@ -524,12 +603,20 @@ def construct_ds(data_path, single_step_data_path, unexpected_img_path, out_path
 
         unexpected_img_safe_abspaths = []
         for unexpected_img_path in unexpected_img_paths:
-            out_abspath, width, height = resize_and_copy_image("unexpected", unexpected_img_path, unexpected_img_dir, out_path, factor, do_copy=True)
+            out_abspath, width, height = resize_and_copy_image("unexpected", unexpected_img_path, unexpected_img_dir, out_path, factor, do_copy=do_copy)
             unexpected_img_safe_abspaths.append(out_abspath)
     else:
         unexpected_img_safe_abspaths = []
+    # 1. 预统计目录数量
+    total_dirs = sum(1 for _ in os.walk(data_path))
 
-    for root, dirs, files in tqdm(os.walk(data_path), desc="constructing dataset"):
+    # 2. 带 total 的 tqdm
+    for root, dirs, files in tqdm(
+            os.walk(data_path),
+            total=total_dirs,
+            desc="constructing dataset"
+    ):
+    # for root, dirs, files in tqdm(os.walk(data_path), desc="constructing dataset"):
         if len(files) == 0:
             continue
         if "actions.json" not in files or "react.json" not in files or "parse.error" in files:
@@ -558,7 +645,10 @@ def construct_ds(data_path, single_step_data_path, unexpected_img_path, out_path
             index += 1
         num_img = index - 1
         if num_img == len(react_data) + 1:
-            done_reasoning = "我已经完成了目标任务，任务已结束。"
+            if isinstance(task_description, list):
+                done_reasoning = f"我已经完成了目标任务\"{task_description[0]}\"，任务已结束。"
+            else:
+                done_reasoning = f"我已经完成了目标任务\"{task_description}\"，任务已结束。"
             react_data.append(
                 {
                     "reasoning": done_reasoning,
@@ -583,54 +673,72 @@ def construct_ds(data_path, single_step_data_path, unexpected_img_path, out_path
         tasks = [task_description[0]]
 
         has_instruction_following = False
-        # 长度为11,则最后一个任务为指令遵循
-        if len(task_description) == 11:
+        # 长度为11或2,则最后一个任务为指令遵循，有90%概率加入训练
+        if len(task_description) == 11 or len(task_description) == 2:
             has_instruction_following = True
-            if random.random() < 0.5:
+            if random.random() < 0.9:
                 tasks.append(task_description[-1])
             task_description = task_description[:-1]
-            
+        # 当任务描述长度>=4时，从最后三个泛化任务（无标点任务）中随机选取一个加入训练
         if len(task_description) >= 4:
             tasks += random.sample(task_description[-3:], 1)
+        # 当任务描述长度>4时，从中间泛化任务中随机选取一个加入训练（如果没有指令遵循任务，或50%概率加入）
         if len(task_description) > 4:
             if (not has_instruction_following) or (random.random() < 0.5):
                 tasks += random.sample(task_description[1:-3], 1)
 
         is_train = random.random() < train_ratio
-        for i, task in enumerate(tasks):
-            normal_entries, no_history_entries, terminate_entries = create_decider_entries_for_one_task(
-                task, react_data, actions, root, data_path, out_path, factor, rules, unexpected_img_safe_abspaths, is_train, do_copy=((i == 0) and do_copy), e2e=False, use_qwen3=use_qwen3
-            )
-            if i != 0:
-                normal_entries = random.sample(normal_entries, len(normal_entries) // 2)
-                no_history_entries = random.sample(no_history_entries, len(no_history_entries) // 2)
-                terminate_entries = random.sample(terminate_entries, len(terminate_entries) // 2)
-            if is_train:
-                decider_entries_train.extend(normal_entries)
-                decider_no_history_entries_train.extend(no_history_entries)
-                terminate_entries_train.extend(terminate_entries)
-            else:
-                decider_entries_val.extend(normal_entries)
-                decider_no_history_entries_val.extend(no_history_entries)
-                terminate_entries_val.extend(terminate_entries)
-            if e2e:
-                e2e_normal_entries, e2e_history_entries, e2e_terminate_entries = create_decider_entries_for_one_task(
-                    task, react_data, actions, root, data_path, out_path, factor, rules, unexpected_img_safe_abspaths, is_train, do_copy=False, e2e=True, use_qwen3=use_qwen3
+        try:
+            for i, task in enumerate(tasks):
+                normal_entries, no_history_entries, terminate_entries = create_decider_entries_for_one_task(
+                    task, react_data, actions, root, data_path, out_path, factor, rules, unexpected_img_safe_abspaths, is_train, do_copy=((i == 0) and do_copy), e2e=False, use_qwen3=use_qwen3
                 )
+                if normal_entries == [] and no_history_entries == [] and terminate_entries == []:
+                    continue
+                if i != 0:
+                    normal_entries = random.sample(normal_entries, len(normal_entries) // 2)
+                    no_history_entries = random.sample(no_history_entries, len(no_history_entries) // 2)
+                    terminate_entries = random.sample(terminate_entries, len(terminate_entries) // 2)
                 if is_train:
-                    e2e_entries_train.extend(e2e_normal_entries)
-                    e2e_no_history_entries_train.extend(e2e_history_entries)
-                    e2e_terminate_entries_train.extend(e2e_terminate_entries)
+                    decider_entries_train.extend(normal_entries)
+                    decider_no_history_entries_train.extend(no_history_entries)
+                    terminate_entries_train.extend(terminate_entries)
                 else:
-                    e2e_entries_val.extend(e2e_normal_entries)
-                    e2e_no_history_entries_val.extend(e2e_history_entries)
-                    e2e_terminate_entries_val.extend(e2e_terminate_entries)
+                    decider_entries_val.extend(normal_entries)
+                    decider_no_history_entries_val.extend(no_history_entries)
+                    terminate_entries_val.extend(terminate_entries)
+                if e2e:
+                    e2e_normal_entries, e2e_history_entries, e2e_terminate_entries = create_decider_entries_for_one_task(
+                        task, react_data, actions, root, data_path, out_path, factor, rules, unexpected_img_safe_abspaths, is_train, do_copy=((i == 0) and do_copy), e2e=True, use_qwen3=False
+                    )
+                    if e2e_normal_entries == [] and e2e_history_entries == [] and e2e_terminate_entries == []:
+                        continue
 
-        grounder_entries = create_grounder_entries_for_one_trace(react_data, actions, root, data_path, out_path, factor, rules, is_train, do_copy=False, use_qwen3=use_qwen3)
-        if is_train:
-            grounder_entries_train.extend(grounder_entries)
-        else:
-            grounder_entries_val.extend(grounder_entries)
+                    if i !=0:
+                        e2e_normal_entries = random.sample(e2e_normal_entries, len(e2e_normal_entries) // 2)
+                        e2e_history_entries = random.sample(e2e_history_entries, len(e2e_history_entries) // 2)
+                        e2e_terminate_entries = random.sample(e2e_terminate_entries, len(e2e_terminate_entries) // 2)
+                        
+                    if is_train:
+                        e2e_entries_train.extend(e2e_normal_entries)
+                        e2e_no_history_entries_train.extend(e2e_history_entries)
+                        e2e_terminate_entries_train.extend(e2e_terminate_entries)
+                    else:
+                        e2e_entries_val.extend(e2e_normal_entries)
+                        e2e_no_history_entries_val.extend(e2e_history_entries)
+                        e2e_terminate_entries_val.extend(e2e_terminate_entries)
+
+        except Exception as e:
+            print(f"Error generating decider entries in {root}: {e}")
+        if e2e is not True:
+            try:
+                grounder_entries = create_grounder_entries_for_one_trace(react_data, actions, root, data_path, out_path, factor, rules, is_train, do_copy=False, use_qwen3=use_qwen3)
+                if is_train:
+                    grounder_entries_train.extend(grounder_entries)
+                else:
+                    grounder_entries_val.extend(grounder_entries)
+            except Exception as e:
+                print(f"Error generating grounder entries in {root}: {e}")
 
     decider_ss_entry_train, decider_ss_entry_val, grounder_ss_entry_train, grounder_ss_entry_val = construct_ss_data(single_step_data_path, out_path, factor, train_ratio, do_copy=do_copy, use_qwen3=use_qwen3)
 
@@ -708,26 +816,23 @@ def construct_ds(data_path, single_step_data_path, unexpected_img_path, out_path
             "e2e_no_history_entries_val": len(e2e_no_history_entries_val),
             "e2e_terminate_entries_val": len(e2e_terminate_entries_val)
         })
+        print(f"e2e_entries_train: {len(e2e_entries_train)}")
+        print(f"e2e_no_history_entries_train: {len(e2e_no_history_entries_train)}")
+        print(f"e2e_terminate_entries_train: {len(e2e_terminate_entries_train)}")
+        print(f"e2e_entries_val: {len(e2e_entries_val)}")
+        print(f"e2e_no_history_entries_val: {len(e2e_no_history_entries_val)}")
+        print(f"e2e_terminate_entries_val: {len(e2e_terminate_entries_val)}")
 
-        with open(os.path.join(out_path, f"mobimind_e2e_train.json"), "w", encoding="UTF-8") as f:
-            json.dump(e2e_entries_train, f, ensure_ascii=False)
-        with open(os.path.join(out_path, f"mobimind_e2e_val.json"), "w", encoding="UTF-8") as f:
-            json.dump(e2e_entries_val, f, ensure_ascii=False)
+        dump_json_with_jsonl(os.path.join(out_path, json_dir, "mobimind_e2e_train.json"), e2e_entries_train)
+        dump_json_with_jsonl(os.path.join(out_path, json_dir, "mobimind_e2e_val.json"), e2e_entries_val)
 
     # 保存训练集
-    with open(os.path.join(out_path, f"mobimind_decider_train.json"), "w", encoding="UTF-8") as f:
-        json.dump(decider_entries_train, f, ensure_ascii=False)
-    with open(os.path.join(out_path, f"mobimind_grounder_train.json"), "w", encoding="UTF-8") as f:
-        json.dump(grounder_entries_train, f, ensure_ascii=False)
+    dump_json_with_jsonl(os.path.join(out_path, json_dir, "mobimind_decider_train.json"), decider_entries_train)
+    dump_json_with_jsonl(os.path.join(out_path, json_dir, "mobimind_grounder_train.json"), grounder_entries_train)
     
     # 保存验证集
-    with open(os.path.join(out_path, f"mobimind_decider_val.json"), "w", encoding="UTF-8") as f:
-        json.dump(decider_entries_val, f, ensure_ascii=False)
-    with open(os.path.join(out_path, f"mobimind_grounder_val.json"), "w", encoding="UTF-8") as f:
-        json.dump(grounder_entries_val_dict, f, ensure_ascii=False)
-
-    with open(os.path.join(out_path, f"metadata.json"), "w", encoding="UTF-8") as f:
-        json.dump(data, f, ensure_ascii=False)
+    dump_json_with_jsonl(os.path.join(out_path, json_dir, "mobimind_decider_val.json"), decider_entries_val)
+    dump_json_with_jsonl(os.path.join(out_path, json_dir, "mobimind_grounder_val.json"), grounder_entries_val_dict)
 
 
 if __name__ == "__main__":
@@ -741,6 +846,7 @@ if __name__ == "__main__":
     parser.add_argument('--e2e',action='store_true',help='construct e2e dataset')
     parser.add_argument('--no_copy', action='store_true', help='do not copy images to the output path')
     parser.add_argument('--use_qwen3', action='store_true', help='use qwen3-vl mobile agent format')
+    parser.add_argument('--json_dir',type=str, default="", help="output json path of train dataset (default: null)")
     args = parser.parse_args()
     construct_ds(
         data_path=args.data_path,
@@ -751,5 +857,6 @@ if __name__ == "__main__":
         train_ratio=args.train_ratio,
         e2e=args.e2e,
         do_copy=(not args.no_copy),
-        use_qwen3=args.use_qwen3
+        use_qwen3=args.use_qwen3,
+        json_dir=args.json_dir
     )

@@ -6,6 +6,7 @@ tasks.json
 # 忽略特定目录
 __pycache__/
 data/
+log/
 data_log/
 weights/
 
@@ -26,3 +27,4 @@ runner/HarmonyOS-mobiagent/
 runner/UI-TARS-agent/data_uitars-test/
 tasks/
 utils/experience/templates-new-bak.json
+

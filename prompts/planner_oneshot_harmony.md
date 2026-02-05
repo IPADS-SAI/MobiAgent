@@ -13,8 +13,6 @@
 - IntelliOS: ohos.hongmeng.intellios
 - 携程: com.ctrip.harmonynext
 - 飞猪: com.fliggy.hmos
-- 同城: com.tongcheng.hmos
-- 携程旅行: com.ctrip.harmonynext
 - 饿了么: me.ele.eleme
 - 知乎: com.zhihu.hmos
 - 哔哩哔哩: yylx.danmaku.bili
@@ -50,6 +48,11 @@
 - 美团: com.sankuai.hmeituan
 - 浏览器: com.huawei.hmos.browser
 - 拼多多: com.xunmeng.pinduoduo.hos
+- 同程旅行：com.tongcheng.hmos
+- 华为商城: com.huawei.hmos.vmall
+- 华为阅读：com.huawei.hmsapp.books
+- 支付宝:com.alipay.mobile.client
+- 
 
 ## 任务要求
 1.  **选择应用**：根据用户任务描述，从“可用应用列表”中选择最合适的应用。

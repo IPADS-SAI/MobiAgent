@@ -1,10 +1,11 @@
 from utils.omni_utils import get_som_labeled_img, check_ocr_box, get_yolo_model
 from PIL import Image
 import torch
-
+import os
 device = "cuda" if torch.cuda.is_available() else "cpu"
-detect_model_path='./weights/icon_detect/model.pt'
-caption_model_path='./weights/icon_caption_florence'
+current_file = os.path.dirname(os.path.abspath(__file__))
+detect_model_path=os.path.join(current_file,"..","weights/icon_detect/model.pt")
+caption_model_path=os.path.join(current_file,'..','weights/icon_caption_florence')
 
 som_model = get_yolo_model(detect_model_path)
 som_model.to(device)

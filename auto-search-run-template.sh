@@ -6,7 +6,7 @@ set -euo pipefail
 # 1) 修改下面变量
 # 2) 执行: bash runner/mobiagent/auto-search-run-template.sh
 
-APP_NAME="小红书"
+APP_NAME="设置"
 DEPTH=2
 BREADTH=2
 DEVICE="Harmony"                 # Android | Harmony

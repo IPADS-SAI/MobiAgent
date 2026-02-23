@@ -13,6 +13,11 @@ from typing import Any, Dict, List, Optional
 from openai import OpenAI
 import cv2
 from PIL import Image, ImageDraw, ImageFont
+try:
+    from utils.parse_xml import extract_all_bounds, parse_bounds
+except Exception:
+    extract_all_bounds = None
+    parse_bounds = None
 
 try:
     # 作为包运行
@@ -311,6 +316,125 @@ def _normalize_hierarchy_text(text: str) -> str:
     return "".join(text.split())
 
 
+def _task_mentions_swipe(task_text: str) -> bool:
+    if not task_text:
+        return False
+    tokens = ["滑动", "上滑", "下滑", "左滑", "右滑", "上划", "下划", "左划", "右划"]
+    return any(t in task_text for t in tokens)
+
+
+def _bbox_iou(a: List[int], b: List[int]) -> float:
+    ax1, ay1, ax2, ay2 = a
+    bx1, by1, bx2, by2 = b
+    inter_x1 = max(ax1, bx1)
+    inter_y1 = max(ay1, by1)
+    inter_x2 = min(ax2, bx2)
+    inter_y2 = min(ay2, by2)
+    if inter_x2 <= inter_x1 or inter_y2 <= inter_y1:
+        return 0.0
+    inter_area = (inter_x2 - inter_x1) * (inter_y2 - inter_y1)
+    a_area = max(0, (ax2 - ax1)) * max(0, (ay2 - ay1))
+    b_area = max(0, (bx2 - bx1)) * max(0, (by2 - by1))
+    if a_area + b_area - inter_area == 0:
+        return 0.0
+    return inter_area / (a_area + b_area - inter_area)
+
+
+def _extract_bounds_from_json(obj: Any) -> List[List[int]]:
+    bounds_list: List[List[int]] = []
+
+    def _coerce_bounds(value: Any) -> Optional[List[int]]:
+        if isinstance(value, (list, tuple)) and len(value) == 4:
+            try:
+                return [int(v) for v in value]
+            except Exception:
+                return None
+        if isinstance(value, str) and parse_bounds:
+            return parse_bounds(value)
+        return None
+
+    def _walk(node: Any) -> None:
+        if isinstance(node, dict):
+            for key, val in node.items():
+                if key == "bounds":
+                    bounds = _coerce_bounds(val)
+                    if bounds:
+                        bounds_list.append(bounds)
+                else:
+                    _walk(val)
+        elif isinstance(node, list):
+            for item in node:
+                _walk(item)
+
+    _walk(obj)
+    return bounds_list
+
+
+def _extract_bounds_from_hierarchy_text(hierarchy_text: str) -> List[List[int]]:
+    if not hierarchy_text:
+        return []
+    if hierarchy_text.lstrip().startswith("<"):
+        if extract_all_bounds:
+            return extract_all_bounds(hierarchy_text, need_clickable=True)
+        return []
+
+    try:
+        obj = json.loads(hierarchy_text)
+    except Exception:
+        return []
+    return _extract_bounds_from_json(obj)
+
+
+def refine_bbox_with_hierarchy(
+    hierarchy_text: str,
+    bbox: List[int],
+    img_w: int,
+    img_h: int,
+) -> List[int]:
+    bounds_list = _extract_bounds_from_hierarchy_text(hierarchy_text)
+    green = "\033[92m"
+    red = "\033[91m"
+    reset = "\033[0m"
+    if not bounds_list:
+        logging.info(f"{red}BBox not refined (no hierarchy bounds found).{reset}")
+        return bbox
+
+    best_bbox = bbox
+    best_iou = 0.0
+    bx1, by1, bx2, by2 = bbox
+    bcx = (bx1 + bx2) / 2
+    bcy = (by1 + by2) / 2
+    b_area = max(1, (bx2 - bx1) * (by2 - by1))
+    max_center_dist = (img_w**2 + img_h**2) ** 0.5 * 0.08
+
+    for cand in bounds_list:
+        iou = _bbox_iou(bbox, cand)
+        if iou > best_iou:
+            best_iou = iou
+            best_bbox = cand
+
+    if best_iou >= 0.3:
+        logging.info(
+            f"{green}BBox refined by IoU (iou={best_iou:.3f}) from {bbox} to {best_bbox}.{reset}"
+        )
+        return best_bbox
+
+    cx1, cy1, cx2, cy2 = best_bbox
+    ccx = (cx1 + cx2) / 2
+    ccy = (cy1 + cy2) / 2
+    center_dist = ((ccx - bcx) ** 2 + (ccy - bcy) ** 2) ** 0.5
+    c_area = max(1, (cx2 - cx1) * (cy2 - cy1))
+    area_ratio = c_area / b_area if b_area else 1.0
+    if center_dist <= max_center_dist and 0.5 <= area_ratio <= 2.0:
+        logging.info(
+            f"{green}BBox refined by center/area from {bbox} to {best_bbox}.{reset}"
+        )
+        return best_bbox
+
+    logging.info(f"{red}BBox not refined (no close match).{reset}")
+    return bbox
+
+
 def should_navigate_back(
     before_hierarchy: str,
     after_hierarchy: str,
@@ -326,7 +450,7 @@ def should_navigate_back(
 
     threshold = 0.8
     if action_type == "swipe":
-        threshold = 0.7
+        threshold = 0.95
     elif action_type in {"input", "click_input"}:
         threshold = 0.5
 
@@ -480,15 +604,39 @@ def execute_decider_one_step(
     def _validator(resp: Dict[str, Any]) -> None:
         validate_decider_response(resp, use_e2e=True)
 
-    decider_resp = call_model_with_validation_retry(
-        decider_client,
-        decider_model,
-        messages,
-        validator_func=_validator,
-        max_retries=5,
-        max_tokens=256,
-        context="Decider",
-    )
+    decider_resp: Optional[Dict[str, Any]] = None
+    for attempt in range(3):
+        decider_resp = call_model_with_validation_retry(
+            decider_client,
+            decider_model,
+            messages,
+            validator_func=_validator,
+            max_retries=5,
+            max_tokens=256,
+            context="Decider",
+        )
+        action = decider_resp.get("action")
+        if _task_mentions_swipe(step_task) and action == "click":
+            if attempt < 2:
+                logging.warning(
+                    "Decider action mismatch (attempt=%s): task expects swipe but got click. Retrying.",
+                    attempt + 1,
+                )
+                time.sleep(0.6)
+                continue
+            color = "\033[91m"
+            reset = "\033[0m"
+            logging.error(
+                f"{color}Decider action mismatch after retries: task expects swipe but got click. "
+                f"Skipping task: {step_task}{reset}"
+            )
+            raise RuntimeError("Decider action mismatch: swipe task returned click")
+        break
+
+    if decider_resp is None:
+        raise RuntimeError("Decider response is empty")
+
+    pre_action_hierarchy_text = get_hierarchy_text(device)
 
     # 保存截图与层级
     screenshot_file = save_raw_screenshot(output_dir, step_index, device_type)
@@ -505,6 +653,11 @@ def execute_decider_one_step(
     }
 
     action = decider_resp["action"]
+    color = "\033[96m"
+    reset = "\033[0m"
+    logging.info(
+        f"{color}Decider task: {step_task} -> action: {action}{reset}"
+    )
     params = decider_resp.get("parameters", {})
 
     # 获取当前图像大小用于坐标换算
@@ -523,6 +676,8 @@ def execute_decider_one_step(
         bbox = params.get("bbox")
         if use_qwen3:
             bbox = convert_qwen3_coordinates_to_absolute(bbox, img_w, img_h, is_bbox=True)
+        if bbox:
+            bbox = refine_bbox_with_hierarchy(pre_action_hierarchy_text, bbox, img_w, img_h)
         x1, y1, x2, y2 = bbox
         x, y = (x1 + x2) // 2, (y1 + y2) // 2
         device.click(x, y)
@@ -539,6 +694,8 @@ def execute_decider_one_step(
         text = params.get("text", "")
         if use_qwen3:
             bbox = convert_qwen3_coordinates_to_absolute(bbox, img_w, img_h, is_bbox=True)
+        if bbox:
+            bbox = refine_bbox_with_hierarchy(pre_action_hierarchy_text, bbox, img_w, img_h)
         x1, y1, x2, y2 = bbox
         x, y = (x1 + x2) // 2, (y1 + y2) // 2
         device.click(x, y)

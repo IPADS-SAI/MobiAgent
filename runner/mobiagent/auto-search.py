@@ -1,7 +1,9 @@
 import argparse
+import difflib
 import json
 import logging
 import os
+import re
 import time
 import textwrap
 import shutil
@@ -261,6 +263,83 @@ def navigate_back(device, device_type: str) -> None:
         logging.warning(f"Back navigation failed: {e}")
 
 
+def _get_current_screen_size(device_type: str) -> Optional[tuple[int, int]]:
+    try:
+        path = get_current_screenshot_path(device_type)
+        with Image.open(path) as img:
+            return img.size
+    except Exception as e:
+        logging.warning(f"Failed to read current screenshot size: {e}")
+        return None
+
+
+def _reverse_direction(direction: str) -> str:
+    mapping = {"UP": "DOWN", "DOWN": "UP", "LEFT": "RIGHT", "RIGHT": "LEFT"}
+    return mapping.get(direction.upper(), "DOWN")
+
+
+def perform_backtrack_action(device, device_type: str, action_record: Optional[Dict[str, Any]]) -> None:
+    if not action_record:
+        navigate_back(device, device_type)
+        return
+
+    action_type = str(action_record.get("type", "")).lower()
+    if action_type == "click_input":
+        navigate_back(device, device_type)
+        navigate_back(device, device_type)
+        return
+
+    if action_type == "swipe":
+        direction = str(action_record.get("direction", "")).upper()
+        reverse_direction = _reverse_direction(direction)
+        size = _get_current_screen_size(device_type)
+        if size:
+            img_w, img_h = size
+            sx, sy, ex, ey = compute_swipe_positions(reverse_direction, img_w, img_h)
+            try:
+                device.swipe_with_coords(sx, sy, ex, ey)
+                time.sleep(DEVICE_WAIT_TIME)
+                return
+            except Exception as e:
+                logging.warning(f"Reverse swipe backtrack failed: {e}")
+
+    navigate_back(device, device_type)
+
+
+def _normalize_hierarchy_text(text: str) -> str:
+    text = re.sub(r"\d+", "#", text)
+    return "".join(text.split())
+
+
+def should_navigate_back(
+    before_hierarchy: str,
+    after_hierarchy: str,
+    action_type: str,
+) -> tuple[bool, float, float]:
+    if not before_hierarchy or not after_hierarchy:
+        return True, 0.0, 0.0
+
+    norm_before = _normalize_hierarchy_text(before_hierarchy)
+    norm_after = _normalize_hierarchy_text(after_hierarchy)
+    if not norm_before or not norm_after:
+        return True, 0.0, 0.0
+
+    threshold = 0.8
+    if action_type == "swipe":
+        threshold = 0.7
+    elif action_type in {"input", "click_input"}:
+        threshold = 0.5
+
+    similarity = difflib.SequenceMatcher(None, norm_before, norm_after).ratio()
+    color = "\033[92m" if similarity >= threshold else "\033[91m"
+    reset = "\033[0m"
+    logging.info(
+        f"{color}Hierarchy similarity: {similarity:.3f} (threshold={threshold:.3f}) "
+        f"for action_type={action_type}{reset}"
+    )
+    return similarity < threshold, similarity, threshold
+
+
 def format_action_history(action_history: List[Dict[str, Any]], max_items: int = 8) -> str:
     if not action_history:
         return "无"
@@ -289,7 +368,7 @@ def build_explorer_prompt(
     """构建通用大模型的候选动作生成提示词。"""
     history_text = format_action_history(action_history)
     return f"""
-你是移动端GUI探索助手。请结合截图、层级信息以及已发生的交互动作序列，输出当前界面“最有可能被用户下一步操作”的前{breadth}个单步任务，并尽可能保证动作的连贯性。
+你是移动端GUI探索助手。请结合截图、层级信息以及已发生的交互动作序列，输出当前界面“最有可能被用户下一步操作”的前{breadth}个单步任务，优先选择左侧、顶部或者底部的导航栏中的元素，并尽可能保证前后动作的连贯性。
 
 要求：
 1) 只输出 JSON，不要输出任何额外文本。
@@ -306,16 +385,17 @@ def build_explorer_prompt(
 3) candidates 数量 <= {breadth}，按概率从高到低排序。
 4) single_step_task 必须可执行、原子化（单步），避免多步串联。
 5) 如果是点击输入框的动作，务必跟上合理的当前界面下的输入文本，例如：点击“搜索框”并输入“咖啡”。
-6) 若界面存在明显列表项（例如店铺列表），请你优先输出对各个列表项的点击操作，如果当前界面显示的列表项不全，可以输出滑动操作以查看更多列表项。
-7) 若界面左侧侧边栏存在导航列表项（例如设置列表，菜单列表等），请你优先输出对各个列表项的点击操作，如果当前界面显示的列表项不全，可以输出滑动操作以查看更多列表项。
-8) 候选动作需要与最近的交互动作序列保持连贯，避免与已发生动作明显冲突；必要时可继续完成上一动作的后续步骤。
+6) 若界面左侧、底部或者顶部侧边栏存在导航列表项（例如设置列表，菜单列表等），请你优先输出对各个列表项的点击操作，如果当前界面显示的列表项不全，可以输出滑动操作以查看更多列表项。
+7) 候选动作需要与最近的交互动作序列保持连贯，避免与已发生动作明显冲突；必要时可继续完成上一动作的后续步骤。
+8) 如果界面的右下角有“我的”、“个人中心”之类的入口图标，且最近的交互动作序列没有明显涉及过该入口，建议优先输出点击该入口的动作。
 
 当前探索深度: {depth}
 最近交互动作序列(按时间顺序，最多展示8条):
 {history_text}
-当前UI层级(可能截断):
-{hierarchy_text[:12000]}
 """.strip()
+
+# 当前UI层级(可能截断):
+# {hierarchy_text[:12000]}
 
 
 def call_explorer_model(
@@ -515,11 +595,14 @@ def execute_decider_one_step(
     except Exception as e:
         logging.warning(f"Failed to annotate action visuals: {e}")
 
+    post_hierarchy_text = get_hierarchy_text(device)
+
     return {
         "decider_response": decider_resp,
         "action_record": action_record,
         "react_item": react_item,
         "screenshot_file": screenshot_file,
+        "post_hierarchy_text": post_hierarchy_text,
     }
 
 
@@ -573,18 +656,49 @@ def explore_dfs(
         breadth,
         action_history,
     )
+    base_hierarchy_text = hierarchy_text
 
     logging.info(f"Depth={current_depth}, got {len(candidates)} candidates")
     for cand in candidates:
+        color = "\033[96m"
+        reset = "\033[0m"
         logging.info(
-            "[Depth %s] candidate rank=%s task=%s reason=%s",
-            current_depth,
-            cand.get("rank"),
-            cand.get("single_step_task"),
-            cand.get("reason"),
+            f"{color}[Depth {current_depth}] candidate rank={cand.get('rank')} "
+            f"task={cand.get('single_step_task')} reason={cand.get('reason')}{reset}"
         )
 
-    for cand in candidates:
+    cand_idx = 0
+    while cand_idx < len(candidates):
+        if cand_idx > 0:
+            current_hierarchy_text = get_hierarchy_text(device)
+            similarity = difflib.SequenceMatcher(
+                None,
+                _normalize_hierarchy_text(base_hierarchy_text),
+                _normalize_hierarchy_text(current_hierarchy_text),
+            ).ratio()
+            if similarity < 0.9:
+                remaining = max(breadth - cand_idx, 0)
+                if remaining == 0:
+                    break
+                color = "\033[93m"
+                reset = "\033[0m"
+                logging.info(
+                    f"{color}Page changed (similarity={similarity:.3f} < 0.900). "
+                    f"Regenerating {remaining} candidates.{reset}"
+                )
+                screenshot_b64 = get_screenshot(device, device_type)
+                base_hierarchy_text = current_hierarchy_text
+                candidates = candidates[:cand_idx] + call_explorer_model(
+                    explorer_client,
+                    explorer_model,
+                    screenshot_b64,
+                    base_hierarchy_text,
+                    current_depth,
+                    remaining,
+                    action_history,
+                )
+
+        cand = candidates[cand_idx]
         task = cand["single_step_task"]
         step_counter[0] += 1
         step_idx = step_counter[0]
@@ -595,8 +709,11 @@ def explore_dfs(
         current_path_reacts = list(path_reacts) if path_reacts else []
 
         logging.info(f"[Depth {current_depth}] execute rank={cand.get('rank')} task={task}")
+        need_back = current_depth != 0
 
+        action_record = None
         try:
+            pre_hierarchy_text = get_hierarchy_text(device)
             step_result = execute_decider_one_step(
                 decider_client=decider_client,
                 decider_model=decider_model,
@@ -611,6 +728,7 @@ def explore_dfs(
             action_record = step_result["action_record"]
             react_item = step_result["react_item"]
             decider_resp = step_result["decider_response"]
+            post_hierarchy_text = step_result.get("post_hierarchy_text", "")
 
             actions.append(action_record)
             reacts.append(react_item)
@@ -618,6 +736,19 @@ def explore_dfs(
             current_path_reacts.append(react_item)
 
             persist_step_output(step_output_dir, app_name, action_record, react_item)
+
+            need_back, similarity, threshold = should_navigate_back(
+                pre_hierarchy_text,
+                post_hierarchy_text,
+                action_record.get("type", ""),
+            )
+            logging.info(
+                "Backtrack check: action=%s similarity=%.3f threshold=%.3f -> %s",
+                action_record.get("type", ""),
+                similarity,
+                threshold,
+                "back" if need_back else "skip",
+            )
 
             if current_depth + 1 >= depth_limit or decider_resp.get("action") == "done":
                 path_counter[0] += 1
@@ -657,10 +788,13 @@ def explore_dfs(
 
         except Exception as e:
             logging.error(f"Failed to execute candidate at depth {current_depth}: {e}")
+            need_back = current_depth != 0
 
         # 回溯：返回上一层
-        if current_depth != 0:
-            navigate_back(device, device_type)
+        if need_back:
+            perform_backtrack_action(device, device_type, action_record)
+
+        cand_idx += 1
 
 
 def init_decider_client(service_ip: str, decider_port: int) -> OpenAI:

@@ -178,20 +178,32 @@ def persist_outputs(
     reacts: List[Dict[str, Any]],
     task_description: Optional[str] = None,
 ) -> None:
+    normalized_actions: List[Dict[str, Any]] = []
+    for idx, item in enumerate(actions, 1):
+        normalized = dict(item)
+        normalized["action_index"] = idx
+        normalized_actions.append(normalized)
+
+    normalized_reacts: List[Dict[str, Any]] = []
+    for idx, item in enumerate(reacts, 1):
+        normalized = dict(item)
+        normalized["action_index"] = idx
+        normalized_reacts.append(normalized)
+
     payload = {
         "app_name": app_name,
         "task_type": "auto_search",
         "old_task_description": None,
         "task_description": task_description or f"auto-search for {app_name}",
-        "action_count": len(actions),
-        "actions": actions,
+        "action_count": len(normalized_actions),
+        "actions": normalized_actions,
     }
     os.makedirs(output_dir, exist_ok=True)
     with open(os.path.join(output_dir, "actions.json"), "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=4)
 
     with open(os.path.join(output_dir, "react.json"), "w", encoding="utf-8") as f:
-        json.dump(reacts, f, ensure_ascii=False, indent=4)
+        json.dump(normalized_reacts, f, ensure_ascii=False, indent=4)
 
 
 def persist_step_output(
@@ -249,10 +261,35 @@ def navigate_back(device, device_type: str) -> None:
         logging.warning(f"Back navigation failed: {e}")
 
 
-def build_explorer_prompt(depth: int, breadth: int, hierarchy_text: str) -> str:
+def format_action_history(action_history: List[Dict[str, Any]], max_items: int = 8) -> str:
+    if not action_history:
+        return "无"
+
+    recent = action_history[-max_items:]
+    lines = []
+    for i, item in enumerate(recent, 1):
+        task = str(item.get("source_task", "")).strip()
+        action_type = str(item.get("type", "")).strip()
+        detail_parts = []
+        if action_type in {"input", "click_input"} and item.get("text"):
+            detail_parts.append(f"text={item.get('text')}")
+        if action_type == "swipe" and item.get("direction"):
+            detail_parts.append(f"direction={item.get('direction')}")
+        detail = f" ({', '.join(detail_parts)})" if detail_parts else ""
+        lines.append(f"{i}. task={task or '-'} | action={action_type or '-'}{detail}")
+    return "\n".join(lines)
+
+
+def build_explorer_prompt(
+    depth: int,
+    breadth: int,
+    hierarchy_text: str,
+    action_history: List[Dict[str, Any]],
+) -> str:
     """构建通用大模型的候选动作生成提示词。"""
+    history_text = format_action_history(action_history)
     return f"""
-你是移动端GUI探索助手。请根据截图和层级信息，输出当前界面“最有可能被用户下一步操作”的前{breadth}个单步任务。
+你是移动端GUI探索助手。请结合截图、层级信息以及已发生的交互动作序列，输出当前界面“最有可能被用户下一步操作”的前{breadth}个单步任务，并尽可能保证动作的连贯性。
 
 要求：
 1) 只输出 JSON，不要输出任何额外文本。
@@ -268,15 +305,19 @@ def build_explorer_prompt(depth: int, breadth: int, hierarchy_text: str) -> str:
 }}
 3) candidates 数量 <= {breadth}，按概率从高到低排序。
 4) single_step_task 必须可执行、原子化（单步），避免多步串联。
-5) 若界面上存在明显导航入口、搜索框、确认按钮、列表首项、Tab切换、下拉刷新/滚动等，优先考虑。
-6) 若有输入框，可以给出合理示例输入文本。
+5) 如果是点击输入框的动作，务必跟上合理的当前界面下的输入文本，例如：点击“搜索框”并输入“咖啡”。
+6) 若界面存在明显列表项（例如店铺列表），请你优先输出对各个列表项的点击操作，如果当前界面显示的列表项不全，可以输出滑动操作以查看更多列表项。
+7) 若界面左侧侧边栏存在导航列表项（例如设置列表，菜单列表等），请你优先输出对各个列表项的点击操作，如果当前界面显示的列表项不全，可以输出滑动操作以查看更多列表项。
+8) 候选动作需要与最近的交互动作序列保持连贯，避免与已发生动作明显冲突；必要时可继续完成上一动作的后续步骤。
 
 当前探索深度: {depth}
+最近交互动作序列(按时间顺序，最多展示8条):
+{history_text}
+当前UI层级(可能截断):
+{hierarchy_text[:12000]}
 """.strip()
 
 
-# 当前UI层级(可能截断):
-# {hierarchy_text[:12000]}
 def call_explorer_model(
     explorer_client: OpenAI,
     explorer_model: str,
@@ -284,9 +325,10 @@ def call_explorer_model(
     hierarchy_text: str,
     depth: int,
     breadth: int,
+    action_history: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
     """调用远端通用大模型，返回候选单步任务列表。"""
-    prompt = build_explorer_prompt(depth, breadth, hierarchy_text)
+    prompt = build_explorer_prompt(depth, breadth, hierarchy_text, action_history)
 
     messages = [
         {
@@ -521,6 +563,7 @@ def explore_dfs(
 
     screenshot_b64 = get_screenshot(device, device_type)
     hierarchy_text = get_hierarchy_text(device)
+    action_history = list(path_actions) if path_actions else []
     candidates = call_explorer_model(
         explorer_client,
         explorer_model,
@@ -528,6 +571,7 @@ def explore_dfs(
         hierarchy_text,
         current_depth,
         breadth,
+        action_history,
     )
 
     logging.info(f"Depth={current_depth}, got {len(candidates)} candidates")
@@ -615,7 +659,8 @@ def explore_dfs(
             logging.error(f"Failed to execute candidate at depth {current_depth}: {e}")
 
         # 回溯：返回上一层
-        navigate_back(device, device_type)
+        if current_depth != 0:
+            navigate_back(device, device_type)
 
 
 def init_decider_client(service_ip: str, decider_port: int) -> OpenAI:
@@ -640,7 +685,7 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument("--openrouter_base_url", type=str, default="https://openrouter.ai/api/v1", help="OpenRouter Base URL")
     parser.add_argument("--openrouter_api_key", type=str, default=os.getenv("OPENROUTER_API_KEY", ""), help="OpenRouter API Key")
-    parser.add_argument("--explorer_model", type=str, default="google/gemini-2.5-flash", help="通用大模型名称")
+    parser.add_argument("--explorer_model", type=str, default="google/gemini-3-flash-preview", help="通用大模型名称")
 
     parser.add_argument("--use_qwen3", choices=["on", "off"], default="on", help="是否按Qwen3坐标格式换算")
     parser.add_argument("--data_dir", type=str, default=None, help="结果目录")

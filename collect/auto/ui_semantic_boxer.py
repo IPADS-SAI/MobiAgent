@@ -42,7 +42,7 @@ TASK_TEMPLATES = [
     "麻烦点击屏幕上的{label}",
     "请在屏幕上点击{label}",
 ]
-REASONING_TEMPLATE = "当前界面中存在{label}文字或图标，直接点击该文字或图标对应的UI元素"
+REASONING_TEMPLATE = "当前界面中存在{label}这个{ui_kind}，直接点击该{ui_kind}对应的UI元素"
 APP_NAME_TO_PACKAGE = {
     "携程": "com.ctrip.harmonynext",
     "飞猪": "com.fliggy.hmos",
@@ -431,14 +431,40 @@ def _load_json_from_text(raw_text: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-def _caption_with_vlm(client: OpenAI, model: str, image: Image.Image) -> str:
+def _normalize_ui_kind(ui_kind: Optional[str]) -> str:
+    if not ui_kind:
+        return "图片"
+    value = str(ui_kind).strip().lower()
+    if value in {"文字", "文本", "text"}:
+        return "文字"
+    if value in {"图标", "icon"}:
+        return "图标"
+    if value in {"图片", "图像", "image", "photo"}:
+        return "图片"
+    return "图片"
+
+
+def _infer_kind_from_fallback(label_text: str) -> str:
+    text = (label_text or "").strip().lower()
+    if not text:
+        return "图片"
+    if "icon" in text or "图标" in text:
+        return "图标"
+    if re.search(r"[\u4e00-\u9fff]", text):
+        return "文字"
+    if any(token in text for token in ["按钮", "文本", "文字", "输入框", "搜索"]):
+        return "文字"
+    return "图片"
+
+
+def _caption_with_vlm(client: OpenAI, model: str, image: Image.Image) -> Tuple[str, str]:
     buffered = io.BytesIO()
     image.save(buffered, format="JPEG")
     b64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
 
     prompt = (
-        "请用中文给出该UI元素的简短语义标签。"
-        "只返回JSON格式：{\"label\": \"...\"}。"
+        "请判断该UI元素属于以下哪一类：文字、图标、图片，并给出中文简短语义标签。"
+        "只返回JSON格式：{\"label\": \"...\", \"ui_kind\": \"文字|图标|图片\"}。"
     )
 
     messages = [
@@ -477,14 +503,16 @@ def _caption_with_vlm(client: OpenAI, model: str, image: Image.Image) -> str:
         red = "\033[91m"
         reset = "\033[0m"
         logging.warning(f"{red}Empty VLM response content, returning fallback label{reset}")
-        return "未识别"
+        return "未识别", "图片"
 
     parsed = _load_json_from_text(content)
     if parsed and isinstance(parsed.get("label"), str):
         label = parsed["label"].strip()
-        return label or "未识别"
+        ui_kind = _normalize_ui_kind(parsed.get("ui_kind"))
+        return (label or "未识别", ui_kind)
     fallback = content.strip()
-    return fallback or "未识别"
+    label = fallback or "未识别"
+    return label, _infer_kind_from_fallback(label)
 
 
 def _truncate_label(label: str, max_len: int = 24) -> str:
@@ -613,6 +641,7 @@ def main() -> None:
     for idx, item in enumerate(selected_nodes, 1):
         text = item.get("text")
         source = "hierarchy"
+        ui_kind = "文字"
         if not text:
             if not use_vlm:
                 raise RuntimeError("Missing text requires VLM; set --use_vlm on")
@@ -620,7 +649,7 @@ def main() -> None:
                 logging.warning("VLM call budget reached, forcing extra call for missing text")
             x1, y1, x2, y2 = item["bbox"]
             crop = img.crop((x1, y1, x2, y2))
-            text = _caption_with_vlm(client, args.vlm_model, crop)
+            text, ui_kind = _caption_with_vlm(client, args.vlm_model, crop)
             source = "vlm"
             vlm_calls += 1
         items.append({
@@ -628,6 +657,7 @@ def main() -> None:
             "bbox": item["bbox"],
             "text": text,
             "source": source,
+            "ui_kind": ui_kind,
         })
 
     annotated = _annotate_image(img.copy(), items)
@@ -648,8 +678,9 @@ def main() -> None:
 
     for item in items:
         label = item["text"]
+        ui_kind = item.get("ui_kind", "文字")
         task_text = random.choice(TASK_TEMPLATES).format(label=label)
-        reasoning = REASONING_TEMPLATE.format(label=label)
+        reasoning = REASONING_TEMPLATE.format(label=label, ui_kind=ui_kind)
 
         sub_dir = os.path.join(output_dir, str(item["id"]))
         os.makedirs(sub_dir, exist_ok=True)

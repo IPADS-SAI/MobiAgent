@@ -28,4 +28,5 @@ runner/UI-TARS-agent/data_uitars-test/
 tasks/
 utils/experience/templates-new-bak.json
 .vscode/
+collect/auto/ui-semantic-output/
 

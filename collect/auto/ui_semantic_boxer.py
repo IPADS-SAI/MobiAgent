@@ -35,6 +35,58 @@ logging.basicConfig(
 
 DEFAULT_VLM_MODEL = "qwen/qwen3-vl-30a3"
 DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
+TASK_TEMPLATES = [
+    "请帮我点击屏幕上的{label}",
+    "请点击屏幕上的{label}",
+    "请帮我点一下屏幕上的{label}",
+    "麻烦点击屏幕上的{label}",
+    "请在屏幕上点击{label}",
+]
+REASONING_TEMPLATE = "当前界面中存在{label}文字或图标，直接点击该文字或图标对应的UI元素"
+APP_NAME_TO_PACKAGE = {
+    "携程": "com.ctrip.harmonynext",
+    "飞猪": "com.fliggy.hmos",
+    "IntelliOS": "ohos.hongmeng.intellios",
+    "同城": "com.tongcheng.hmos",
+    "携程旅行": "com.ctrip.harmonynext",
+    "饿了么": "me.ele.eleme",
+    "知乎": "com.zhihu.hmos",
+    "哔哩哔哩": "yylx.danmaku.bili",
+    "微信": "com.tencent.wechat",
+    "小红书": "com.xingin.xhs_hos",
+    "QQ音乐": "com.tencent.hm.qqmusic",
+    "高德地图": "com.amap.hmapp",
+    "淘宝": "com.taobao.taobao4hmos",
+    "微博": "com.sina.weibo.stage",
+    "京东": "com.jd.hm.mall",
+    "飞猪旅行": "com.fliggy.hmos",
+    "天气": "com.huawei.hmsapp.totemweather",
+    "什么值得买": "com.smzdm.client.hmos",
+    "闲鱼": "com.taobao.idlefish4ohos",
+    "慧通差旅": "com.smartcom.itravelhm",
+    "PowerAgent": "com.example.osagent",
+    "航旅纵横": "com.umetrip.hm.app",
+    "滴滴出行": "com.sdu.didi.hmos.psnger",
+    "电子邮件": "com.huawei.hmos.email",
+    "图库": "com.huawei.hmos.photos",
+    "日历": "com.huawei.hmos.calendar",
+    "心声社区": "com.huawei.it.hmxinsheng",
+    "信息": "com.ohos.mms",
+    "文件管理": "com.huawei.hmos.files",
+    "运动健康": "com.huawei.hmos.health",
+    "智慧生活": "com.huawei.hmos.ailife",
+    "豆包": "com.larus.nova.hm",
+    "WeLink": "com.huawei.it.welink",
+    "设置": "com.huawei.hmos.settings",
+    "懂车帝": "com.ss.dcar.auto",
+    "美团外卖": "com.meituan.takeaway",
+    "大众点评": "com.sankuai.dianping",
+    "美团": "com.sankuai.hmeituan",
+    "浏览器": "com.huawei.hmos.browser",
+    "微博": "com.sina.weibo.stage",
+    "饿了么": "me.ele.eleme",
+    "拼多多": "com.xunmeng.pinduoduo.hos",
+}
 
 
 class AndroidDeviceAdapter:
@@ -296,6 +348,54 @@ def _select_limited_items(nodes: List[Dict[str, Any]], max_items: int) -> List[D
     return with_text + random.sample(without_text, remaining)
 
 
+def _convert_bbox_to_relative(bbox: List[int], img_w: int, img_h: int) -> List[int]:
+    if img_w <= 0 or img_h <= 0:
+        return bbox
+    x1, y1, x2, y2 = bbox
+    return [
+        int(round(x1 / img_w * 1000)),
+        int(round(y1 / img_h * 1000)),
+        int(round(x2 / img_w * 1000)),
+        int(round(y2 / img_h * 1000)),
+    ]
+
+
+def _get_current_package(device, device_type: str, hierarchy_raw: Any) -> Optional[str]:
+    if device_type == "Android":
+        current = None
+        try:
+            if hasattr(device, "_device") and hasattr(device._device, "app_current"):
+                current = device._device.app_current()
+        except Exception:
+            current = None
+        if isinstance(current, dict):
+            return current.get("package")
+        return None
+
+    if isinstance(hierarchy_raw, dict):
+        def _find_bundle(node: Any) -> Optional[str]:
+            if isinstance(node, dict):
+                attrs = node.get("attributes") or {}
+                if isinstance(attrs, dict) and attrs.get("bundleName"):
+                    return attrs.get("bundleName")
+                for val in node.values():
+                    found = _find_bundle(val)
+                    if found:
+                        return found
+            elif isinstance(node, list):
+                for item in node:
+                    found = _find_bundle(item)
+                    if found:
+                        return found
+            return None
+        return _find_bundle(hierarchy_raw)
+    return None
+
+
+def _annotate_single(image: Image.Image, item: Dict[str, Any]) -> Image.Image:
+    return _annotate_image(image, [item])
+
+
 def _load_json_from_text(raw_text: str) -> Optional[Dict[str, Any]]:
     if not raw_text:
         return None
@@ -426,6 +526,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="UI semantic boxing with hierarchy + VLM")
     parser.add_argument("--device", choices=["Android", "Harmony"], default="Android")
     parser.add_argument("--adb_endpoint", type=str, default=None)
+    parser.add_argument("--app_name", type=str, required=True, help="App name for actions.json")
     parser.add_argument("--output_dir", type=str, default=None)
     parser.add_argument("--vlm_model", type=str, default=DEFAULT_VLM_MODEL)
     parser.add_argument("--base_url", type=str, default=DEFAULT_BASE_URL)
@@ -449,6 +550,15 @@ def main() -> None:
 
     device.screenshot(screenshot_path)
     hierarchy_raw = device.dump_hierarchy()
+
+    current_package = _get_current_package(device, args.device, hierarchy_raw)
+    expected_package = APP_NAME_TO_PACKAGE.get(args.app_name)
+    if current_package and expected_package and current_package != expected_package:
+        red = "\033[91m"
+        reset = "\033[0m"
+        logging.warning(
+            f"{red}App mismatch: current package={current_package} expected={expected_package} ({args.app_name}){reset}"
+        )
 
     if args.device == "Android":
         hierarchy_text = hierarchy_raw if isinstance(hierarchy_raw, str) else str(hierarchy_raw)
@@ -527,6 +637,7 @@ def main() -> None:
     json_path = os.path.join(output_dir, "ui_semantics.json")
     payload = {
         "device": args.device,
+        "app_name": args.app_name,
         "screenshot_file": screenshot_path,
         "annotated_file": annotated_path,
         "hierarchy_file": hierarchy_path,
@@ -534,6 +645,69 @@ def main() -> None:
     }
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
+
+    for item in items:
+        label = item["text"]
+        task_text = random.choice(TASK_TEMPLATES).format(label=label)
+        reasoning = REASONING_TEMPLATE.format(label=label)
+
+        sub_dir = os.path.join(output_dir, str(item["id"]))
+        os.makedirs(sub_dir, exist_ok=True)
+
+        sub_screenshot_path = os.path.join(sub_dir, "1.jpg")
+        img.save(sub_screenshot_path)
+
+        sub_annotated_path = os.path.join(sub_dir, "1_annotated.jpg")
+        single_annotated = _annotate_single(img.copy(), item)
+        single_annotated.save(sub_annotated_path)
+
+        hierarchy_out = os.path.join(sub_dir, "1.xml" if args.device == "Android" else "1.json")
+        if args.device == "Android":
+            with open(hierarchy_out, "w", encoding="utf-8") as f:
+                f.write(hierarchy_text)
+        else:
+            with open(hierarchy_out, "w", encoding="utf-8") as f:
+                json.dump(hierarchy_obj, f, ensure_ascii=False, indent=2)
+
+        x1, y1, x2, y2 = item["bbox"]
+        center_x = (x1 + x2) // 2
+        center_y = (y1 + y2) // 2
+        action_record = {
+            "type": "click",
+            "position_x": center_x,
+            "position_y": center_y,
+            "bounds": [x1, y1, x2, y2],
+            "action_index": 1,
+        }
+
+        actions_payload = {
+            "app_name": args.app_name,
+            "task_type": None,
+            "old_task_description": task_text,
+            "task_description": task_text,
+            "action_count": 1,
+            "actions": [action_record],
+        }
+
+        rel_bbox = _convert_bbox_to_relative([x1, y1, x2, y2], img_w, img_h)
+        react_payload = [
+            {
+                "reasoning": reasoning,
+                "function": {
+                    "name": "click",
+                    "parameters": {
+                        "target_element": label,
+                        "bbox": rel_bbox,
+                    },
+                },
+                "action_index": 1,
+            }
+        ]
+
+        with open(os.path.join(sub_dir, "actions.json"), "w", encoding="utf-8") as f:
+            json.dump(actions_payload, f, ensure_ascii=False, indent=4)
+        with open(os.path.join(sub_dir, "react.json"), "w", encoding="utf-8") as f:
+            json.dump(react_payload, f, ensure_ascii=False, indent=4)
 
     logging.info("Saved annotated image: %s", annotated_path)
     logging.info("Saved semantic JSON: %s", json_path)

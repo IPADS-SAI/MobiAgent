@@ -7,6 +7,7 @@ set -euo pipefail
 
 DEVICE="Harmony"                         # Android | Harmony
 ADB_ENDPOINT=""                           # optional, Android only
+APP_NAME="小红书"                          # App name for actions.json
 OUTPUT_DIR=""                             # empty -> auto timestamped folder
 USE_VLM="on"                              # on | off
 VLM_MODEL="qwen/qwen3-vl-30b-a3b-instruct"            # default: qwen3-vl 30A3
@@ -21,6 +22,7 @@ MIN_AREA=16
 CMD=(
   python -m collect.auto.ui_semantic_boxer
   --device "$DEVICE"
+  --app_name "$APP_NAME"
   --use_vlm "$USE_VLM"
   --vlm_model "$VLM_MODEL"
   --base_url "$BASE_URL"

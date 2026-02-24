@@ -371,6 +371,11 @@ def call_model_with_validation_retry(client, model, messages, validator_func, ma
     for attempt in range(max_retries):
         try:
             start_time = time.time()
+            try:
+                messages_preview = json.dumps(messages, ensure_ascii=False, indent=2)
+                logging.info(f"{context} messages preview:\n{messages_preview[:2000]}")
+            except Exception as e:
+                logging.warning(f"Failed to serialize {context} messages for logging: {e}")
             response_str = client.chat.completions.create(
                 model=model,
                 messages=messages,

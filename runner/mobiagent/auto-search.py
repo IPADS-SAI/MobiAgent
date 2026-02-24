@@ -283,6 +283,18 @@ def _reverse_direction(direction: str) -> str:
     return mapping.get(direction.upper(), "DOWN")
 
 
+def _convert_bbox_to_qwen3_relative(bbox: List[int], img_w: int, img_h: int) -> List[int]:
+    if img_w <= 0 or img_h <= 0:
+        return bbox
+    x1, y1, x2, y2 = bbox
+    return [
+        int(round(x1 / img_w * 1000)),
+        int(round(y1 / img_h * 1000)),
+        int(round(x2 / img_w * 1000)),
+        int(round(y2 / img_h * 1000)),
+    ]
+
+
 def perform_backtrack_action(device, device_type: str, action_record: Optional[Dict[str, Any]]) -> None:
     if not action_record:
         navigate_back(device, device_type)
@@ -321,6 +333,18 @@ def _task_mentions_swipe(task_text: str) -> bool:
         return False
     tokens = ["滑动", "上滑", "下滑", "左滑", "右滑", "上划", "下划", "左划", "右划"]
     return any(t in task_text for t in tokens)
+
+
+def _extract_click_target_text(task_text: str) -> Optional[str]:
+    if not task_text or "点击" not in task_text:
+        return None
+    match = re.search(
+        r"点击.*?[\"\u201c\u201d\u300c\u300d]([^\"\u201c\u201d\u300c\u300d]+)[\"\u201c\u201d\u300c\u300d]",
+        task_text,
+    )
+    if match:
+        return match.group(1).strip()
+    return None
 
 
 def _bbox_iou(a: List[int], b: List[int]) -> float:
@@ -383,6 +407,78 @@ def _extract_bounds_from_hierarchy_text(hierarchy_text: str) -> List[List[int]]:
     except Exception:
         return []
     return _extract_bounds_from_json(obj)
+
+
+def _extract_text_bounds_from_hierarchy_text(hierarchy_text: str, target_text: str) -> List[List[int]]:
+    if not hierarchy_text or not target_text:
+        return []
+    target = target_text.strip()
+    if not target:
+        return []
+
+    if hierarchy_text.lstrip().startswith("<"):
+        try:
+            import xml.etree.ElementTree as ET
+
+            root = ET.fromstring(hierarchy_text)
+        except Exception:
+            return []
+
+        bounds_list: List[List[int]] = []
+        for node in root.iter():
+            node_text = node.get("text") or ""
+            node_desc = node.get("content-desc") or node.get("contentDescription") or ""
+            if target in node_text or target in node_desc:
+                bounds_str = node.get("bounds")
+                bounds = parse_bounds(bounds_str) if parse_bounds else None
+                if bounds:
+                    bounds_list.append(bounds)
+        return bounds_list
+
+    try:
+        obj = json.loads(hierarchy_text)
+    except Exception:
+        return []
+
+    bounds_list: List[List[int]] = []
+    text_keys = {"text", "label", "name", "title", "contentDescription", "content-desc", "desc"}
+
+    def _coerce_bounds(value: Any) -> Optional[List[int]]:
+        if isinstance(value, (list, tuple)) and len(value) == 4:
+            try:
+                return [int(v) for v in value]
+            except Exception:
+                return None
+        if isinstance(value, dict):
+            keys = {"left", "top", "right", "bottom"}
+            if keys.issubset(value.keys()):
+                try:
+                    return [int(value["left"]), int(value["top"]), int(value["right"]), int(value["bottom"])]
+                except Exception:
+                    return None
+        if isinstance(value, str) and parse_bounds:
+            return parse_bounds(value)
+        return None
+
+    def _walk(node: Any) -> None:
+        if isinstance(node, dict):
+            matched = False
+            for key, val in node.items():
+                if key in text_keys and isinstance(val, str) and target in val:
+                    matched = True
+                    break
+            if matched:
+                bounds = _coerce_bounds(node.get("bounds"))
+                if bounds:
+                    bounds_list.append(bounds)
+            for val in node.values():
+                _walk(val)
+        elif isinstance(node, list):
+            for item in node:
+                _walk(item)
+
+    _walk(obj)
+    return bounds_list
 
 
 def refine_bbox_with_hierarchy(
@@ -448,11 +544,11 @@ def should_navigate_back(
     if not norm_before or not norm_after:
         return True, 0.0, 0.0
 
-    threshold = 0.8
+    threshold = 0.95
     if action_type == "swipe":
         threshold = 0.95
     elif action_type in {"input", "click_input"}:
-        threshold = 0.5
+        threshold = 0.95
 
     similarity = difflib.SequenceMatcher(None, norm_before, norm_after).ratio()
     color = "\033[92m" if similarity >= threshold else "\033[91m"
@@ -511,7 +607,7 @@ def build_explorer_prompt(
 5) 如果是点击输入框的动作，务必跟上合理的当前界面下的输入文本，例如：点击“搜索框”并输入“咖啡”。
 6) 若界面左侧、底部或者顶部侧边栏存在导航列表项（例如设置列表，菜单列表等），请你优先输出对各个列表项的点击操作，如果当前界面显示的列表项不全，可以输出滑动操作以查看更多列表项。
 7) 候选动作需要与最近的交互动作序列保持连贯，避免与已发生动作明显冲突；必要时可继续完成上一动作的后续步骤。
-8) 如果界面的右下角有“我的”、“个人中心”之类的入口图标，且最近的交互动作序列没有明显涉及过该入口，建议优先输出点击该入口的动作。
+8) 如果界面的右下角有“我的”、“个人中心”之类的入口图标，并且没有被选中（图标是实心或者有下滑杠表示选中），建议优先输出点击该入口的动作。
 
 当前探索深度: {depth}
 最近交互动作序列(按时间顺序，最多展示8条):
@@ -555,7 +651,7 @@ def call_explorer_model(
                 messages=messages,
                 timeout=API_TIMEOUT,
                 max_tokens=EXPLORER_MAX_TOKENS,
-                temperature=0.2 + attempt * 0.2,
+                temperature=0.4 + attempt * 0.2,
             )
             content = response.choices[0].message.content
             parsed = robust_json_loads(content)
@@ -594,49 +690,80 @@ def execute_decider_one_step(
     device_type: str,
     step_task: str,
     use_qwen3: bool,
+    allow_hierarchy_text_decider: bool,
     output_dir: str,
     step_index: int,
 ) -> Dict[str, Any]:
     """使用 e2e decider 执行一个单步任务并记录数据。"""
-    screenshot_b64 = get_screenshot(device, device_type)
-    messages = build_decider_messages(step_task, [], screenshot_b64, True)
-
-    def _validator(resp: Dict[str, Any]) -> None:
-        validate_decider_response(resp, use_e2e=True)
+    pre_action_hierarchy_text = get_hierarchy_text(device)
+    target_text = _extract_click_target_text(step_task)
+    bounds_from_text = (
+        _extract_text_bounds_from_hierarchy_text(pre_action_hierarchy_text, target_text)
+        if target_text
+        else []
+    )
 
     decider_resp: Optional[Dict[str, Any]] = None
-    for attempt in range(3):
-        decider_resp = call_model_with_validation_retry(
-            decider_client,
-            decider_model,
-            messages,
-            validator_func=_validator,
-            max_retries=5,
-            max_tokens=256,
-            context="Decider",
+    if allow_hierarchy_text_decider and target_text and bounds_from_text:
+        green = "\033[92m"
+        reset = "\033[0m"
+        logging.info(
+            f"{green}Using hierarchy_text_UI bbox for click target: {target_text}{reset}"
         )
-        action = decider_resp.get("action")
-        if _task_mentions_swipe(step_task) and action == "click":
-            if attempt < 2:
-                logging.warning(
-                    "Decider action mismatch (attempt=%s): task expects swipe but got click. Retrying.",
-                    attempt + 1,
-                )
-                time.sleep(0.6)
-                continue
-            color = "\033[91m"
-            reset = "\033[0m"
-            logging.error(
-                f"{color}Decider action mismatch after retries: task expects swipe but got click. "
-                f"Skipping task: {step_task}{reset}"
+        best_bbox = min(
+            bounds_from_text,
+            key=lambda b: max(1, (b[2] - b[0]) * (b[3] - b[1])),
+        )
+        if use_qwen3:
+            size = _get_current_screen_size(device_type)
+            if size:
+                img_w, img_h = size
+                best_bbox = _convert_bbox_to_qwen3_relative(best_bbox, img_w, img_h)
+        decider_resp = {
+            "action": "click",
+            "parameters": {"bbox": best_bbox},
+            "reasoning": f"观察到屏幕上存在{target_text}文字，直接点击{target_text}文本按钮",
+        }
+    else:
+        red = "\033[91m"
+        reset = "\033[0m"
+        logging.info(f"{red}Using model output bbox (decider).{reset}")
+        screenshot_b64 = get_screenshot(device, device_type)
+        messages = build_decider_messages("请帮我"+step_task, [], screenshot_b64, True)
+
+        def _validator(resp: Dict[str, Any]) -> None:
+            validate_decider_response(resp, use_e2e=True)
+
+        for attempt in range(3):
+            decider_resp = call_model_with_validation_retry(
+                decider_client,
+                decider_model,
+                messages,
+                validator_func=_validator,
+                max_retries=5,
+                max_tokens=256,
+                context="Decider",
             )
-            raise RuntimeError("Decider action mismatch: swipe task returned click")
-        break
+            action = decider_resp.get("action")
+            if _task_mentions_swipe(step_task) and action == "click":
+                if attempt < 2:
+                    logging.warning(
+                        "Decider action mismatch (attempt=%s): task expects swipe but got click. Retrying.",
+                        attempt + 1,
+                    )
+                    time.sleep(0.6)
+                    continue
+                color = "\033[91m"
+                reset = "\033[0m"
+                logging.error(
+                    f"{color}Decider action mismatch after retries: task expects swipe but got click. "
+                    f"Skipping task: {step_task}{reset}"
+                )
+                raise RuntimeError("Decider action mismatch: swipe task returned click")
+            break
 
     if decider_resp is None:
         raise RuntimeError("Decider response is empty")
-
-    pre_action_hierarchy_text = get_hierarchy_text(device)
 
     # 保存截图与层级
     screenshot_file = save_raw_screenshot(output_dir, step_index, device_type)
@@ -787,6 +914,7 @@ def explore_dfs(
     device,
     device_type: str,
     use_qwen3: bool,
+    allow_hierarchy_text_decider: bool,
     data_dir: str,
     actions: List[Dict[str, Any]],
     reacts: List[Dict[str, Any]],
@@ -865,12 +993,27 @@ def explore_dfs(
         current_path_actions = list(path_actions) if path_actions else []
         current_path_reacts = list(path_reacts) if path_reacts else []
 
-        logging.info(f"[Depth {current_depth}] execute rank={cand.get('rank')} task={task}")
+        cyan = "\033[96m"
+        reset = "\033[0m"
+        logging.info(
+            f"{cyan}[Depth {current_depth}] execute rank={cand.get('rank')} task={task} "
+            f"reason={cand.get('reason')}{reset}"
+        )
         need_back = current_depth != 0
 
         action_record = None
         try:
             pre_hierarchy_text = get_hierarchy_text(device)
+            # step_result = execute_decider_one_step(
+            #     decider_client=explorer_client,
+            #     decider_model=explorer_model,
+            #     device=device,
+            #     device_type=device_type,
+            #     step_task=task,
+            #     use_qwen3=use_qwen3,
+            #     output_dir=step_output_dir,
+            #     step_index=step_idx,
+            # )
             step_result = execute_decider_one_step(
                 decider_client=decider_client,
                 decider_model=decider_model,
@@ -878,6 +1021,7 @@ def explore_dfs(
                 device_type=device_type,
                 step_task=task,
                 use_qwen3=use_qwen3,
+                allow_hierarchy_text_decider=allow_hierarchy_text_decider,
                 output_dir=step_output_dir,
                 step_index=step_idx,
             )
@@ -907,7 +1051,7 @@ def explore_dfs(
                 "back" if need_back else "skip",
             )
 
-            if current_depth + 1 >= depth_limit or decider_resp.get("action") == "done":
+            if current_depth + 1 >= depth_limit:
                 path_counter[0] += 1
                 path_id = path_counter[0]
                 path_output_dir = os.path.join(paths_dir, f"path_{path_id:04d}")
@@ -932,6 +1076,7 @@ def explore_dfs(
                     device=device,
                     device_type=device_type,
                     use_qwen3=use_qwen3,
+                    allow_hierarchy_text_decider=allow_hierarchy_text_decider,
                     data_dir=data_dir,
                     actions=actions,
                     reacts=reacts,
@@ -979,6 +1124,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--explorer_model", type=str, default="google/gemini-3-flash-preview", help="通用大模型名称")
 
     parser.add_argument("--use_qwen3", choices=["on", "off"], default="on", help="是否按Qwen3坐标格式换算")
+    parser.add_argument(
+        "--allow_hierarchy_text_decider",
+        choices=["on", "off"],
+        default="on",
+        help="是否允许使用层级文本作为 decider 输出动作",
+    )
     parser.add_argument("--data_dir", type=str, default=None, help="结果目录")
     return parser.parse_args()
 
@@ -1011,6 +1162,7 @@ def main() -> None:
     decider_client = init_decider_client(args.service_ip, args.decider_port)
     explorer_client = init_explorer_client(args.openrouter_base_url, args.openrouter_api_key)
     use_qwen3 = args.use_qwen3 == "on"
+    allow_hierarchy_text_decider = args.allow_hierarchy_text_decider == "on"
 
     # 启动应用
     logging.info(f"Starting app: {args.app_name}")
@@ -1042,6 +1194,7 @@ def main() -> None:
             device=device,
             device_type=args.device,
             use_qwen3=use_qwen3,
+            allow_hierarchy_text_decider=allow_hierarchy_text_decider,
             data_dir=data_dir,
             actions=actions,
             reacts=reacts,

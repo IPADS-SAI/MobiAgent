@@ -6,16 +6,17 @@ set -euo pipefail
 # 1) 修改下面变量
 # 2) 执行: bash runner/mobiagent/auto-search-run-template.sh
 
-APP_NAME="设置"
+APP_NAME="微博"
 DEPTH=2
 BREADTH=2
 DEVICE="Harmony"                 # Android | Harmony
 SERVICE_IP="166.111.53.96"
 DECIDER_PORT=7003
-EXPLORER_MODEL="google/gemini-3-flash-preview"
+EXPLORER_MODEL="qwen/qwen3-vl-30b-a3b-instruct"
 OPENROUTER_BASE_URL="https://openrouter.ai/api/v1"
 USE_QWEN3="on"                   # on | off
 DATA_DIR=""                      # 为空时使用默认输出目录
+ALLOW_HIERARCHY_TEXT_DECIDER="off" 
 
 # 建议通过环境变量注入，不要把密钥写死在仓库文件里
 : "${OPENROUTER_API_KEY:?Please export OPENROUTER_API_KEY first}"
@@ -32,6 +33,7 @@ CMD=(
   --openrouter_api_key "$OPENROUTER_API_KEY"
   --explorer_model "$EXPLORER_MODEL"
   --use_qwen3 "$USE_QWEN3"
+  --allow_hierarchy_text_decider "$ALLOW_HIERARCHY_TEXT_DECIDER"
 )
 
 if [[ -n "$DATA_DIR" ]]; then

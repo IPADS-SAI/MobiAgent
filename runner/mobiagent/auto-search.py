@@ -1,5 +1,6 @@
 import argparse
 import difflib
+import hashlib
 import json
 import logging
 import os
@@ -185,23 +186,51 @@ def persist_outputs(
     reacts: List[Dict[str, Any]],
     task_description: Optional[str] = None,
 ) -> None:
+    step_words = {
+        1: "第一步",
+        2: "第二步",
+        3: "第三步",
+        4: "第四步",
+        5: "第五步",
+        6: "第六步",
+        7: "第七步",
+        8: "第八步",
+        9: "第九步",
+        10: "第十步",
+    }
+
+    step_tasks: List[str] = []
     normalized_actions: List[Dict[str, Any]] = []
     for idx, item in enumerate(actions, 1):
         normalized = dict(item)
         normalized["action_index"] = idx
+        step_task = str(normalized.get("source_task", "")).strip()
+        if step_task:
+            step_tasks.append(step_task)
+        normalized.pop("source_task", None)
         normalized_actions.append(normalized)
 
     normalized_reacts: List[Dict[str, Any]] = []
     for idx, item in enumerate(reacts, 1):
         normalized = dict(item)
         normalized["action_index"] = idx
+        normalized.pop("source_task", None)
         normalized_reacts.append(normalized)
+
+    if step_tasks:
+        step_desc_parts = []
+        for idx, step_task in enumerate(step_tasks, 1):
+            step_label = step_words.get(idx, f"第{idx}步")
+            step_desc_parts.append(f"{step_label}：{step_task}")
+        computed_task_description = f"打开{app_name}，" + "，".join(step_desc_parts)
+    else:
+        computed_task_description = task_description or f"打开{app_name}"
 
     payload = {
         "app_name": app_name,
         "task_type": "auto_search",
         "old_task_description": None,
-        "task_description": task_description or f"auto-search for {app_name}",
+        "task_description": computed_task_description,
         "action_count": len(normalized_actions),
         "actions": normalized_actions,
     }
@@ -295,6 +324,187 @@ def _convert_bbox_to_qwen3_relative(bbox: List[int], img_w: int, img_h: int) -> 
     ]
 
 
+def _get_app_package_name(device, app_name: str) -> Optional[str]:
+    if not app_name:
+        return None
+    mapping = getattr(device, "app_package_names", None)
+    if isinstance(mapping, dict):
+        return mapping.get(app_name)
+    return None
+
+
+def _extract_foreground_from_hierarchy(hierarchy_text: str) -> tuple[str, str]:
+    if not hierarchy_text:
+        return "", ""
+
+    try:
+        obj = json.loads(hierarchy_text) if isinstance(hierarchy_text, str) else hierarchy_text
+    except Exception:
+        return "", ""
+
+    package_keys = {"bundleName", "bundle_name", "packageName", "package", "appPackage"}
+    ability_keys = {"abilityName", "ability_name", "uiAbilityName", "uiAbility", "pageName", "page_name"}
+
+    def _walk(node: Any) -> tuple[str, str]:
+        if isinstance(node, dict):
+            package = ""
+            ability = ""
+            for key, val in node.items():
+                if key in package_keys and isinstance(val, str) and val.strip() and not package:
+                    package = val.strip()
+                if key in ability_keys and isinstance(val, str) and val.strip() and not ability:
+                    ability = val.strip()
+            attrs = node.get("attributes")
+            if isinstance(attrs, dict):
+                for key, val in attrs.items():
+                    if key in package_keys and isinstance(val, str) and val.strip() and not package:
+                        package = val.strip()
+                    if key in ability_keys and isinstance(val, str) and val.strip() and not ability:
+                        ability = val.strip()
+            if package and ability:
+                return package, ability
+            for val in node.values():
+                p, a = _walk(val)
+                if p and not package:
+                    package = p
+                if a and not ability:
+                    ability = a
+                if package and ability:
+                    return package, ability
+            return package, ability
+        if isinstance(node, list):
+            package = ""
+            ability = ""
+            for item in node:
+                p, a = _walk(item)
+                if p and not package:
+                    package = p
+                if a and not ability:
+                    ability = a
+                if package and ability:
+                    return package, ability
+            return package, ability
+        return "", ""
+
+    return _walk(obj)
+
+
+def _get_foreground_app_state(device, device_type: str, hierarchy_text: str = "") -> Dict[str, str]:
+    state = {"package": "", "ability": "", "source": "unknown"}
+    driver = getattr(device, "d", None)
+
+    if device_type == "Android" and driver is not None:
+        for api_name in ("app_current", "current_app"):
+            api = getattr(driver, api_name, None)
+            if callable(api):
+                try:
+                    raw = api()
+                    if isinstance(raw, dict):
+                        pkg = str(raw.get("package") or raw.get("appPackage") or raw.get("pkg") or "").strip()
+                        act = str(raw.get("activity") or raw.get("appActivity") or raw.get("act") or "").strip()
+                        if pkg:
+                            state.update({"package": pkg, "ability": act, "source": f"android:{api_name}"})
+                            return state
+                    elif isinstance(raw, str) and raw.strip():
+                        state.update({"package": raw.strip(), "source": f"android:{api_name}"})
+                        return state
+                except Exception:
+                    continue
+
+    if device_type == "Harmony" and driver is not None:
+        shell = getattr(driver, "shell", None)
+        if callable(shell):
+            for cmd in ("aa dump --mission-list", "aa dump -l", "aa dump --stack"):
+                try:
+                    out = shell(cmd)
+                    text = str(out)
+                    pkg_match = re.search(r"(?:bundleName|bundle_name|packageName)\s*[:=]\s*([\w\.]+)", text)
+                    ability_match = re.search(r"(?:abilityName|uiAbilityName|ability|uiAbility)\s*[:=]\s*([\w\.$]+)", text)
+                    if pkg_match:
+                        state["package"] = pkg_match.group(1)
+                    if ability_match:
+                        state["ability"] = ability_match.group(1)
+                    if state["package"]:
+                        state["source"] = f"harmony:shell:{cmd}"
+                        return state
+                except Exception:
+                    continue
+
+    pkg, ability = _extract_foreground_from_hierarchy(hierarchy_text)
+    if pkg or ability:
+        state.update({"package": pkg, "ability": ability, "source": "hierarchy"})
+    return state
+
+
+def _is_app_in_foreground(device, device_type: str, app_name: Optional[str], hierarchy_text: str) -> bool:
+    if not app_name:
+        return True
+    package_name = _get_app_package_name(device, app_name)
+    if not package_name:
+        return True
+
+    fg_state = _get_foreground_app_state(device, device_type, hierarchy_text)
+    fg_package = fg_state.get("package", "")
+    if fg_package:
+        in_foreground = package_name == fg_package or package_name in fg_package or fg_package in package_name
+        if not in_foreground:
+            logging.warning(
+                "\033[91mForeground app mismatch: expect=%s actual=%s ability=%s source=%s\033[0m",
+                package_name,
+                fg_package,
+                fg_state.get("ability", ""),
+                fg_state.get("source", "unknown"),
+            )
+        return in_foreground
+
+    if hierarchy_text:
+        return package_name in hierarchy_text
+    return True
+
+
+def replay_action_record(device, action_record: Dict[str, Any]) -> bool:
+    action_type = str(action_record.get("type", "")).lower()
+    try:
+        if action_type == "click":
+            x = action_record.get("position_x")
+            y = action_record.get("position_y")
+            if x is None or y is None:
+                return False
+            device.click(int(x), int(y))
+            return True
+        if action_type == "click_input":
+            x = action_record.get("position_x")
+            y = action_record.get("position_y")
+            text = action_record.get("text", "")
+            if x is None or y is None:
+                return False
+            device.click(int(x), int(y))
+            if text:
+                device.input(str(text))
+            return True
+        if action_type == "input":
+            text = action_record.get("text", "")
+            if text:
+                device.input(str(text))
+            return True
+        if action_type == "swipe":
+            sx = action_record.get("press_position_x")
+            sy = action_record.get("press_position_y")
+            ex = action_record.get("release_position_x")
+            ey = action_record.get("release_position_y")
+            if None in (sx, sy, ex, ey):
+                return False
+            device.swipe_with_coords(int(sx), int(sy), int(ex), int(ey))
+            return True
+        if action_type == "wait":
+            time.sleep(1.0)
+            return True
+    except Exception as e:
+        logging.warning(f"Replay action failed (type={action_type}): {e}")
+        return False
+    return False
+
+
 def perform_backtrack_action(device, device_type: str, action_record: Optional[Dict[str, Any]]) -> None:
     if not action_record:
         navigate_back(device, device_type)
@@ -326,6 +536,15 @@ def perform_backtrack_action(device, device_type: str, action_record: Optional[D
 def _normalize_hierarchy_text(text: str) -> str:
     text = re.sub(r"\d+", "#", text)
     return "".join(text.split())
+
+
+def _hierarchy_fingerprint(hierarchy_text: str) -> str:
+    if not hierarchy_text:
+        return ""
+    normalized = _normalize_hierarchy_text(hierarchy_text)
+    if not normalized:
+        return ""
+    return hashlib.sha1(normalized.encode("utf-8")).hexdigest()[:16]
 
 
 def _task_mentions_swipe(task_text: str) -> bool:
@@ -531,36 +750,7 @@ def refine_bbox_with_hierarchy(
     return bbox
 
 
-def should_navigate_back(
-    before_hierarchy: str,
-    after_hierarchy: str,
-    action_type: str,
-) -> tuple[bool, float, float]:
-    if not before_hierarchy or not after_hierarchy:
-        return True, 0.0, 0.0
-
-    norm_before = _normalize_hierarchy_text(before_hierarchy)
-    norm_after = _normalize_hierarchy_text(after_hierarchy)
-    if not norm_before or not norm_after:
-        return True, 0.0, 0.0
-
-    threshold = 0.95
-    if action_type == "swipe":
-        threshold = 0.95
-    elif action_type in {"input", "click_input"}:
-        threshold = 0.95
-
-    similarity = difflib.SequenceMatcher(None, norm_before, norm_after).ratio()
-    color = "\033[92m" if similarity >= threshold else "\033[91m"
-    reset = "\033[0m"
-    logging.info(
-        f"{color}Hierarchy similarity: {similarity:.3f} (threshold={threshold:.3f}) "
-        f"for action_type={action_type}{reset}"
-    )
-    return similarity < threshold, similarity, threshold
-
-
-def format_action_history(action_history: List[Dict[str, Any]], max_items: int = 8) -> str:
+def format_action_history(action_history: List[Dict[str, Any]], max_items: int = 20) -> str:
     if not action_history:
         return "无"
 
@@ -607,10 +797,12 @@ def build_explorer_prompt(
 5) 如果是点击输入框的动作，务必跟上合理的当前界面下的输入文本，例如：点击“搜索框”并输入“咖啡”。
 6) 若界面左侧、底部或者顶部侧边栏存在导航列表项（例如设置列表，菜单列表等），请你优先输出对各个列表项的点击操作，如果当前界面显示的列表项不全，可以输出滑动操作以查看更多列表项。
 7) 候选动作需要与最近的交互动作序列保持连贯，避免与已发生动作明显冲突；必要时可继续完成上一动作的后续步骤。
-8) 如果界面的右下角有“我的”、“个人中心”之类的入口图标，并且没有被选中（图标是实心或者有下滑杠表示选中），建议优先输出点击该入口的动作。
+8) 如果界面的右下角有“我的”、“个人中心”之类的入口图标，并且该图标没有被选中（图标是实心或者如表下面有下滑杠，表示选中），建议优先输出点击该入口的动作。
+9) 如果界面上有返回按钮，请不要点击返回按钮了，除非当前界面没有其他明显的可交互元素了。
+10) 最近已经交互过的动作，请不要重复执行了，除非当前界面没有其他明显的可交互元素了。
 
 当前探索深度: {depth}
-最近交互动作序列(按时间顺序，最多展示8条):
+最近交互动作序列(按时间顺序，最多展示20条):
 {history_text}
 """.strip()
 
@@ -688,6 +880,7 @@ def execute_decider_one_step(
     decider_model: str,
     device,
     device_type: str,
+    app_name: str,
     step_task: str,
     use_qwen3: bool,
     allow_hierarchy_text_decider: bool,
@@ -729,7 +922,7 @@ def execute_decider_one_step(
         reset = "\033[0m"
         logging.info(f"{red}Using model output bbox (decider).{reset}")
         screenshot_b64 = get_screenshot(device, device_type)
-        messages = build_decider_messages("请帮我"+step_task, [], screenshot_b64, True)
+        messages = build_decider_messages(f"当前处在{app_name}，请帮我{step_task}", [], screenshot_b64, True)
 
         def _validator(resp: Dict[str, Any]) -> None:
             validate_decider_response(resp, use_e2e=True)
@@ -931,7 +1124,7 @@ def explore_dfs(
 
     screenshot_b64 = get_screenshot(device, device_type)
     hierarchy_text = get_hierarchy_text(device)
-    action_history = list(path_actions) if path_actions else []
+    action_history = list(actions)
     candidates = call_explorer_model(
         explorer_client,
         explorer_model,
@@ -980,7 +1173,7 @@ def explore_dfs(
                     base_hierarchy_text,
                     current_depth,
                     remaining,
-                    action_history,
+                    list(actions),
                 )
 
         cand = candidates[cand_idx]
@@ -999,11 +1192,10 @@ def explore_dfs(
             f"{cyan}[Depth {current_depth}] execute rank={cand.get('rank')} task={task} "
             f"reason={cand.get('reason')}{reset}"
         )
-        need_back = current_depth != 0
 
         action_record = None
+        pre_hierarchy_text = get_hierarchy_text(device)
         try:
-            pre_hierarchy_text = get_hierarchy_text(device)
             # step_result = execute_decider_one_step(
             #     decider_client=explorer_client,
             #     decider_model=explorer_model,
@@ -1019,6 +1211,7 @@ def explore_dfs(
                 decider_model=decider_model,
                 device=device,
                 device_type=device_type,
+                app_name=app_name,
                 step_task=task,
                 use_qwen3=use_qwen3,
                 allow_hierarchy_text_decider=allow_hierarchy_text_decider,
@@ -1037,19 +1230,6 @@ def explore_dfs(
             current_path_reacts.append(react_item)
 
             persist_step_output(step_output_dir, app_name, action_record, react_item)
-
-            need_back, similarity, threshold = should_navigate_back(
-                pre_hierarchy_text,
-                post_hierarchy_text,
-                action_record.get("type", ""),
-            )
-            logging.info(
-                "Backtrack check: action=%s similarity=%.3f threshold=%.3f -> %s",
-                action_record.get("type", ""),
-                similarity,
-                threshold,
-                "back" if need_back else "skip",
-            )
 
             if current_depth + 1 >= depth_limit:
                 path_counter[0] += 1
@@ -1090,11 +1270,41 @@ def explore_dfs(
 
         except Exception as e:
             logging.error(f"Failed to execute candidate at depth {current_depth}: {e}")
-            need_back = current_depth != 0
 
-        # 回溯：返回上一层
-        if need_back:
-            perform_backtrack_action(device, device_type, action_record)
+        # 回溯：默认执行返回，再检查是否回到正确界面
+        perform_backtrack_action(device, device_type, action_record)
+
+        post_back_hierarchy = get_hierarchy_text(device)
+        if not _is_app_in_foreground(device, device_type, app_name, post_back_hierarchy):
+            logging.warning(
+                "\033[91mBacktrack left app unexpectedly. Restarting app: %s\033[0m",
+                app_name,
+            )
+            device.start_app(app_name)
+            time.sleep(DEVICE_WAIT_TIME * 2)
+            post_back_hierarchy = get_hierarchy_text(device)
+
+        expected_fp = _hierarchy_fingerprint(pre_hierarchy_text)
+        actual_fp = _hierarchy_fingerprint(post_back_hierarchy)
+        if expected_fp and actual_fp and expected_fp != actual_fp:
+            similarity_after_back = difflib.SequenceMatcher(
+                None,
+                _normalize_hierarchy_text(pre_hierarchy_text),
+                _normalize_hierarchy_text(post_back_hierarchy),
+            ).ratio()
+            if len(current_path_actions) >= 2 and similarity_after_back < 0.9: #如果返回的不是上一级UI界面
+                recovery_action = current_path_actions[-2]
+                logging.warning(
+                    "\033[93mBacktrack may overshoot (sim=%.3f). Replaying previous action(type=%s) to recover parent page.\033[0m",
+                    similarity_after_back,
+                    recovery_action.get("type", ""),
+                )
+                replay_action_record(device, recovery_action)
+            else:
+                logging.info(
+                    "\033[93mBacktrack verification mismatch but no recovery action replay (sim=%.3f).\033[0m",
+                    similarity_after_back,
+                )
 
         cand_idx += 1
 

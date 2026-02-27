@@ -35,6 +35,38 @@ logging.basicConfig(
 
 DEFAULT_VLM_MODEL = "qwen/qwen3-vl-30a3"
 DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
+UI_KIND_CHOICES = {"按钮", "图标", "文字", "图片", "输入框", "容器"}
+UI_KIND_TO_NOUN = {
+    "按钮": "按钮",
+    "图标": "图标",
+    "文字": "文字",
+    "图片": "图片",
+    "输入框": "输入框",
+    "容器": "区域",
+}
+UI_KIND_ALIASES = {
+    "按钮": "按钮",
+    "button": "按钮",
+    "btn": "按钮",
+    "图标": "图标",
+    "icon": "图标",
+    "文字": "文字",
+    "文本": "文字",
+    "text": "文字",
+    "图片": "图片",
+    "图像": "图片",
+    "image": "图片",
+    "photo": "图片",
+    "输入框": "输入框",
+    "输入": "输入框",
+    "input": "输入框",
+    "edittext": "输入框",
+    "textbox": "输入框",
+    "容器": "容器",
+    "container": "容器",
+    "区域": "容器",
+    "panel": "容器",
+}
 TASK_TEMPLATES = [
     "请帮我点击屏幕上的{label}",
     "请点击屏幕上的{label}",
@@ -42,7 +74,7 @@ TASK_TEMPLATES = [
     "麻烦点击屏幕上的{label}",
     "请在屏幕上点击{label}",
 ]
-REASONING_TEMPLATE = "当前界面中存在{label}这个{ui_kind}，直接点击该{ui_kind}对应的UI元素"
+REASONING_TEMPLATE = "当前界面中存在'{label}'这个{ui_kind}，直接点击该'{ui_kind}'对应的UI元素"
 APP_NAME_TO_PACKAGE = {
     "携程": "com.ctrip.harmonynext",
     "飞猪": "com.fliggy.hmos",
@@ -196,14 +228,49 @@ def _extract_nodes_from_android_xml(hierarchy_xml: str) -> List[Dict[str, Any]]:
                     texts.append(value)
         return texts
 
+    def _collect_descendant_stats(start_node: ET.Element) -> Dict[str, int]:
+        image_like = 0
+        text_like = 0
+        for n in start_node.iter():
+            cls = (n.get("class") or "").lower()
+            if "imageview" in cls or "icon" in cls:
+                image_like += 1
+            if "textview" in cls or "edittext" in cls:
+                text_like += 1
+        return {
+            "image_descendant_count": image_like,
+            "text_descendant_count": text_like,
+        }
+
     def _walk(node: ET.Element) -> None:
         bounds = _parse_bounds(node.get("bounds", ""))
         clickable = _is_clickable(node.get("clickable"))
 
         if clickable and bounds:
             texts = _collect_texts(node)
+            stats = _collect_descendant_stats(node)
             text_value = " ".join(texts) if texts else None
-            nodes.append({"bbox": bounds, "text": text_value})
+            class_name = (node.get("class") or "").strip()
+            resource_id = (node.get("resource-id") or "").strip()
+            content_desc = (node.get("content-desc") or node.get("contentDescription") or "").strip()
+            long_clickable = _is_clickable(node.get("long-clickable"))
+            nodes.append(
+                {
+                    "bbox": bounds,
+                    "text": text_value,
+                    "meta": {
+                        "class_name": class_name,
+                        "resource_id": resource_id,
+                        "content_desc": content_desc,
+                        "clickable": clickable,
+                        "long_clickable": long_clickable,
+                        "text_count": len(texts),
+                        "image_descendant_count": stats["image_descendant_count"],
+                        "text_descendant_count": stats["text_descendant_count"],
+                        "device_source": "android_xml",
+                    },
+                }
+            )
 
         for child in list(node):
             _walk(child)
@@ -252,6 +319,30 @@ def _extract_nodes_from_harmony_json(hierarchy_obj: Any) -> List[Dict[str, Any]]
         _gather(node)
         return texts
 
+    def _collect_descendant_stats(node: Any) -> Dict[str, int]:
+        image_like = 0
+        text_like = 0
+
+        def _gather(cur: Any) -> None:
+            nonlocal image_like, text_like
+            if isinstance(cur, dict):
+                cls = str(cur.get("class") or cur.get("type") or cur.get("component") or "").lower()
+                if any(token in cls for token in ["image", "icon"]):
+                    image_like += 1
+                if any(token in cls for token in ["text", "label", "input", "edit"]):
+                    text_like += 1
+                for val in cur.values():
+                    _gather(val)
+            elif isinstance(cur, list):
+                for item in cur:
+                    _gather(item)
+
+        _gather(node)
+        return {
+            "image_descendant_count": image_like,
+            "text_descendant_count": text_like,
+        }
+
     def _walk(node: Any) -> None:
         if isinstance(node, dict):
             bounds = None
@@ -263,8 +354,34 @@ def _extract_nodes_from_harmony_json(hierarchy_obj: Any) -> List[Dict[str, Any]]
             clickable = _get_clickable_flag(node)
             if clickable and bounds:
                 texts = _collect_texts(node)
+                stats = _collect_descendant_stats(node)
                 text_value = " ".join(texts) if texts else None
-                nodes.append({"bbox": bounds, "text": text_value})
+                class_name = str(node.get("class") or node.get("type") or node.get("component") or "").strip()
+                resource_id = str(node.get("resource-id") or node.get("resourceId") or node.get("id") or "").strip()
+                content_desc = str(
+                    node.get("content-desc")
+                    or node.get("contentDescription")
+                    or node.get("accessibilityLabel")
+                    or node.get("accessibilityText")
+                    or ""
+                ).strip()
+                nodes.append(
+                    {
+                        "bbox": bounds,
+                        "text": text_value,
+                        "meta": {
+                            "class_name": class_name,
+                            "resource_id": resource_id,
+                            "content_desc": content_desc,
+                            "clickable": clickable,
+                            "long_clickable": _is_clickable(node.get("longClickable") or node.get("long-clickable")),
+                            "text_count": len(texts),
+                            "image_descendant_count": stats["image_descendant_count"],
+                            "text_descendant_count": stats["text_descendant_count"],
+                            "device_source": "harmony_json",
+                        },
+                    }
+                )
 
             for val in node.values():
                 _walk(val)
@@ -285,7 +402,7 @@ def _dedupe_nodes(nodes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         key = tuple(int(v) for v in bbox)
         current = dedup.get(key)
         if not current:
-            dedup[key] = {"bbox": list(key), "text": item.get("text")}
+            dedup[key] = {"bbox": list(key), "text": item.get("text"), "meta": item.get("meta") or {}}
         else:
             if (not current.get("text")) and item.get("text"):
                 current["text"] = item.get("text")
@@ -294,6 +411,12 @@ def _dedupe_nodes(nodes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 if incoming and incoming not in str(current.get("text")):
                     merged = f"{current.get('text')} {incoming}".strip()
                     current["text"] = merged
+            current_meta = current.get("meta") or {}
+            incoming_meta = item.get("meta") or {}
+            for k, v in incoming_meta.items():
+                if current_meta.get(k) in {None, ""} and v not in {None, ""}:
+                    current_meta[k] = v
+            current["meta"] = current_meta
     return list(dedup.values())
 
 
@@ -396,12 +519,12 @@ def _annotate_single(image: Image.Image, item: Dict[str, Any]) -> Image.Image:
     return _annotate_image(image, [item])
 
 
-def _load_json_from_text(raw_text: str) -> Optional[Dict[str, Any]]:
+def _load_json_from_text(raw_text: str) -> Optional[Any]:
     if not raw_text:
         return None
     text = raw_text.strip()
 
-    def _try_load(candidate: str) -> Optional[Dict[str, Any]]:
+    def _try_load(candidate: str) -> Optional[Any]:
         try:
             return json.loads(candidate)
         except Exception:
@@ -428,6 +551,17 @@ def _load_json_from_text(raw_text: str) -> Optional[Dict[str, Any]]:
                 brace_count -= 1
                 if brace_count == 0:
                     return _try_load(text[start_idx : i + 1])
+
+    array_start = text.find("[")
+    if array_start != -1:
+        bracket_count = 0
+        for i in range(array_start, len(text)):
+            if text[i] == "[":
+                bracket_count += 1
+            elif text[i] == "]":
+                bracket_count -= 1
+                if bracket_count == 0:
+                    return _try_load(text[array_start : i + 1])
     return None
 
 
@@ -435,24 +569,22 @@ def _normalize_ui_kind(ui_kind: Optional[str]) -> str:
     if not ui_kind:
         return "图片"
     value = str(ui_kind).strip().lower()
-    if value in {"文字", "文本", "text"}:
-        return "文字"
-    if value in {"图标", "icon"}:
-        return "图标"
-    if value in {"图片", "图像", "image", "photo"}:
-        return "图片"
-    return "图片"
+    return UI_KIND_ALIASES.get(value, UI_KIND_ALIASES.get(str(ui_kind).strip(), "图片"))
 
 
 def _infer_kind_from_fallback(label_text: str) -> str:
     text = (label_text or "").strip().lower()
     if not text:
         return "图片"
+    if any(token in text for token in {"input", "edittext", "输入", "搜索"}):
+        return "输入框"
     if "icon" in text or "图标" in text:
         return "图标"
+    if "按钮" in text or "button" in text:
+        return "按钮"
+    if "容器" in text or "区域" in text or "container" in text:
+        return "容器"
     if re.search(r"[\u4e00-\u9fff]", text):
-        return "文字"
-    if any(token in text for token in ["按钮", "文本", "文字", "输入框", "搜索"]):
         return "文字"
     return "图片"
 
@@ -463,8 +595,8 @@ def _caption_with_vlm(client: OpenAI, model: str, image: Image.Image) -> Tuple[s
     b64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
 
     prompt = (
-        "请判断该UI元素属于以下哪一类：文字、图标、图片，并给出中文简短语义标签。"
-        "只返回JSON格式：{\"label\": \"...\", \"ui_kind\": \"文字|图标|图片\"}。"
+        "请判断该UI元素属于以下哪一类：按钮、图标、文字、图片、输入框、容器，并给出中文简短语义标签。"
+        "只返回JSON格式：{\"label\": \"...\", \"ui_kind\": \"按钮|图标|文字|图片|输入框|容器\"}。"
     )
 
     messages = [
@@ -515,11 +647,225 @@ def _caption_with_vlm(client: OpenAI, model: str, image: Image.Image) -> Tuple[s
     return label, _infer_kind_from_fallback(label)
 
 
+def _normalize_confidence(value: Optional[str]) -> str:
+    normalized = (value or "").strip().lower()
+    if normalized in {"high", "高", "h"}:
+        return "high"
+    if normalized in {"medium", "mid", "中", "m"}:
+        return "medium"
+    return "low"
+
+
+def _has_cjk(text: str) -> bool:
+    return bool(re.search(r"[\u4e00-\u9fff]", text or ""))
+
+
+def _classify_ui_kind_rule(item: Dict[str, Any], img_w: int, img_h: int) -> Tuple[str, str]:
+    bbox = item["bbox"]
+    text = (item.get("text") or "").strip()
+    meta = item.get("meta") or {}
+    class_name = str(meta.get("class_name") or "").lower()
+    resource_id = str(meta.get("resource_id") or "").lower()
+    content_desc = str(meta.get("content_desc") or "").strip()
+    content_desc_l = content_desc.lower()
+    text_count = int(meta.get("text_count") or 0)
+    image_descendant_count = int(meta.get("image_descendant_count") or 0)
+    text_descendant_count = int(meta.get("text_descendant_count") or 0)
+
+    x1, y1, x2, y2 = bbox
+    width = max(1, x2 - x1)
+    height = max(1, y2 - y1)
+    area = width * height
+    screen_area = max(1, img_w * img_h)
+    area_ratio = area / screen_area
+    bottom_nav = y1 >= int(img_h * 0.85)
+    has_text = bool(text)
+    text_len = len(text.replace(" ", ""))
+    has_icon_descendant = image_descendant_count > 0
+    viewgroup_like = any(token in class_name for token in ["viewgroup", "framelayout", "linearlayout", "relativelayout"])
+
+    if any(token in f"{class_name} {resource_id} {text.lower()} {content_desc_l}" for token in ["edittext", "input", "搜索", "输入"]):
+        return "输入框", "high"
+
+    if any(token in class_name for token in ["button", "compoundbutton", "materialbutton"]):
+        return "按钮", "high"
+    if any(token in resource_id for token in ["button", "_btn", "btn_", "submit", "confirm", "action"]):
+        return "按钮", "high"
+
+    if bottom_nav and content_desc and width <= int(img_w * 0.3):
+        return "图标", "high"
+    if bottom_nav and has_text and text_len <= 6 and width <= int(img_w * 0.3):
+        return "图标", "high"
+    if any(token in class_name for token in ["imageview", "icon"]) and bottom_nav:
+        return "图标", "high"
+
+    if has_text and text_len <= 10 and area_ratio <= 0.03:
+        if any(token in text for token in ["完善资料", "立即", "速领", "签到", "登录", "注册", "确认", "保存"]):
+            return "按钮", "medium"
+
+    # 宫格入口常见形态：容器内同时有图标和短文本标签
+    if has_icon_descendant and has_text and viewgroup_like:
+        if width <= int(img_w * 0.32) and height <= int(img_h * 0.18):
+            return "图标", "high"
+        return "图标", "medium"
+
+    # 大多数聚合容器的文本节点不止一个，不应误判成普通文字
+    if viewgroup_like and text_descendant_count >= 2 and area_ratio >= 0.04:
+        return "容器", "medium"
+        if any(token in resource_id for token in ["edit", "action", "cta", "entry"]):
+            return "按钮", "medium"
+
+    if area_ratio >= 0.12:
+        return "容器", "high"
+    if area_ratio >= 0.06 and (text_count >= 2 or text_len > 14):
+        return "容器", "medium"
+
+    if any(token in class_name for token in ["imageview"]) and not has_text:
+        return "图片", "medium"
+
+    if has_text:
+        return "文字", "medium"
+    return "图片", "low"
+
+
+def _dump_image_to_b64(image: Image.Image) -> str:
+    buffered = io.BytesIO()
+    image.save(buffered, format="JPEG")
+    return base64.b64encode(buffered.getvalue()).decode("utf-8")
+
+
+def _review_kinds_with_vlm_page(
+    client: OpenAI,
+    model: str,
+    annotated_image: Image.Image,
+    items: List[Dict[str, Any]],
+    max_retry: int,
+    debug_out: Optional[Dict[str, Any]] = None,
+) -> Dict[int, Dict[str, str]]:
+    if not items:
+        if debug_out is not None:
+            debug_out.update({"status": "empty_items"})
+        return {}
+
+    item_lines = []
+    for item in items:
+        bbox = item["bbox"]
+        item_lines.append(
+            {
+                "id": item["id"],
+                "text": item.get("text") or "",
+                "bbox": bbox,
+                "ui_kind_rule": item.get("ui_kind_rule"),
+                "kind_confidence_rule": item.get("kind_confidence_rule"),
+            }
+        )
+
+    prompt = (
+        "你将看到一张带红框和id标记的移动端截图。"
+        "请根据每个id对应的UI元素，对其类型做复核。"
+        "可选类型仅限：按钮、图标、文字、图片、输入框、容器。"
+        "请严格返回JSON："
+        "{\"items\":[{\"id\":1,\"ui_kind\":\"按钮|图标|文字|图片|输入框|容器\",\"confidence\":\"high|medium|low\",\"reason\":\"简短中文\"}]}"
+        f"\n待复核元素列表：{json.dumps(item_lines, ensure_ascii=False)}"
+    )
+
+    if debug_out is not None:
+        debug_out["request_items"] = item_lines
+        debug_out["prompt"] = prompt
+
+    b64 = _dump_image_to_b64(annotated_image)
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+            ],
+        }
+    ]
+
+    attempts = max(1, max_retry)
+    for attempt in range(attempts):
+        content = None
+        parsed = None
+        attempt_debug: Dict[str, Any] = {"attempt": attempt + 1}
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                max_tokens=512,
+                timeout=60,
+            )
+            if response and response.choices:
+                content = response.choices[0].message.content
+            attempt_debug["raw_response"] = content
+        except Exception as e:
+            logging.warning("Kind review VLM call failed on attempt %s: %s", attempt + 1, e)
+            content = None
+            attempt_debug["error"] = str(e)
+
+        parsed = _load_json_from_text(content or "")
+        attempt_debug["parsed"] = parsed
+        if debug_out is not None:
+            debug_out.setdefault("attempts", []).append(attempt_debug)
+
+        rows: Optional[List[Any]] = None
+        if isinstance(parsed, dict):
+            if isinstance(parsed.get("items"), list):
+                rows = parsed.get("items")
+            elif isinstance(parsed.get("data"), list):
+                rows = parsed.get("data")
+        elif isinstance(parsed, list):
+            rows = parsed
+
+        if not rows:
+            if attempt < attempts - 1:
+                time.sleep(0.4)
+                continue
+            if debug_out is not None:
+                debug_out["status"] = "parse_failed"
+            return {}
+
+        reviewed: Dict[int, Dict[str, str]] = {}
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            item_id = row.get("id")
+            try:
+                item_id = int(item_id)
+            except Exception:
+                continue
+            reviewed[item_id] = {
+                "ui_kind": _normalize_ui_kind(row.get("ui_kind")),
+                "confidence": _normalize_confidence(row.get("confidence")),
+                "reason": str(row.get("reason") or "").strip(),
+            }
+        if reviewed:
+            if debug_out is not None:
+                debug_out["status"] = "ok"
+                debug_out["reviewed"] = reviewed
+            return reviewed
+    if debug_out is not None:
+        debug_out["status"] = "no_reviewed_items"
+    return {}
+
+
 def _truncate_label(label: str, max_len: int = 24) -> str:
     label = " ".join(label.split())
     if len(label) <= max_len:
         return label
     return label[: max_len - 1] + "~"
+
+
+def _normalize_label_for_prompt(label: str) -> str:
+    text = " ".join((label or "").split()).strip(" ,，。")
+    return text or "该元素"
+
+
+def _build_target_phrase(label: str, ui_kind: str) -> str:
+    safe_label = _normalize_label_for_prompt(label)
+    noun = UI_KIND_TO_NOUN.get(ui_kind, "元素")
+    return f"‘{safe_label}’{noun}"
 
 
 def _annotate_image(image: Image.Image, items: List[Dict[str, Any]]) -> Image.Image:
@@ -550,6 +896,11 @@ def _ensure_output_dir(output_dir: Optional[str]) -> str:
     return base
 
 
+def _dump_json_file(path: str, payload: Dict[str, Any]) -> None:
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="UI semantic boxing with hierarchy + VLM")
     parser.add_argument("--device", choices=["Android", "Harmony"], default="Android")
@@ -563,6 +914,10 @@ def main() -> None:
     parser.add_argument("--max_vlm_calls", type=int, default=12)
     parser.add_argument("--max_items", type=int, default=20, help="UI objects limit")
     parser.add_argument("--min_area", type=int, default=16)
+    parser.add_argument("--enable_kind_vlm", choices=["on", "off"], default="on")
+    parser.add_argument("--kind_vlm_mode", choices=["page_once"], default="page_once")
+    parser.add_argument("--kind_vlm_max_retry", type=int, default=2)
+    parser.add_argument("--task_desc_with_kind", choices=["on", "off"], default="on")
     args = parser.parse_args()
 
     output_dir = _ensure_output_dir(args.output_dir)
@@ -620,7 +975,7 @@ def main() -> None:
         area = (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
         if area < args.min_area:
             continue
-        filtered_nodes.append({"bbox": bbox, "text": item.get("text")})
+        filtered_nodes.append({"bbox": bbox, "text": item.get("text"), "meta": item.get("meta") or {}})
 
     selected_nodes = _select_non_overlapping(filtered_nodes)
     selected_nodes = _select_limited_items(selected_nodes, args.max_items)
@@ -641,7 +996,7 @@ def main() -> None:
     for idx, item in enumerate(selected_nodes, 1):
         text = item.get("text")
         source = "hierarchy"
-        ui_kind = "文字"
+        rule_kind, rule_conf = _classify_ui_kind_rule(item, img_w, img_h)
         if not text:
             if not use_vlm:
                 raise RuntimeError("Missing text requires VLM; set --use_vlm on")
@@ -649,7 +1004,7 @@ def main() -> None:
                 logging.warning("VLM call budget reached, forcing extra call for missing text")
             x1, y1, x2, y2 = item["bbox"]
             crop = img.crop((x1, y1, x2, y2))
-            text, ui_kind = _caption_with_vlm(client, args.vlm_model, crop)
+            text, _ = _caption_with_vlm(client, args.vlm_model, crop)
             source = "vlm"
             vlm_calls += 1
         items.append({
@@ -657,12 +1012,118 @@ def main() -> None:
             "bbox": item["bbox"],
             "text": text,
             "source": source,
-            "ui_kind": ui_kind,
+            "meta": item.get("meta") or {},
+            "ui_kind_rule": rule_kind,
+            "kind_confidence_rule": rule_conf,
+            "ui_kind": rule_kind,
+            "kind_source": "rule",
+            "kind_confidence": rule_conf,
         })
 
     annotated = _annotate_image(img.copy(), items)
     annotated_path = os.path.join(output_dir, "annotated.jpg")
     annotated.save(annotated_path)
+
+    kind_debug: Dict[str, Any] = {
+        "enabled": args.enable_kind_vlm,
+        "use_vlm": args.use_vlm,
+        "kind_vlm_mode": args.kind_vlm_mode,
+        "kind_vlm_max_retry": args.kind_vlm_max_retry,
+        "model": args.vlm_model,
+        "merge_decisions": [],
+    }
+    if args.enable_kind_vlm == "on" and use_vlm:
+        reviewed = _review_kinds_with_vlm_page(
+            client=client,
+            model=args.vlm_model,
+            annotated_image=annotated,
+            items=items,
+            max_retry=args.kind_vlm_max_retry,
+            debug_out=kind_debug,
+        )
+        for item in items:
+            verdict = reviewed.get(item["id"])
+            if not verdict:
+                kind_debug["merge_decisions"].append(
+                    {
+                        "id": item["id"],
+                        "rule_kind": item.get("ui_kind_rule"),
+                        "rule_confidence": item.get("kind_confidence_rule"),
+                        "final_kind": item.get("ui_kind"),
+                        "decision": "no_vlm_verdict_keep_rule",
+                    }
+                )
+                continue
+            vlm_kind = verdict.get("ui_kind", item["ui_kind_rule"])
+            vlm_conf = _normalize_confidence(verdict.get("confidence"))
+            item["kind_reason_vlm"] = verdict.get("reason", "")
+            rule_kind = item.get("ui_kind_rule", "图片")
+            rule_conf = item.get("kind_confidence_rule", "low")
+
+            should_override = False
+            if rule_conf in {"medium", "low"}:
+                should_override = True
+            elif rule_kind == "容器" and vlm_kind in {"按钮", "图标"} and vlm_conf == "high":
+                should_override = True
+
+            if should_override:
+                item["ui_kind"] = vlm_kind
+                item["kind_source"] = "rule+vlm"
+                item["kind_confidence"] = vlm_conf
+                kind_debug["merge_decisions"].append(
+                    {
+                        "id": item["id"],
+                        "rule_kind": rule_kind,
+                        "rule_confidence": rule_conf,
+                        "vlm_kind": vlm_kind,
+                        "vlm_confidence": vlm_conf,
+                        "final_kind": item["ui_kind"],
+                        "decision": "use_vlm",
+                    }
+                )
+            else:
+                if vlm_kind == rule_kind:
+                    item["kind_source"] = "rule+vlm"
+                item["ui_kind"] = rule_kind
+                item["kind_confidence"] = rule_conf
+                kind_debug["merge_decisions"].append(
+                    {
+                        "id": item["id"],
+                        "rule_kind": rule_kind,
+                        "rule_confidence": rule_conf,
+                        "vlm_kind": vlm_kind,
+                        "vlm_confidence": vlm_conf,
+                        "final_kind": item["ui_kind"],
+                        "decision": "keep_rule",
+                    }
+                )
+    elif args.enable_kind_vlm == "on" and not use_vlm:
+        logging.warning("enable_kind_vlm=on but use_vlm=off, skip page-level kind review")
+        kind_debug["status"] = "skipped_use_vlm_off"
+        for item in items:
+            kind_debug["merge_decisions"].append(
+                {
+                    "id": item["id"],
+                    "rule_kind": item.get("ui_kind_rule"),
+                    "rule_confidence": item.get("kind_confidence_rule"),
+                    "final_kind": item.get("ui_kind"),
+                    "decision": "skip_vlm_keep_rule",
+                }
+            )
+    else:
+        kind_debug["status"] = "disabled"
+        for item in items:
+            kind_debug["merge_decisions"].append(
+                {
+                    "id": item["id"],
+                    "rule_kind": item.get("ui_kind_rule"),
+                    "rule_confidence": item.get("kind_confidence_rule"),
+                    "final_kind": item.get("ui_kind"),
+                    "decision": "disabled_keep_rule",
+                }
+            )
+
+    _dump_json_file(os.path.join(output_dir, "ui_kind_vlm_review_debug.json"), kind_debug)
 
     json_path = os.path.join(output_dir, "ui_semantics.json")
     payload = {
@@ -679,7 +1140,11 @@ def main() -> None:
     for item in items:
         label = item["text"]
         ui_kind = item.get("ui_kind", "文字")
-        task_text = random.choice(TASK_TEMPLATES).format(label=label)
+        if ui_kind not in UI_KIND_CHOICES:
+            ui_kind = "图片"
+            item["ui_kind"] = ui_kind
+        target_phrase = _build_target_phrase(label, ui_kind) if args.task_desc_with_kind == "on" else label
+        task_text = random.choice(TASK_TEMPLATES).format(label=target_phrase)
         reasoning = REASONING_TEMPLATE.format(label=label, ui_kind=ui_kind)
 
         sub_dir = os.path.join(output_dir, str(item["id"]))

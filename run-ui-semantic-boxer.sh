@@ -15,9 +15,16 @@ BASE_URL="https://openrouter.ai/api/v1"   # OpenRouter by default
 MAX_VLM_CALLS=12
 MAX_ITEMS=20
 MIN_AREA=16
+ENABLE_KIND_VLM="on"                      # on | off, check ui_kind with page-level VLM
+KIND_VLM_MODE="page_once"                 # page_once
+KIND_VLM_MAX_RETRY=2
+TASK_DESC_WITH_KIND="on"                  # on | off
 
-# Prefer API key from env; required when USE_VLM=on
-: "${OPENROUTER_API_KEY:?Please export OPENROUTER_API_KEY first}"
+OPENROUTER_API_KEY="${OPENROUTER_API_KEY:-}"
+if [[ "$USE_VLM" == "on" && -z "$OPENROUTER_API_KEY" ]]; then
+  echo "Please export OPENROUTER_API_KEY first"
+  exit 1
+fi
 
 CMD=(
   python -m collect.auto.ui_semantic_boxer
@@ -30,6 +37,10 @@ CMD=(
   --max_vlm_calls "$MAX_VLM_CALLS"
   --max_items "$MAX_ITEMS"
   --min_area "$MIN_AREA"
+  --enable_kind_vlm "$ENABLE_KIND_VLM"
+  --kind_vlm_mode "$KIND_VLM_MODE"
+  --kind_vlm_max_retry "$KIND_VLM_MAX_RETRY"
+  --task_desc_with_kind "$TASK_DESC_WITH_KIND"
 )
 
 if [[ -n "$ADB_ENDPOINT" ]]; then

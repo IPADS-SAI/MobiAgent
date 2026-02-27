@@ -25,7 +25,6 @@ try:
     from .mobiagent import (
         AndroidDevice,
         HarmonyDevice,
-        build_decider_messages,
         call_model_with_validation_retry,
         compute_swipe_positions,
         convert_qwen3_coordinates_to_absolute,
@@ -38,7 +37,6 @@ except ImportError:
     from mobiagent import (
         AndroidDevice,
         HarmonyDevice,
-        build_decider_messages,
         call_model_with_validation_retry,
         compute_swipe_positions,
         convert_qwen3_coordinates_to_absolute,
@@ -63,6 +61,20 @@ EXPLORER_MAX_TOKENS = 1024
 MAX_RETRIES = 3
 DEVICE_WAIT_TIME = 0.6
 DECIDER_MODEL_PLACEHOLDER = ""
+AUTO_DECIDER_CURRENT_STEP_PROMPT = (
+    "Please provide the next action based on the screenshot and your action history. "
+    "You should do careful reasoning before providing the action."
+)
+AUTO_DECIDER_USER_PROMPT = (
+    "### Current Task\n"
+    "\"{task}\"\n"
+    "### Action History\n"
+    "The sequence of actions you have already taken:\n"
+    "{history}\n"
+    "### Constraints\n"
+    "- If the screen has not changed after your last action, do not repeat the exact same action.\n"
+    "- Do not output done."
+)
 
 
 def _load_font(size: int = 36) -> ImageFont.FreeTypeFont:
@@ -179,6 +191,28 @@ def save_raw_screenshot(data_dir: str, step_index: int, device_type: str) -> str
     return dst
 
 
+def _compute_task_description(
+    actions: List[Dict[str, Any]],
+    app_name: str,
+    task_description: Optional[str] = None,
+    step_words: Optional[Dict[int, str]] = None,
+) -> str:
+    step_words = step_words or {}
+    step_tasks: List[str] = []
+    for item in actions:
+        step_task = str(item.get("source_task", "")).strip()
+        if step_task:
+            step_tasks.append(step_task)
+
+    if step_tasks:
+        step_desc_parts = []
+        for idx, step_task in enumerate(step_tasks, 1):
+            step_label = step_words.get(idx, f"第{idx}步")
+            step_desc_parts.append(f"{step_label}：{step_task}")
+        return f"打开{app_name}，" + "，".join(step_desc_parts)
+    return task_description or f"打开{app_name}"
+
+
 def persist_outputs(
     output_dir: str,
     app_name: str,
@@ -199,14 +233,17 @@ def persist_outputs(
         10: "第十步",
     }
 
-    step_tasks: List[str] = []
+    computed_task_description = _compute_task_description(
+        actions=actions,
+        app_name=app_name,
+        task_description=task_description,
+        step_words=step_words,
+    )
+
     normalized_actions: List[Dict[str, Any]] = []
     for idx, item in enumerate(actions, 1):
         normalized = dict(item)
         normalized["action_index"] = idx
-        step_task = str(normalized.get("source_task", "")).strip()
-        if step_task:
-            step_tasks.append(step_task)
         normalized.pop("source_task", None)
         normalized_actions.append(normalized)
 
@@ -216,15 +253,6 @@ def persist_outputs(
         normalized["action_index"] = idx
         normalized.pop("source_task", None)
         normalized_reacts.append(normalized)
-
-    if step_tasks:
-        step_desc_parts = []
-        for idx, step_task in enumerate(step_tasks, 1):
-            step_label = step_words.get(idx, f"第{idx}步")
-            step_desc_parts.append(f"{step_label}：{step_task}")
-        computed_task_description = f"打开{app_name}，" + "，".join(step_desc_parts)
-    else:
-        computed_task_description = task_description or f"打开{app_name}"
 
     payload = {
         "app_name": app_name,
@@ -810,6 +838,70 @@ def build_explorer_prompt(
 # {hierarchy_text[:12000]}
 
 
+def _load_auto_decider_system_prompt() -> str:
+    prompt_path = Path(__file__).resolve().parents[2] / "prompts" / "e2e_qwen3_system.md"
+    text = prompt_path.read_text(encoding="utf-8")
+    # 强制移除 done 动作空间与响应格式中的 done 候选。
+    text = re.sub(r"^\s*-\s*Name:\s*done,.*$\n?", "", text, flags=re.IGNORECASE | re.MULTILINE)
+    text = re.sub(r"(\bone of\s+)([^)\n]+)", lambda m: m.group(1) + _remove_done_token_list(m.group(2)), text)
+    text = re.sub(r"\bdone\b\s*,\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r",\s*\bdone\b", "", text, flags=re.IGNORECASE)
+    return text.strip()
+
+
+def _remove_done_token_list(tokens_text: str) -> str:
+    tokens = [t.strip() for t in tokens_text.split(",")]
+    kept = []
+    for token in tokens:
+        normalized = token.strip().strip("`").lower()
+        if normalized == "done":
+            continue
+        kept.append(token)
+    tokens = kept
+    return ", ".join(tokens)
+
+
+def build_auto_decider_messages(task: str, history: List[str], screenshot_b64: str) -> List[Dict[str, Any]]:
+    if history:
+        history_str = "\n".join(f"{idx}. {h}" for idx, h in enumerate(history, 1))
+    else:
+        history_str = "(No history)"
+
+    context_text = AUTO_DECIDER_USER_PROMPT.format(task=task, history=history_str)
+    system_prompt = _load_auto_decider_system_prompt()
+    return [
+        {"role": "system", "content": system_prompt},
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": context_text},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{screenshot_b64}"}},
+                {"type": "text", "text": AUTO_DECIDER_CURRENT_STEP_PROMPT},
+            ],
+        },
+    ]
+
+
+def append_done_to_path(
+    path_actions: List[Dict[str, Any]],
+    path_reacts: List[Dict[str, Any]],
+    path_task_description: str,
+) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    actions_with_done = [dict(item) for item in path_actions]
+    reacts_with_done = [dict(item) for item in path_reacts]
+
+    actions_with_done.append({"type": "done", "status": "success"})
+    done_react = {
+        "reasoning": (
+            f"当前任务为：{path_task_description}。"
+            "该任务执行完成，任务结束。"
+        ),
+        "function": {"name": "done", "parameters": {"status": "success"}},
+    }
+    reacts_with_done.append(done_react)
+    return actions_with_done, reacts_with_done
+
+
 def call_explorer_model(
     explorer_client: OpenAI,
     explorer_model: str,
@@ -922,7 +1014,11 @@ def execute_decider_one_step(
         reset = "\033[0m"
         logging.info(f"{red}Using model output bbox (decider).{reset}")
         screenshot_b64 = get_screenshot(device, device_type)
-        messages = build_decider_messages(f"当前处在{app_name}，请帮我{step_task}", [], screenshot_b64, True)
+        messages = build_auto_decider_messages(
+            task=f"当前处在{app_name}，请帮我{step_task}",
+            history=[],
+            screenshot_b64=screenshot_b64,
+        )
 
         def _validator(resp: Dict[str, Any]) -> None:
             validate_decider_response(resp, use_e2e=True)
@@ -938,6 +1034,15 @@ def execute_decider_one_step(
                 context="Decider",
             )
             action = decider_resp.get("action")
+            if action == "done":
+                if attempt < 2:
+                    logging.warning(
+                        "Decider returned done in auto-search (attempt=%s), retrying.",
+                        attempt + 1,
+                    )
+                    time.sleep(0.6)
+                    continue
+                raise RuntimeError("Decider action mismatch: auto-search does not accept done action")
             if _task_mentions_swipe(step_task) and action == "click":
                 if attempt < 2:
                     logging.warning(
@@ -1237,11 +1342,29 @@ def explore_dfs(
                 path_output_dir = os.path.join(paths_dir, f"path_{path_id:04d}")
                 step_indices = [item.get("action_index") for item in current_path_actions if item.get("action_index")]
                 copy_step_artifacts_to_path(steps_dir, path_output_dir, step_indices)
+                path_task_description = _compute_task_description(
+                    actions=current_path_actions,
+                    app_name=app_name,
+                )
+                full_path_actions, full_path_reacts = append_done_to_path(
+                    current_path_actions,
+                    current_path_reacts,
+                    path_task_description,
+                )
+                done_index = len(full_path_actions)
+                # done 对应的观测应为“最后一个真实动作执行后”的页面状态
+                # 这里在回溯前额外抓取一次当前截图/层级并按 done 序号落盘。
+                try:
+                    get_screenshot(device, device_type)
+                    save_raw_screenshot(path_output_dir, done_index, device_type)
+                    save_hierarchy(device, device_type, path_output_dir, done_index)
+                except Exception as e:
+                    logging.warning(f"Failed to save done artifacts for path {path_id:04d}: {e}")
                 persist_outputs(
                     path_output_dir,
                     app_name,
-                    current_path_actions,
-                    current_path_reacts,
+                    full_path_actions,
+                    full_path_reacts,
                 )
             else:
                 explore_dfs(

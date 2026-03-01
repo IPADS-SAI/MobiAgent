@@ -1192,7 +1192,7 @@ def main() -> None:
                 "function": {
                     "name": "click",
                     "parameters": {
-                        "target_element": label,
+                        "target_element": target_phrase,
                         "bbox": rel_bbox,
                     },
                 },

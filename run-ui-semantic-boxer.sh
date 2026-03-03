@@ -13,7 +13,8 @@ OUTPUT_DIR=""                             # empty => auto timestamp folder
 
 # VLM and request budget
 USE_VLM="on"                              # on | off
-VLM_TEXT_ONLY="off"                        # on => hierarchy only provides boxes, text always from VLM
+VLM_TEXT_ONLY="off"                        # on => hierarchy only provides boxes, text always from VLM，off，
+                                           #当页面中存在歧义的元素或者需要更准确的对象描述时，开启；只使用VLM提供的文本，层级信息仍然来自页面结构
 VLM_MODEL="qwen/qwen3-vl-30b-a3b-instruct"
 BASE_URL="https://openrouter.ai/api/v1"
 MAX_VLM_CALLS=12

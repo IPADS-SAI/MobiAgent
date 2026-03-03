@@ -23,6 +23,7 @@ import os
 import re
 import time
 import random
+import shutil
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -1483,6 +1484,8 @@ def main() -> None:
     parser.add_argument("--adb_endpoint", type=str, default=None)
     parser.add_argument("--app_name", type=str, required=True, help="App name for actions.json")
     parser.add_argument("--output_dir", type=str, default=None)
+    parser.add_argument("--input_screenshot_path", type=str, default=None, help="离线输入截图路径")
+    parser.add_argument("--input_hierarchy_path", type=str, default=None, help="离线输入层级路径(xml/json)")
     parser.add_argument("--vlm_model", type=str, default=DEFAULT_VLM_MODEL)
     parser.add_argument("--base_url", type=str, default=DEFAULT_BASE_URL)
     parser.add_argument("--api_key", type=str, default=os.getenv("OPENROUTER_API_KEY", ""))
@@ -1512,42 +1515,69 @@ def main() -> None:
     output_dir = _ensure_output_dir(args.output_dir)
     logging.info("Output dir: %s", output_dir)
 
-    if args.device == "Android":
-        device = AndroidDeviceAdapter(args.adb_endpoint)
-    else:
-        device = HarmonyDeviceAdapter()
-
     screenshot_path = os.path.join(output_dir, "screenshot.jpg")
     hierarchy_path = os.path.join(output_dir, "hierarchy.xml" if args.device == "Android" else "hierarchy.json")
 
-    device.screenshot(screenshot_path)
-    hierarchy_raw = device.dump_hierarchy()
+    offline_mode = bool(args.input_screenshot_path and args.input_hierarchy_path)
+    if bool(args.input_screenshot_path) != bool(args.input_hierarchy_path):
+        raise RuntimeError("input_screenshot_path and input_hierarchy_path must be provided together")
 
-    current_package = _get_current_package(device, args.device, hierarchy_raw)
-    expected_package = APP_NAME_TO_PACKAGE.get(args.app_name)
-    if current_package and expected_package and current_package != expected_package:
-        red = "\033[91m"
-        reset = "\033[0m"
-        logging.warning(
-            f"{red}App mismatch: current package={current_package} expected={expected_package} ({args.app_name}){reset}"
-        )
-
-    if args.device == "Android":
-        hierarchy_text = hierarchy_raw if isinstance(hierarchy_raw, str) else str(hierarchy_raw)
-        with open(hierarchy_path, "w", encoding="utf-8") as f:
-            f.write(hierarchy_text)
-        nodes = _extract_nodes_from_android_xml(hierarchy_text)
-    else:
-        if isinstance(hierarchy_raw, str):
+    if offline_mode:
+        if not os.path.exists(args.input_screenshot_path):
+            raise RuntimeError(f"input screenshot not found: {args.input_screenshot_path}")
+        if not os.path.exists(args.input_hierarchy_path):
+            raise RuntimeError(f"input hierarchy not found: {args.input_hierarchy_path}")
+        shutil.copy2(args.input_screenshot_path, screenshot_path)
+        with open(args.input_hierarchy_path, "r", encoding="utf-8") as f:
+            hierarchy_text = f.read()
+        if hierarchy_text.lstrip().startswith("<"):
+            hierarchy_path = os.path.join(output_dir, "hierarchy.xml")
+            with open(hierarchy_path, "w", encoding="utf-8") as f:
+                f.write(hierarchy_text)
+            nodes = _extract_nodes_from_android_xml(hierarchy_text)
+        else:
+            hierarchy_path = os.path.join(output_dir, "hierarchy.json")
+            with open(hierarchy_path, "w", encoding="utf-8") as f:
+                f.write(hierarchy_text)
             try:
-                hierarchy_obj = json.loads(hierarchy_raw)
+                hierarchy_obj = json.loads(hierarchy_text)
             except Exception:
                 hierarchy_obj = {}
+            nodes = _extract_nodes_from_harmony_json(hierarchy_obj)
+    else:
+        if args.device == "Android":
+            device = AndroidDeviceAdapter(args.adb_endpoint)
         else:
-            hierarchy_obj = hierarchy_raw
-        with open(hierarchy_path, "w", encoding="utf-8") as f:
-            json.dump(hierarchy_obj, f, ensure_ascii=False, indent=2)
-        nodes = _extract_nodes_from_harmony_json(hierarchy_obj)
+            device = HarmonyDeviceAdapter()
+
+        device.screenshot(screenshot_path)
+        hierarchy_raw = device.dump_hierarchy()
+
+        current_package = _get_current_package(device, args.device, hierarchy_raw)
+        expected_package = APP_NAME_TO_PACKAGE.get(args.app_name)
+        if current_package and expected_package and current_package != expected_package:
+            red = "\033[91m"
+            reset = "\033[0m"
+            logging.warning(
+                f"{red}App mismatch: current package={current_package} expected={expected_package} ({args.app_name}){reset}"
+            )
+
+        if args.device == "Android":
+            hierarchy_text = hierarchy_raw if isinstance(hierarchy_raw, str) else str(hierarchy_raw)
+            with open(hierarchy_path, "w", encoding="utf-8") as f:
+                f.write(hierarchy_text)
+            nodes = _extract_nodes_from_android_xml(hierarchy_text)
+        else:
+            if isinstance(hierarchy_raw, str):
+                try:
+                    hierarchy_obj = json.loads(hierarchy_raw)
+                except Exception:
+                    hierarchy_obj = {}
+            else:
+                hierarchy_obj = hierarchy_raw
+            with open(hierarchy_path, "w", encoding="utf-8") as f:
+                json.dump(hierarchy_obj, f, ensure_ascii=False, indent=2)
+            nodes = _extract_nodes_from_harmony_json(hierarchy_obj)
 
     if not nodes:
         logging.warning("No hierarchy nodes found")

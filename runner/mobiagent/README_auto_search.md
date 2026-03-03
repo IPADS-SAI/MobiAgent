@@ -28,6 +28,19 @@
 - `--use_qwen3`：`on` / `off`，是否使用 qwen3 坐标换算
 - `--allow_hierarchy_text_decider`：`on` / `off`，是否允许用 hierarchy 文本直接定位点击 bbox
 - `--data_dir`：输出目录（可选，不传则自动按时间戳创建）
+- `--enable_ui_semantic_collect`：`on` / `off`，是否启用页面图标采集
+- `--ui_collect_async`：`on` / `off`，是否异步采集。当前实现中仅 `on` 会启用页面采集 worker；`off` 等价于关闭采集执行。
+- `--ui_collect_queue_size`：采集任务队列容量
+- `--ui_collect_drain_on_exit`：`on` / `off`，退出前是否等待采集队列
+- `--ui_collect_drain_timeout_sec`：退出前等待采集队列的超时秒数
+- `--ui_collect_use_vlm`：`on` / `off`，采集是否启用 VLM
+- `--ui_collect_vlm_text_only`：`on` / `off`，采集文本是否全走 VLM
+- `--ui_collect_vlm_model`：采集 VLM 模型
+- `--ui_collect_base_url`：页面采集 VLM 的 Base URL（为空时复用 `--openrouter_base_url`）
+- `--ui_collect_api_key`：页面采集 VLM 的 API Key（为空时复用 `--openrouter_api_key`）
+- `--ui_collect_max_items`：采集最大元素数
+- `--ui_collect_max_vlm_calls`：采集 VLM 调用上限
+- `--ui_collect_min_area`：采集最小框面积
 
 ## 3. 运行方式
 
@@ -44,7 +57,9 @@ python -m runner.mobiagent.auto-search \
   --openrouter_api_key "$OPENROUTER_API_KEY" \
   --explorer_model "google/gemini-3-flash-preview" \
   --use_qwen3 on \
-  --allow_hierarchy_text_decider on
+  --allow_hierarchy_text_decider on \
+  --enable_ui_semantic_collect on \
+  --ui_collect_async on
 ```
 
 也可使用仓库根目录模板脚本：`auto-search-run-template.sh`。
@@ -66,6 +81,7 @@ python -m runner.mobiagent.auto-search \
 
 - `steps/step_0001`, `steps/step_0002`, ...
 - `paths/path_0001`, `paths/path_0002`, ...
+- `ui-pages/page_0001`, `ui-pages/page_0002`, ...
 
 ### 5.1 steps（单步原子结果）
 
@@ -89,6 +105,38 @@ python -m runner.mobiagent.auto-search \
 - path 末尾会追加 `done`（`status=success`）及对应 reasoning。
 - 为保证多模态样本对齐，`done` 也会有对应观测：额外保存 `n.jpg` 与 `n.xml/json`（`n` 为追加 done 后的最终步数）。
 
+### 5.3 ui-pages（异步页面图标采集）
+
+- DFS 每次进入新页面时，先按 raw hierarchy 指纹判重，再用结构指纹 + 截图 dHash 做二次去重。
+- 新页面会保存快照（`snapshot/input_screenshot.jpg` + `snapshot/input_hierarchy.xml|json`）并入队。
+- 页面采集快照使用设备原始未缩放截图；路径探索给 decider 的图像仍保持原有缩放通道。
+- 后台 worker 异步调用 `collect.auto.ui_semantic_boxer` 处理，不阻塞 DFS。
+- explorer 与 UI collect 可使用不同模型提供商：  
+  - explorer 使用 `--openrouter_base_url` + `--explorer_model`  
+  - UI collect 使用 `--ui_collect_base_url` + `--ui_collect_vlm_model`（以及可选 `--ui_collect_api_key`）
+- 每个页面目录输出在 `ui-pages/page_xxxx/`，与 `paths` 同级。
+- 采集状态记录在 `ui-pages/pages_index.json`。
+
+`pages_index.json` 关键字段：
+- `status`: `queued|running|ok|failed|skipped_queue_full|skipped_shutdown_timeout|skipped_dedup`
+- `attempt_count`
+- `created_at`
+- `last_attempt_at`
+- `last_error`
+- `snapshot.screenshot_path`
+- `snapshot.hierarchy_path`
+- `dedupe_key.raw_fp|struct_fp|dhash`
+- `deduped_to_page_id`（仅去重复用时存在）
+
+退出行为：
+- `--ui_collect_drain_on_exit on`：退出前等待队列处理完成，若达到 `--ui_collect_drain_timeout_sec` 仍未完成，则未开始处理任务标记 `skipped_shutdown_timeout`。
+- `--ui_collect_drain_on_exit off`：直接进入退出流程，未开始处理任务标记 `skipped_shutdown_timeout`。
+
+注意：
+- 若 `--enable_ui_semantic_collect on` 且 `--ui_collect_async off`，当前版本不会启动采集线程，也不会实际执行 `ui-pages` 采集。
+- `--ui_collect_base_url` 为空时，会自动回退到 `--openrouter_base_url`。
+- `--ui_collect_api_key` 为空时，会自动回退到 `--openrouter_api_key`。
+
 ## 6. 推荐实践
 
 - 先小规模验证：`depth=2`, `breadth=2`
@@ -96,3 +144,4 @@ python -m runner.mobiagent.auto-search \
 - 若结果异常，优先检查 `OPENROUTER_API_KEY` 是否有效
 - 若结果异常，优先检查 `app_name` 是否存在于设备映射表
 - 若结果异常，优先检查 Decider 服务连通性与端口是否正确
+- 若 `ui_collect_vlm_text_only=on`，必须同时设置 `ui_collect_use_vlm=on`

@@ -145,7 +145,6 @@ supported_apps = {
     "番茄畅听": "com.xs.fm",
     "转转": "com.wuba.zhuanzhuan",
     "西瓜视频": "com.ss.android.article.video",
-    "skillhub": "com.skillhub",
     "SkillHub": "com.skillhub",
 }
 

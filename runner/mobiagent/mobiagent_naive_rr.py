@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 # """
 # MobiAgent Naïve Record & Replay Version
-# 最小化依赖的版本 - 第一遍做record，第二遍做replay
+# 最小化依赖的版本 - record+replay
 # """
 
 from openai import OpenAI
@@ -57,6 +57,8 @@ REPLAY_USE_MIN_SCORE_BY_STAGE = {
 REPLAY_USE_MAX_ACTIONS_WITHOUT_DONE = 8
 REPLAY_USE_MAX_REPEAT_RATIO = 0.72
 REPLAY_XML_OVERLAP_MIN = 0.55
+GRAPH_REPLAY_SEARCH_MODE = "conservative"
+GRAPH_REPLAY_MAX_CANDIDATES_PER_STEP = 6
 
 # No-progress guard (if page XML does not change for 3 rounds, stop)
 NO_PROGRESS_XML_STREAK = 3
@@ -65,6 +67,30 @@ NO_PROGRESS_XML_STREAK = 3
 decider_client = None
 grounder_client = None
 planner_client = None
+
+
+def _init_template_graph_builder(
+    graph_enabled: bool,
+    graph_dir: Optional[str],
+    app_name: str,
+) -> Tuple[Optional[Any], Optional[str], str]:
+    """
+    Lazy init template graph builder.
+    Returns: (builder, graph_file, error_message)
+    """
+    if not graph_enabled:
+        return None, None, ""
+    if not graph_dir:
+        return None, None, "graph_dir is empty"
+    try:
+        from template_graph_builder import TemplateGraphBuilder  # local module
+    except Exception as e:
+        return None, None, f"import failed: {e}"
+    try:
+        builder = TemplateGraphBuilder(graph_dir=graph_dir, app_name=app_name)
+        return builder, getattr(builder, "graph_file", None), ""
+    except Exception as e:
+        return None, None, f"init failed: {e}"
 
 
 def init_clients(service_ip, decider_port, grounder_port, planner_port):
@@ -332,6 +358,79 @@ def strict_ui_meta_equal(expected: Optional[Dict[str, str]], current: Optional[D
     if not expected or not current:
         return False
     return expected == current
+
+
+def _ui_meta_match_keys() -> List[str]:
+    return [
+        "resource-id",
+        "class",
+        "package",
+        "text",
+        "content-desc",
+        "clickable",
+        "enabled",
+        "selected",
+        "checked",
+        "focused",
+        "scrollable",
+        "long-clickable",
+    ]
+
+
+def find_android_point_by_ui_meta(
+    hierarchy_xml: Optional[str],
+    expected_ui_meta: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """Resolve click point by exact UI metadata match on current XML."""
+    if not hierarchy_xml or not isinstance(expected_ui_meta, dict):
+        return None
+    keys = _ui_meta_match_keys()
+    constrained = {
+        key: str(expected_ui_meta.get(key, "")).strip()
+        for key in keys
+        if str(expected_ui_meta.get(key, "")).strip()
+    }
+    if not constrained:
+        return None
+
+    try:
+        root = ET.fromstring(hierarchy_xml)
+    except Exception as e:
+        logger.warning(f"[XML] Failed to parse hierarchy XML for ui_meta match: {e}")
+        return None
+
+    best: Optional[Dict[str, Any]] = None
+    for elem in root.iter():
+        attrib = elem.attrib or {}
+        bounds = _parse_android_bounds(attrib.get("bounds", ""))
+        if not bounds:
+            continue
+        ok = True
+        matched_keys = 0
+        for key, expected in constrained.items():
+            if str(attrib.get(key, "")).strip() != expected:
+                ok = False
+                break
+            matched_keys += 1
+        if not ok:
+            continue
+        area = _bbox_area(bounds)
+        cx, cy = _bbox_center(bounds)
+        candidate = {
+            "position": [int(cx), int(cy)],
+            "ui_meta": _extract_android_node_meta(attrib),
+            "matched_keys": matched_keys,
+            "area": area,
+        }
+        if best is None:
+            best = candidate
+            continue
+        if candidate["matched_keys"] > best["matched_keys"]:
+            best = candidate
+            continue
+        if candidate["matched_keys"] == best["matched_keys"] and candidate["area"] < best["area"]:
+            best = candidate
+    return best
 
 
 def _xml_tokens(hierarchy_xml: str) -> List[str]:
@@ -1047,7 +1146,14 @@ class ExperienceRR:
     BM25_MIN_SCORE = 0.45
     VECTOR_SIM_THRESHOLD = 0.58
 
-    def __init__(self, data_dir: str, task_name: str, task_desc: Optional[str] = None, search_root: Optional[str] = None):
+    def __init__(
+        self,
+        data_dir: str,
+        task_name: str,
+        task_desc: Optional[str] = None,
+        search_root: Optional[str] = None,
+        enable_load: bool = True,
+    ):
         """
         Initialize Experience RR.
 
@@ -1067,8 +1173,9 @@ class ExperienceRR:
         self.loaded_from_dir: Optional[str] = None
         self.loaded_experience_path: Optional[str] = None
 
-        # try to load past experience via fuzzy matching
-        self.load_experience()
+        # Optional historical load. For graph-first runtime we disable it and keep record-only mode.
+        if enable_load:
+            self.load_experience()
 
     def _list_experience_files(self) -> List[str]:
         if not self.search_root or not os.path.isdir(self.search_root):
@@ -1473,15 +1580,184 @@ class ExperienceRR:
 
 
 
+def try_execute_graph_replay_candidate(
+    device: Any,
+    candidate: Dict[str, Any],
+    step: int,
+    screenshot_file: str,
+    current_xml_file: Optional[str],
+    current_hierarchy_xml: Optional[str],
+) -> Dict[str, Any]:
+    """Execute one graph replay candidate with deterministic XML guard."""
+    payload = candidate.get("action_payload") if isinstance(candidate.get("action_payload"), dict) else {}
+    action_name = str(payload.get("action_type", "")).lower()
+    base_record: Dict[str, Any] = {
+        "step": step,
+        "action": action_name or "unknown",
+        "screenshot_file": screenshot_file,
+        "xml_file": current_xml_file,
+        "replayed": True,
+        "replay_source": "template_graph",
+        "graph_replay": {
+            "edge_id": candidate.get("edge_id"),
+            "from_node_id": candidate.get("node_id"),
+            "to_node_id": candidate.get("to_node_id"),
+            "action_sig": candidate.get("action_sig", ""),
+            "search_source": candidate.get("source", ""),
+            "mode": candidate.get("mode", GRAPH_REPLAY_SEARCH_MODE),
+            "replay_score": candidate.get("replay_score", 0.0),
+            "edge_confidence": candidate.get("edge_confidence", 0.0),
+            "edge_probability": candidate.get("edge_probability", 0.0),
+        },
+    }
+
+    if action_name == "done":
+        return {
+            "ok": True,
+            "used_done": True,
+            "action_record": base_record,
+            "history_payload": {
+                "reasoning": "graph replay accepted",
+                "action": "done",
+                "parameters": {},
+            },
+        }
+
+    if action_name in {"click", "click_input"}:
+        ui_meta = payload.get("ui_meta") if isinstance(payload.get("ui_meta"), dict) else None
+        position = payload.get("position")
+        pending_text = str(payload.get("text", "")) if action_name == "click_input" else ""
+        if action_name == "click_input" and not pending_text:
+            return {"ok": False, "reject_reason": "missing_click_input_text"}
+        click_x: Optional[int] = None
+        click_y: Optional[int] = None
+        current_ui_meta = None
+        guard_info: Dict[str, Any] = {"used_ui_meta": False, "used_position_fallback": False}
+
+        if ui_meta:
+            matched = find_android_point_by_ui_meta(current_hierarchy_xml, ui_meta)
+            if matched and isinstance(matched.get("position"), list) and len(matched["position"]) == 2:
+                click_x = int(matched["position"][0])
+                click_y = int(matched["position"][1])
+                current_ui_meta = matched.get("ui_meta")
+                guard_info["used_ui_meta"] = True
+                guard_info["matched_keys"] = int(matched.get("matched_keys", 0) or 0)
+            else:
+                return {"ok": False, "reject_reason": "ui_meta_not_matched"}
+
+        if click_x is None or click_y is None:
+            if (
+                isinstance(position, list)
+                and len(position) == 2
+                and all(isinstance(v, (int, float)) for v in position)
+            ):
+                click_x = int(round(float(position[0])))
+                click_y = int(round(float(position[1])))
+                guard_info["used_position_fallback"] = True
+                if current_hierarchy_xml:
+                    current_ui_meta = extract_android_ui_meta_by_point(current_hierarchy_xml, click_x, click_y)
+            else:
+                return {"ok": False, "reject_reason": "invalid_click_position"}
+
+        device.click(click_x, click_y)
+        target = str(payload.get("target", ""))
+        base_record.update(
+            {
+                "action": action_name,
+                "target": target,
+                "position": [click_x, click_y],
+                "replay_guard": guard_info,
+            }
+        )
+        if current_ui_meta is not None:
+            base_record["ui_meta"] = current_ui_meta
+
+        if action_name == "click_input":
+            input_ok = device.input_text(pending_text)
+            base_record["text"] = pending_text
+            base_record["input_ok"] = bool(input_ok)
+            history_payload = {
+                "reasoning": "graph replay accepted",
+                "action": "click_input",
+                "parameters": {
+                    "target_element": target,
+                    "text": pending_text,
+                },
+            }
+        else:
+            history_payload = {
+                "reasoning": "graph replay accepted",
+                "action": "click",
+                "parameters": {"target_element": target},
+            }
+        return {
+            "ok": True,
+            "used_done": False,
+            "action_record": base_record,
+            "history_payload": history_payload,
+        }
+
+    if action_name == "input":
+        text = str(payload.get("text", ""))
+        if not text:
+            return {"ok": False, "reject_reason": "missing_input_text"}
+        device.input_text(text)
+        base_record["text"] = text
+        return {
+            "ok": True,
+            "used_done": False,
+            "action_record": base_record,
+            "history_payload": {
+                "reasoning": "graph replay accepted",
+                "action": "input",
+                "parameters": {"text": text},
+            },
+        }
+
+    if action_name == "swipe":
+        direction = str(payload.get("direction", "down")).lower() or "down"
+        device.swipe(direction)
+        base_record["direction"] = direction
+        return {
+            "ok": True,
+            "used_done": False,
+            "action_record": base_record,
+            "history_payload": {
+                "reasoning": "graph replay accepted",
+                "action": "swipe",
+                "parameters": {"direction": direction},
+            },
+        }
+
+    return {"ok": False, "reject_reason": f"unsupported_action:{action_name}"}
+
+
 def execute_task_with_rr(app_name, task_desc, device, data_dir,
                         decider_model="", grounder_model="",
-                        use_qwen3=True, no_compress=False):
-    """Execute task with naive record-first and XML-guarded replay."""
+                        use_qwen3=True, no_compress=False,
+                        template_graph="on", template_graph_dir: Optional[str] = None):
+    """Execute task with graph-first replay (step-wise search) and record current trace."""
     os.makedirs(data_dir, exist_ok=True)
 
     history: List[str] = []
     actions: List[Dict[str, Any]] = []
     step = 0
+
+    graph_enabled = str(template_graph).strip().lower() != "off"
+    graph_runtime_hints: List[Dict[str, Any]] = []
+    graph_error = ""
+    graph_update_summary: Dict[str, Any] = {}
+    resolved_graph_dir = template_graph_dir or os.path.join(os.path.dirname(data_dir), "_template_graph")
+    graph_builder, graph_file, graph_init_error = _init_template_graph_builder(
+        graph_enabled=graph_enabled,
+        graph_dir=resolved_graph_dir,
+        app_name=app_name,
+    )
+    if graph_enabled and graph_builder is None:
+        graph_error = graph_init_error or "unknown init error"
+        logger.warning(f"[GRAPH] Disabled due to initialization failure: {graph_error}")
+    elif graph_builder is not None:
+        logger.info(f"[GRAPH] Enabled incremental template graph: {graph_file}")
 
     task_hash = stable_task_hash(task_desc)
     experience_rr = ExperienceRR(
@@ -1489,41 +1765,32 @@ def execute_task_with_rr(app_name, task_desc, device, data_dir,
         f"task_{task_hash}",
         task_desc=task_desc,
         search_root=os.path.dirname(data_dir),
+        enable_load=False,
     )
-    replay_inspection = experience_rr.inspect_replay_usability()
-    replay_actions = list(experience_rr.actions) if replay_inspection.get("use_replay") else []
-    replay_limit = len(replay_actions)
-    replay_seed_info: Dict[str, Any] = {"copied": False, "seed_dir": None, "file_count": 0, "error": ""}
-    if replay_limit > 0:
-        replay_seed_info = experience_rr.clone_replay_seed(replay_actions)
-        if replay_seed_info.get("copied"):
-            logger.info(
-                f"[REPLAY] Seed cloned to {replay_seed_info.get('seed_dir')} "
-                f"(files={replay_seed_info.get('file_count')})"
-            )
-        elif replay_seed_info.get("error"):
-            logger.warning(f"[REPLAY] Failed to clone replay seed: {replay_seed_info.get('error')}")
-    # Start a fresh trace for current run; keep historical replay trace separate.
-    experience_rr.actions = []
-    replay_idx = 0
-    replay_disabled = replay_limit == 0
-    replay_rejected_count = 0
+    graph_replay_stats: Dict[str, Any] = {
+        "enabled": bool(graph_builder is not None),
+        "mode": GRAPH_REPLAY_SEARCH_MODE,
+        "max_candidates_per_step": GRAPH_REPLAY_MAX_CANDIDATES_PER_STEP,
+        "steps_attempted": 0,
+        "candidate_count": 0,
+        "candidates_tried": 0,
+        "steps_replayed": 0,
+        "actions_replayed": 0,
+        "step_fallback_to_decider": 0,
+        "rejected_reasons": {},
+        "executed_edges": {},
+        "executed_from_nodes": {},
+        "executed_sources": {},
+        "done_by_graph_replay": False,
+    }
     stop_reason: Optional[str] = None
     prev_xml_signature = ""
     no_change_xml_streak = 0
 
-    def disable_replay(reason: str) -> None:
-        nonlocal replay_disabled
-        if not replay_disabled:
-            logger.warning(f"[REPLAY] Switch to model-only mode for remaining steps: {reason}")
-        replay_disabled = True
-
     logger.info(f"[START] Execute task: {task_desc}")
-    logger.info(f"[MODE] Replay candidates: {replay_limit}")
     logger.info(
-        f"[MODE] Replay inspection: use_replay={replay_inspection.get('use_replay')} "
-        f"reason={replay_inspection.get('reason')} stage={replay_inspection.get('stage')} "
-        f"score={replay_inspection.get('score')}"
+        f"[MODE] Graph replay enabled={graph_replay_stats['enabled']} "
+        f"mode={graph_replay_stats['mode']}"
     )
     # target_package = device.app_package_names.get(app_name, app_name)
 
@@ -1574,6 +1841,111 @@ def execute_task_with_rr(app_name, task_desc, device, data_dir,
             experience_rr.record_action(action_record)
             break
 
+        if graph_builder is not None and current_hierarchy_xml:
+            try:
+                current_candidates = graph_builder.infer_current_node(current_hierarchy_xml, top_k=3)
+                best_node_id = current_candidates[0]["node_id"] if current_candidates else None
+                next_candidates = graph_builder.predict_next(best_node_id, top_k=3) if best_node_id else []
+                interruption_info = graph_builder.detect_interruption(current_hierarchy_xml)
+                frontier = graph_builder.suggest_low_confidence_frontier(limit=5)
+                step_hint = {
+                    "step": step,
+                    "xml_file": current_xml_file,
+                    "current_candidates": current_candidates,
+                    "next_candidates": next_candidates,
+                    "interruption": interruption_info,
+                    "low_confidence_frontier": frontier,
+                }
+                graph_runtime_hints.append(step_hint)
+                logger.info(
+                    f"[GRAPH] Step {step} hints: candidates={len(current_candidates)} "
+                    f"next={len(next_candidates)} interruption={interruption_info.get('is_interruption')}"
+                )
+            except Exception as e:
+                logger.warning(f"[GRAPH] Runtime hint failed at step {step}: {e}")
+
+        graph_replay_hit = False
+        if graph_builder is not None and current_hierarchy_xml:
+            graph_replay_stats["steps_attempted"] += 1
+            try:
+                replay_candidates = graph_builder.search_replay_actions(
+                    current_hierarchy_xml=current_hierarchy_xml,
+                    mode=GRAPH_REPLAY_SEARCH_MODE,
+                )
+            except Exception as e:
+                replay_candidates = []
+                logger.warning(f"[GRAPH-REPLAY] candidate search failed at step {step}: {e}")
+
+            if replay_candidates:
+                candidate_limit = min(
+                    len(replay_candidates),
+                    int(GRAPH_REPLAY_MAX_CANDIDATES_PER_STEP),
+                )
+                graph_replay_stats["candidate_count"] += candidate_limit
+                for candidate in replay_candidates[:candidate_limit]:
+                    graph_replay_stats["candidates_tried"] += 1
+                    exec_res = try_execute_graph_replay_candidate(
+                        device=device,
+                        candidate=candidate,
+                        step=step,
+                        screenshot_file=screenshot_file,
+                        current_xml_file=current_xml_file,
+                        current_hierarchy_xml=current_hierarchy_xml,
+                    )
+                    if not exec_res.get("ok"):
+                        reason = str(exec_res.get("reject_reason", "unknown_reject"))
+                        graph_replay_stats["rejected_reasons"][reason] = (
+                            int(graph_replay_stats["rejected_reasons"].get(reason, 0) or 0) + 1
+                        )
+                        continue
+
+                    action_record = exec_res["action_record"]
+                    actions.append(action_record)
+                    experience_rr.record_action(action_record)
+                    graph_replay_stats["steps_replayed"] += 1
+                    graph_replay_stats["actions_replayed"] += 1
+                    edge_id = str(candidate.get("edge_id", ""))
+                    from_node = str(candidate.get("node_id", ""))
+                    src = str(candidate.get("source", ""))
+                    if edge_id:
+                        graph_replay_stats["executed_edges"][edge_id] = (
+                            int(graph_replay_stats["executed_edges"].get(edge_id, 0) or 0) + 1
+                        )
+                    if from_node:
+                        graph_replay_stats["executed_from_nodes"][from_node] = (
+                            int(graph_replay_stats["executed_from_nodes"].get(from_node, 0) or 0) + 1
+                        )
+                    if src:
+                        graph_replay_stats["executed_sources"][src] = (
+                            int(graph_replay_stats["executed_sources"].get(src, 0) or 0) + 1
+                        )
+                    history_payload = exec_res.get("history_payload")
+                    if history_payload:
+                        history.append(json.dumps(history_payload, ensure_ascii=False))
+
+                    if exec_res.get("used_done"):
+                        stop_reason = "graph_replay_done"
+                        graph_replay_stats["done_by_graph_replay"] = True
+                        logger.info(f"[OK] Task done by graph replay at step {step}")
+                        graph_replay_hit = True
+                        break
+
+                    graph_replay_hit = True
+                    logger.info(
+                        f"[GRAPH-REPLAY] accepted step={step} action={action_record.get('action')} "
+                        f"edge={candidate.get('edge_id')} from={candidate.get('node_id')}"
+                    )
+                    time.sleep(1)
+                    break
+
+        if graph_replay_hit:
+            if stop_reason == "graph_replay_done":
+                break
+            continue
+        if graph_builder is not None:
+            graph_replay_stats["step_fallback_to_decider"] += 1
+            logger.info(f"[GRAPH-REPLAY] no accepted candidate at step {step}, fallback to decider")
+
         screenshot_b64, orig_width, orig_height = get_screenshot_b64(
             device=None,
             compress=(not no_compress),
@@ -1587,164 +1959,6 @@ def execute_task_with_rr(app_name, task_desc, device, data_dir,
             scale_factor = 1.0
         else:
             scale_factor = 1.0 / SCREENSHOT_FACTOR
-
-        should_replay = (not replay_disabled) and (replay_idx < replay_limit)
-        if should_replay:
-            replayed_action = replay_actions[replay_idx] if replay_idx < len(replay_actions) else None
-            if replayed_action:
-                action_name = replayed_action.get("action")
-                recorded_xml_path = experience_rr.get_action_xml_path(replayed_action)
-                recorded_screenshot_path = experience_rr.get_action_screenshot_path(replayed_action)
-                guard = evaluate_replay_xml_match(
-                    current_hierarchy_xml=current_hierarchy_xml,
-                    recorded_xml_path=recorded_xml_path,
-                )
-                if guard["allow_replay"]:
-                    logger.info(
-                        f"[REPLAY] Guard accepted idx={replay_idx + 1}, action={action_name}, metrics={guard.get('metrics', {})}"
-                    )
-                    replay_action = dict(replayed_action)
-                    replay_action["step"] = step
-                    replay_action["replayed"] = True
-                    replay_action["replay_from_index"] = replay_idx
-                    replay_action["screenshot_file"] = screenshot_file
-                    replay_action["xml_file"] = current_xml_file
-                    replay_action["replay_guard"] = guard
-
-                    if action_name == "done":
-                        actions.append(replay_action)
-                        experience_rr.record_action(replay_action)
-                        stop_reason = "replay_done"
-                        logger.info("[OK] Task done by replay")
-                        break
-
-                    if action_name in {"click", "click_input"}:
-                        position = replayed_action.get("position", [])
-                        click_payload_valid = (
-                            isinstance(position, list)
-                            and len(position) == 2
-                            and all(isinstance(v, (int, float)) for v in position)
-                        )
-                        if not click_payload_valid:
-                            logger.warning("[REPLAY] click missing valid position")
-                            disable_replay("invalid replay click payload")
-                        else:
-                            x = int(round(position[0]))
-                            y = int(round(position[1]))
-                            # Re-scale replay click when recorded/current resolutions differ.
-                            if recorded_screenshot_path and os.path.exists(recorded_screenshot_path):
-                                try:
-                                    with Image.open(recorded_screenshot_path) as rec_img:
-                                        rec_w, rec_h = rec_img.size
-                                    if rec_w > 0 and rec_h > 0 and orig_width and orig_height:
-                                        x = int(round(float(position[0]) / float(rec_w) * float(orig_width)))
-                                        y = int(round(float(position[1]) / float(rec_h) * float(orig_height)))
-                                except Exception as e:
-                                    logger.warning(f"[REPLAY] Failed to rescale replay click: {e}")
-
-                            expected_ui_meta = replayed_action.get("ui_meta")
-                            if expected_ui_meta is None and recorded_xml_path and os.path.exists(recorded_xml_path):
-                                try:
-                                    with open(recorded_xml_path, "r", encoding="utf-8") as f:
-                                        recorded_xml = f.read()
-                                    expected_ui_meta = extract_android_ui_meta_by_point(
-                                        recorded_xml,
-                                        int(round(position[0])),
-                                        int(round(position[1])),
-                                    )
-                                except Exception as e:
-                                    logger.warning(f"[REPLAY] Failed to load expected UI meta: {e}")
-
-                            current_ui_meta = None
-                            if current_hierarchy_xml:
-                                current_ui_meta = extract_android_ui_meta_by_point(current_hierarchy_xml, x, y)
-                            if expected_ui_meta is not None and not strict_ui_meta_equal(expected_ui_meta, current_ui_meta):
-                                replay_rejected_count += 1
-                                disable_replay(f"xml ui meta mismatch at step {replay_idx + 1}")
-                                logger.warning(
-                                    "[REPLAY] XML UI metadata mismatch, fallback to decider. "
-                                    f"expected={expected_ui_meta}, current={current_ui_meta}"
-                                )
-                            else:
-                                device.click(x, y)
-                                target = replayed_action.get("target", "")
-                                if action_name == "click_input":
-                                    text = str(replayed_action.get("text", ""))
-                                    if not text:
-                                        logger.warning("[REPLAY] click_input missing text")
-                                        disable_replay("invalid replay click_input payload")
-                                        continue
-                                    device.input_text(text)
-                                    history_payload = {
-                                        "reasoning": "replay accepted",
-                                        "action": "click_input",
-                                        "parameters": {
-                                            "target_element": target,
-                                            "text": text,
-                                        },
-                                    }
-                                else:
-                                    history_payload = {
-                                        "reasoning": "replay accepted",
-                                        "action": "click",
-                                        "parameters": {"target_element": target},
-                                    }
-
-                                actions.append(replay_action)
-                                experience_rr.record_action(replay_action)
-                                replay_idx += 1
-                                history.append(json.dumps(history_payload, ensure_ascii=False))
-                                time.sleep(1)
-                                continue
-                    elif action_name == "input":
-                        text = str(replayed_action.get("text", ""))
-                        if text:
-                            device.input_text(text)
-                            actions.append(replay_action)
-                            experience_rr.record_action(replay_action)
-                            replay_idx += 1
-                            history.append(
-                                json.dumps(
-                                    {
-                                        "reasoning": "replay accepted",
-                                        "action": "input",
-                                        "parameters": {"text": text},
-                                    },
-                                    ensure_ascii=False,
-                                )
-                            )
-                            time.sleep(1)
-                            continue
-                        logger.warning("[REPLAY] input missing text")
-                        disable_replay("invalid replay input payload")
-                    elif action_name == "swipe":
-                        direction = str(replayed_action.get("direction", "down")).lower()
-                        device.swipe(direction)
-                        replay_action["direction"] = direction
-                        actions.append(replay_action)
-                        experience_rr.record_action(replay_action)
-                        replay_idx += 1
-                        history.append(
-                            json.dumps(
-                                {
-                                    "reasoning": "replay accepted",
-                                    "action": "swipe",
-                                    "parameters": {"direction": direction},
-                                },
-                                ensure_ascii=False,
-                            )
-                        )
-                        time.sleep(1)
-                        continue
-                    else:
-                        logger.warning(f"[REPLAY] Unsupported replay action: {action_name}")
-                        disable_replay("unsupported replay action")
-                else:
-                    replay_rejected_count += 1
-                    disable_replay(f"guard rejected step {replay_idx + 1}")
-                    logger.warning(
-                        f"[REPLAY] Guard rejected idx={replay_idx + 1}, reason={guard.get('reason')}, metrics={guard.get('metrics', {})}"
-                    )
 
         logger.info("[THINK] Calling decider model...")
         decider_response = None
@@ -1990,20 +2204,43 @@ def execute_task_with_rr(app_name, task_desc, device, data_dir,
     if stop_reason is None and step >= MAX_STEPS:
         stop_reason = "max_steps_reached"
 
+    if graph_builder is not None:
+        try:
+            graph_update_summary = graph_builder.update_from_run(
+                data_dir=data_dir,
+                actions=actions,
+                task_desc=task_desc,
+                task_hash=task_hash,
+                stop_reason=stop_reason,
+            )
+            graph_file = graph_update_summary.get("graph_file", graph_file)
+            logger.info(
+                f"[GRAPH] Updated graph: {graph_file} "
+                f"(nodes+={graph_update_summary.get('nodes_created', 0)}, "
+                f"edges+={graph_update_summary.get('edges_created', 0)})"
+            )
+        except Exception as e:
+            graph_error = f"update failed: {e}"
+            logger.warning(f"[GRAPH] Failed to update graph: {graph_error}")
+
+    template_graph_payload: Dict[str, Any] = {
+        "enabled": bool(graph_builder is not None),
+        "graph_file": graph_file,
+        "update_summary": graph_update_summary,
+        "runtime_hints": graph_runtime_hints,
+    }
+    if graph_error:
+        template_graph_payload["error"] = graph_error
+
     result = {
         "app_name": app_name,
         "task_description": task_desc,
         "mode": "auto",
-        "replay_used": replay_limit > 0,
-        "replay_inspection": replay_inspection,
-        "replay_seed": replay_seed_info,
-        "replay_count": replay_limit,
-        "replay_executed_count": replay_idx,
-        "replay_rejected_count": replay_rejected_count,
-        "replay_disabled": replay_disabled,
+        "graph_replay": graph_replay_stats,
         "stop_reason": stop_reason,
         "action_count": len(actions),
         "actions": actions,
+        "template_graph": template_graph_payload,
     }
 
     result_path = os.path.join(data_dir, "actions_record.json")
@@ -2055,7 +2292,13 @@ def main():
     parser.add_argument("--grounder_model", type=str, default="",
                        help="Grounder模型名称")
     
+    parser.add_argument("--template_graph", choices=["on", "off"], default="on",
+                       help="Enable incremental template graph builder (default: on)")
+    parser.add_argument("--template_graph_dir", type=str, default=None,
+                       help="Template graph storage directory (default: <data_dir>/_template_graph)")
+
     args = parser.parse_args()
+    resolved_template_graph_dir = args.template_graph_dir or os.path.join(args.data_dir, "_template_graph")
     
     # 应用包名映射
     app_package_names = {
@@ -2149,7 +2392,9 @@ def main():
                 args.decider_model,
                 args.grounder_model,
                 use_qwen3=args.use_qwen3,
-                no_compress=args.no_compress
+                no_compress=args.no_compress,
+                template_graph=args.template_graph,
+                template_graph_dir=resolved_template_graph_dir,
             )
             
             # 停止应用
@@ -2166,4 +2411,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

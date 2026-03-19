@@ -46,6 +46,9 @@ MAX_STEPS = 15  # 最大步骤数
 SCREENSHOT_FACTOR = 0.5  # 截图压缩比例
 DECIDER_PARSE_MAX_RETRIES = 3  # Decider解析失败后重试次数
 DEVICE_WAIT_TIME = 0.5  # 设备动作后的基础等待时间
+TOCTOU_IMAGE_SIM_MIN = 0.95  # strict image similarity guard before execute
+TOCTOU_MAX_RETRY_PER_STEP = 2  # retry decider in same step when TOCTOU fails
+TOCTOU_HASH_SIZE = 16  # aHash size used by TOCTOU image comparison
 
 # Replay decision thresholds (auto-inspect whether past trace should be reused)
 REPLAY_USE_MIN_SCORE_BY_STAGE = {
@@ -804,6 +807,103 @@ def get_screenshot_b64(device=None, compress=True, screenshot_path: Optional[str
     except Exception as e:
         logger.error(f"[ERROR] Base64转换失败: {e}")
         return None, None, None
+
+
+def _image_ahash_bits(image_path: str, hash_size: int = TOCTOU_HASH_SIZE) -> Optional[List[int]]:
+    """Compute aHash bits for one image."""
+    if not image_path or not os.path.exists(image_path):
+        return None
+    try:
+        with Image.open(image_path) as img:
+            gray = img.convert("L").resize((hash_size, hash_size), Image.Resampling.LANCZOS)
+            pixels = list(gray.getdata())
+    except Exception as e:
+        logger.warning(f"[TOCTOU] Failed to load image for hash ({image_path}): {e}")
+        return None
+    if not pixels:
+        return None
+    avg = float(sum(int(p) for p in pixels)) / max(len(pixels), 1)
+    return [1 if int(p) >= avg else 0 for p in pixels]
+
+
+def compute_image_ahash_similarity(
+    image_path_a: str,
+    image_path_b: str,
+    hash_size: int = TOCTOU_HASH_SIZE,
+) -> Optional[float]:
+    """Compute aHash similarity in [0,1], higher means more similar."""
+    bits_a = _image_ahash_bits(image_path_a, hash_size=hash_size)
+    bits_b = _image_ahash_bits(image_path_b, hash_size=hash_size)
+    if bits_a is None or bits_b is None:
+        return None
+    if len(bits_a) != len(bits_b) or not bits_a:
+        return None
+    hamming = sum(1 for a, b in zip(bits_a, bits_b) if a != b)
+    return 1.0 - (hamming / len(bits_a))
+
+
+def evaluate_toctou_pre_action(
+    device: Any,
+    data_dir: str,
+    step: int,
+    attempt: int,
+    reference_screenshot_path: Optional[str],
+) -> Dict[str, Any]:
+    """
+    Before executing action, capture one fresh screenshot and compare with model reference.
+    """
+    result: Dict[str, Any] = {
+        "allow": False,
+        "score": 0.0,
+        "threshold": TOCTOU_IMAGE_SIM_MIN,
+        "reason": "",
+        "attempt": int(attempt),
+        "check_image_file": "",
+        "check_image_path": None,
+    }
+    if not reference_screenshot_path or not os.path.exists(reference_screenshot_path):
+        result["reason"] = "reference screenshot missing"
+        return result
+
+    check_image_file = f"{step:02d}_toctou_check_a{int(attempt)}.jpg"
+    check_image_path = os.path.join(data_dir, check_image_file)
+    result["check_image_file"] = check_image_file
+    result["check_image_path"] = check_image_path
+
+    try:
+        raw_path = device.screenshot()
+        if raw_path and os.path.exists(raw_path):
+            if os.path.abspath(raw_path) != os.path.abspath(check_image_path):
+                shutil.copy(raw_path, check_image_path)
+        elif not os.path.exists(check_image_path):
+            result["reason"] = "capture check screenshot failed"
+            return result
+    except Exception as e:
+        result["reason"] = f"capture check screenshot failed: {e}"
+        return result
+
+    if not os.path.exists(check_image_path):
+        result["reason"] = "check screenshot missing"
+        return result
+
+    score = compute_image_ahash_similarity(
+        reference_screenshot_path,
+        check_image_path,
+        hash_size=TOCTOU_HASH_SIZE,
+    )
+    if score is None:
+        result["reason"] = "image similarity unavailable"
+        return result
+
+    result["score"] = round(float(score), 4)
+    if score >= TOCTOU_IMAGE_SIM_MIN:
+        result["allow"] = True
+        result["reason"] = "image matched"
+    else:
+        result["reason"] = (
+            f"image drift ({score:.4f} < {TOCTOU_IMAGE_SIM_MIN:.4f})"
+        )
+    return result
 
 
 def _try_load_json_obj(text: str) -> Optional[Dict[str, Any]]:
@@ -1946,152 +2046,80 @@ def execute_task_with_rr(app_name, task_desc, device, data_dir,
             graph_replay_stats["step_fallback_to_decider"] += 1
             logger.info(f"[GRAPH-REPLAY] no accepted candidate at step {step}, fallback to decider")
 
-        screenshot_b64, orig_width, orig_height = get_screenshot_b64(
-            device=None,
-            compress=(not no_compress),
-            screenshot_path=current_screenshot_path,
-        )
-        if not screenshot_b64:
-            logger.error("[ERROR] Screenshot encode failed, abort task")
-            break
+        decider_screenshot_file = screenshot_file
+        retry_in_step = 0
+        decider_step_completed = False
+        abort_current_task = False
 
-        if no_compress:
-            scale_factor = 1.0
-        else:
-            scale_factor = 1.0 / SCREENSHOT_FACTOR
-
-        logger.info("[THINK] Calling decider model...")
-        decider_response = None
-        decider_response_str = None
-        for parse_try in range(1, DECIDER_PARSE_MAX_RETRIES + 1):
-            decider_response_str = get_decider_action(task_desc, history, screenshot_b64, decider_model)
-            if not decider_response_str:
-                logger.warning(
-                    f"[WARNING] Decider returned empty response (attempt {parse_try}/{DECIDER_PARSE_MAX_RETRIES})"
-                )
-                continue
-
-            logger.info(
-                f"[RESPONSE] Decider (attempt {parse_try}/{DECIDER_PARSE_MAX_RETRIES}): {decider_response_str[:300]}"
+        while retry_in_step <= TOCTOU_MAX_RETRY_PER_STEP:
+            screenshot_b64, orig_width, orig_height = get_screenshot_b64(
+                device=None,
+                compress=(not no_compress),
+                screenshot_path=current_screenshot_path,
             )
-            decider_response = parse_json_response(decider_response_str)
-            if decider_response:
+            if not screenshot_b64:
+                logger.error("[ERROR] Screenshot encode failed, abort task")
+                abort_current_task = True
                 break
-            logger.warning(
-                f"[WARNING] Failed to parse decider response (attempt {parse_try}/{DECIDER_PARSE_MAX_RETRIES})"
-            )
 
-        if not decider_response:
-            logger.error(f"[ERROR] Failed to parse decider response after {DECIDER_PARSE_MAX_RETRIES} attempts")
-            break
-
-        action_name = decider_response.get("action", "done")
-        reasoning = decider_response.get("reasoning", "")
-        parameters = decider_response.get("parameters", {})
-
-        logger.info(f"[REASON] {reasoning}")
-        logger.info(f"[ACTION] {action_name}")
-
-        if action_name == "done":
-            action_record = {
-                "step": step,
-                "action": "done",
-                "screenshot_file": screenshot_file,
-                "xml_file": current_xml_file,
-            }
-            actions.append(action_record)
-            experience_rr.record_action(action_record)
-            stop_reason = "done"
-            logger.info("[OK] Task completed")
-            break
-
-        if action_name == "click":
-            target = parameters.get("target_element", "")
-            logger.info(f"[TARGET] {target}")
-            grounder_response_str = get_grounder_coords(
-                target,
-                screenshot_b64,
-                grounder_model,
-                use_qwen3=use_qwen3,
-            )
-            logger.info(
-                f"[DEBUG] Grounder raw: {grounder_response_str[:200] if grounder_response_str else 'None'}"
-            )
-
-            if grounder_response_str:
-                grounder_response = parse_json_response(grounder_response_str)
-                if grounder_response and "bbox" in grounder_response:
-                    bbox = grounder_response["bbox"]
-                    if use_qwen3:
-                        bbox_abs = convert_qwen3_coordinates_to_absolute(
-                            bbox,
-                            orig_width,
-                            orig_height,
-                            is_bbox=True,
-                        )
-                        x1, y1, x2, y2 = [int(v) for v in bbox_abs]
-                    else:
-                        x1 = int(float(bbox[0]) * scale_factor)
-                        y1 = int(float(bbox[1]) * scale_factor)
-                        x2 = int(float(bbox[2]) * scale_factor)
-                        y2 = int(float(bbox[3]) * scale_factor)
-
-                    x = int((x1 + x2) / 2)
-                    y = int((y1 + y2) / 2)
-
-                    device.click(x, y)
-
-                    try:
-                        visualize_output = os.path.join(data_dir, f"{step:02d}_click_visualization.jpg")
-                        visualize_click(current_screenshot_path, x, y, target, visualize_output)
-                        bounds_path = os.path.join(data_dir, f"{step}_bounds.jpg")
-                        visualize_model_bbox(
-                            current_screenshot_path,
-                            [x1, y1, x2, y2],
-                            bounds_path,
-                            label=target,
-                        )
-                    except Exception as e:
-                        logger.warning(f"[WARNING] Click visualization failed: {e}")
-
-                    current_ui_meta = None
-                    if current_hierarchy_xml:
-                        current_ui_meta = extract_android_ui_meta_by_bbox(
-                            current_hierarchy_xml,
-                            [x1, y1, x2, y2],
-                        )
-
-                    action_record = {
-                        "step": step,
-                        "action": "click",
-                        "position": [x, y],
-                        "target": target,
-                        "bbox": [x1, y1, x2, y2],
-                        "bbox_compressed": bbox,
-                        "scale_factor": scale_factor,
-                        "screenshot_file": screenshot_file,
-                        "xml_file": current_xml_file,
-                    }
-                    if use_qwen3:
-                        action_record["bbox_norm_0_1000"] = bbox
-                    if current_ui_meta is not None:
-                        action_record["ui_meta"] = current_ui_meta
-                    actions.append(action_record)
-                    experience_rr.record_action(action_record)
-                else:
-                    logger.error(f"[ERROR] Invalid grounder response: {grounder_response}")
+            if no_compress:
+                scale_factor = 1.0
             else:
-                logger.error("[ERROR] Grounder returned empty response")
+                scale_factor = 1.0 / SCREENSHOT_FACTOR
 
-        elif action_name == "click_input":
-            target = parameters.get("target_element", "")
-            text = str(parameters.get("text", ""))
-            logger.info(f"[TARGET] {target}")
-            logger.info(f"[INPUT-TEXT] {text}")
+            logger.info("[THINK] Calling decider model...")
+            decider_response = None
+            decider_response_str = None
+            for parse_try in range(1, DECIDER_PARSE_MAX_RETRIES + 1):
+                decider_response_str = get_decider_action(task_desc, history, screenshot_b64, decider_model)
+                if not decider_response_str:
+                    logger.warning(
+                        f"[WARNING] Decider returned empty response (attempt {parse_try}/{DECIDER_PARSE_MAX_RETRIES})"
+                    )
+                    continue
 
-            if not target:
-                logger.error("[ERROR] click_input 缺少 target_element")
-            else:
+                logger.info(
+                    f"[RESPONSE] Decider (attempt {parse_try}/{DECIDER_PARSE_MAX_RETRIES}): {decider_response_str[:300]}"
+                )
+                decider_response = parse_json_response(decider_response_str)
+                if decider_response:
+                    break
+                logger.warning(
+                    f"[WARNING] Failed to parse decider response (attempt {parse_try}/{DECIDER_PARSE_MAX_RETRIES})"
+                )
+
+            if not decider_response:
+                logger.error(f"[ERROR] Failed to parse decider response after {DECIDER_PARSE_MAX_RETRIES} attempts")
+                abort_current_task = True
+                break
+
+            action_name = decider_response.get("action", "done")
+            reasoning = decider_response.get("reasoning", "")
+            parameters = decider_response.get("parameters", {})
+
+            logger.info(f"[REASON] {reasoning}")
+            logger.info(f"[ACTION] {action_name}")
+
+            toctou_guard: Optional[Dict[str, Any]] = None
+            need_toctou_retry = False
+
+            if action_name == "done":
+                action_record = {
+                    "step": step,
+                    "action": "done",
+                    "screenshot_file": decider_screenshot_file,
+                    "xml_file": current_xml_file,
+                }
+                actions.append(action_record)
+                experience_rr.record_action(action_record)
+                stop_reason = "done"
+                logger.info("[OK] Task completed")
+                decider_step_completed = True
+                break
+
+            if action_name == "click":
+                target = parameters.get("target_element", "")
+                logger.info(f"[TARGET] {target}")
                 grounder_response_str = get_grounder_coords(
                     target,
                     screenshot_b64,
@@ -2123,83 +2151,289 @@ def execute_task_with_rr(app_name, task_desc, device, data_dir,
                         x = int((x1 + x2) / 2)
                         y = int((y1 + y2) / 2)
 
-                        device.click(x, y)
-                        input_ok = device.input_text(text)
-                        if not input_ok:
-                            logger.warning("[WARNING] click_input: 点击后输入失败")
+                        toctou_guard = evaluate_toctou_pre_action(
+                            device=device,
+                            data_dir=data_dir,
+                            step=step,
+                            attempt=retry_in_step + 1,
+                            reference_screenshot_path=current_screenshot_path,
+                        )
+                        guard_score = float(toctou_guard.get("score", 0.0) or 0.0)
+                        logger.info(
+                            f"[TOCTOU] step={step} attempt={toctou_guard.get('attempt')} "
+                            f"score={guard_score:.4f} threshold={TOCTOU_IMAGE_SIM_MIN:.4f} "
+                            f"allow={bool(toctou_guard.get('allow'))} reason={toctou_guard.get('reason')}"
+                        )
+                        if not toctou_guard.get("allow"):
+                            need_toctou_retry = True
+                        else:
+                            device.click(x, y)
 
-                        try:
-                            visualize_output = os.path.join(data_dir, f"{step:02d}_click_visualization.jpg")
-                            visualize_click(current_screenshot_path, x, y, target, visualize_output)
-                            bounds_path = os.path.join(data_dir, f"{step}_bounds.jpg")
-                            visualize_model_bbox(
-                                current_screenshot_path,
-                                [x1, y1, x2, y2],
-                                bounds_path,
-                                label=target,
-                            )
-                        except Exception as e:
-                            logger.warning(f"[WARNING] Click visualization failed: {e}")
+                            try:
+                                visualize_output = os.path.join(data_dir, f"{step:02d}_click_visualization.jpg")
+                                visualize_click(current_screenshot_path, x, y, target, visualize_output)
+                                bounds_path = os.path.join(data_dir, f"{step}_bounds.jpg")
+                                visualize_model_bbox(
+                                    current_screenshot_path,
+                                    [x1, y1, x2, y2],
+                                    bounds_path,
+                                    label=target,
+                                )
+                            except Exception as e:
+                                logger.warning(f"[WARNING] Click visualization failed: {e}")
 
-                        current_ui_meta = None
-                        if current_hierarchy_xml:
-                            current_ui_meta = extract_android_ui_meta_by_bbox(
-                                current_hierarchy_xml,
-                                [x1, y1, x2, y2],
-                            )
+                            current_ui_meta = None
+                            if current_hierarchy_xml:
+                                current_ui_meta = extract_android_ui_meta_by_bbox(
+                                    current_hierarchy_xml,
+                                    [x1, y1, x2, y2],
+                                )
 
-                        action_record = {
-                            "step": step,
-                            "action": "click_input",
-                            "position": [x, y],
-                            "target": target,
-                            "text": text,
-                            "input_ok": bool(input_ok),
-                            "bbox": [x1, y1, x2, y2],
-                            "bbox_compressed": bbox,
-                            "scale_factor": scale_factor,
-                            "screenshot_file": screenshot_file,
-                            "xml_file": current_xml_file,
-                        }
-                        if use_qwen3:
-                            action_record["bbox_norm_0_1000"] = bbox
-                        if current_ui_meta is not None:
-                            action_record["ui_meta"] = current_ui_meta
-                        actions.append(action_record)
-                        experience_rr.record_action(action_record)
+                            action_record = {
+                                "step": step,
+                                "action": "click",
+                                "position": [x, y],
+                                "target": target,
+                                "bbox": [x1, y1, x2, y2],
+                                "bbox_compressed": bbox,
+                                "scale_factor": scale_factor,
+                                "screenshot_file": decider_screenshot_file,
+                                "xml_file": current_xml_file,
+                                "toctou_check": {
+                                    "score": guard_score,
+                                    "threshold": float(toctou_guard.get("threshold", TOCTOU_IMAGE_SIM_MIN) or TOCTOU_IMAGE_SIM_MIN),
+                                    "attempt": int(toctou_guard.get("attempt", retry_in_step + 1) or (retry_in_step + 1)),
+                                    "check_image_file": toctou_guard.get("check_image_file", ""),
+                                },
+                            }
+                            if use_qwen3:
+                                action_record["bbox_norm_0_1000"] = bbox
+                            if current_ui_meta is not None:
+                                action_record["ui_meta"] = current_ui_meta
+                            actions.append(action_record)
+                            experience_rr.record_action(action_record)
                     else:
                         logger.error(f"[ERROR] Invalid grounder response: {grounder_response}")
                 else:
                     logger.error("[ERROR] Grounder returned empty response")
 
-        elif action_name == "input":
-            text = parameters.get("text", "")
-            device.input_text(text)
-            action_record = {
-                "step": step,
-                "action": "input",
-                "text": text,
-                "screenshot_file": screenshot_file,
-                "xml_file": current_xml_file,
-            }
-            actions.append(action_record)
-            experience_rr.record_action(action_record)
+            elif action_name == "click_input":
+                target = parameters.get("target_element", "")
+                text = str(parameters.get("text", ""))
+                logger.info(f"[TARGET] {target}")
+                logger.info(f"[INPUT-TEXT] {text}")
 
-        elif action_name == "swipe":
-            direction = str(parameters.get("direction", "down")).lower()
-            device.swipe(direction)
-            action_record = {
-                "step": step,
-                "action": "swipe",
-                "direction": direction,
-                "screenshot_file": screenshot_file,
-                "xml_file": current_xml_file,
-            }
-            actions.append(action_record)
-            experience_rr.record_action(action_record)
+                if not target:
+                    logger.error("[ERROR] click_input 缺少 target_element")
+                else:
+                    grounder_response_str = get_grounder_coords(
+                        target,
+                        screenshot_b64,
+                        grounder_model,
+                        use_qwen3=use_qwen3,
+                    )
+                    logger.info(
+                        f"[DEBUG] Grounder raw: {grounder_response_str[:200] if grounder_response_str else 'None'}"
+                    )
 
-        history.append(json.dumps(decider_response, ensure_ascii=False))
-        time.sleep(1)
+                    if grounder_response_str:
+                        grounder_response = parse_json_response(grounder_response_str)
+                        if grounder_response and "bbox" in grounder_response:
+                            bbox = grounder_response["bbox"]
+                            if use_qwen3:
+                                bbox_abs = convert_qwen3_coordinates_to_absolute(
+                                    bbox,
+                                    orig_width,
+                                    orig_height,
+                                    is_bbox=True,
+                                )
+                                x1, y1, x2, y2 = [int(v) for v in bbox_abs]
+                            else:
+                                x1 = int(float(bbox[0]) * scale_factor)
+                                y1 = int(float(bbox[1]) * scale_factor)
+                                x2 = int(float(bbox[2]) * scale_factor)
+                                y2 = int(float(bbox[3]) * scale_factor)
+
+                            x = int((x1 + x2) / 2)
+                            y = int((y1 + y2) / 2)
+
+                            toctou_guard = evaluate_toctou_pre_action(
+                                device=device,
+                                data_dir=data_dir,
+                                step=step,
+                                attempt=retry_in_step + 1,
+                                reference_screenshot_path=current_screenshot_path,
+                            )
+                            guard_score = float(toctou_guard.get("score", 0.0) or 0.0)
+                            logger.info(
+                                f"[TOCTOU] step={step} attempt={toctou_guard.get('attempt')} "
+                                f"score={guard_score:.4f} threshold={TOCTOU_IMAGE_SIM_MIN:.4f} "
+                                f"allow={bool(toctou_guard.get('allow'))} reason={toctou_guard.get('reason')}"
+                            )
+                            if not toctou_guard.get("allow"):
+                                need_toctou_retry = True
+                            else:
+                                device.click(x, y)
+                                input_ok = device.input_text(text)
+                                if not input_ok:
+                                    logger.warning("[WARNING] click_input: 点击后输入失败")
+
+                                try:
+                                    visualize_output = os.path.join(data_dir, f"{step:02d}_click_visualization.jpg")
+                                    visualize_click(current_screenshot_path, x, y, target, visualize_output)
+                                    bounds_path = os.path.join(data_dir, f"{step}_bounds.jpg")
+                                    visualize_model_bbox(
+                                        current_screenshot_path,
+                                        [x1, y1, x2, y2],
+                                        bounds_path,
+                                        label=target,
+                                    )
+                                except Exception as e:
+                                    logger.warning(f"[WARNING] Click visualization failed: {e}")
+
+                                current_ui_meta = None
+                                if current_hierarchy_xml:
+                                    current_ui_meta = extract_android_ui_meta_by_bbox(
+                                        current_hierarchy_xml,
+                                        [x1, y1, x2, y2],
+                                    )
+
+                                action_record = {
+                                    "step": step,
+                                    "action": "click_input",
+                                    "position": [x, y],
+                                    "target": target,
+                                    "text": text,
+                                    "input_ok": bool(input_ok),
+                                    "bbox": [x1, y1, x2, y2],
+                                    "bbox_compressed": bbox,
+                                    "scale_factor": scale_factor,
+                                    "screenshot_file": decider_screenshot_file,
+                                    "xml_file": current_xml_file,
+                                    "toctou_check": {
+                                        "score": guard_score,
+                                        "threshold": float(toctou_guard.get("threshold", TOCTOU_IMAGE_SIM_MIN) or TOCTOU_IMAGE_SIM_MIN),
+                                        "attempt": int(toctou_guard.get("attempt", retry_in_step + 1) or (retry_in_step + 1)),
+                                        "check_image_file": toctou_guard.get("check_image_file", ""),
+                                    },
+                                }
+                                if use_qwen3:
+                                    action_record["bbox_norm_0_1000"] = bbox
+                                if current_ui_meta is not None:
+                                    action_record["ui_meta"] = current_ui_meta
+                                actions.append(action_record)
+                                experience_rr.record_action(action_record)
+                        else:
+                            logger.error(f"[ERROR] Invalid grounder response: {grounder_response}")
+                    else:
+                        logger.error("[ERROR] Grounder returned empty response")
+
+            elif action_name == "input":
+                text = parameters.get("text", "")
+                toctou_guard = evaluate_toctou_pre_action(
+                    device=device,
+                    data_dir=data_dir,
+                    step=step,
+                    attempt=retry_in_step + 1,
+                    reference_screenshot_path=current_screenshot_path,
+                )
+                guard_score = float(toctou_guard.get("score", 0.0) or 0.0)
+                logger.info(
+                    f"[TOCTOU] step={step} attempt={toctou_guard.get('attempt')} "
+                    f"score={guard_score:.4f} threshold={TOCTOU_IMAGE_SIM_MIN:.4f} "
+                    f"allow={bool(toctou_guard.get('allow'))} reason={toctou_guard.get('reason')}"
+                )
+                if not toctou_guard.get("allow"):
+                    need_toctou_retry = True
+                else:
+                    device.input_text(text)
+                    action_record = {
+                        "step": step,
+                        "action": "input",
+                        "text": text,
+                        "screenshot_file": decider_screenshot_file,
+                        "xml_file": current_xml_file,
+                        "toctou_check": {
+                            "score": guard_score,
+                            "threshold": float(toctou_guard.get("threshold", TOCTOU_IMAGE_SIM_MIN) or TOCTOU_IMAGE_SIM_MIN),
+                            "attempt": int(toctou_guard.get("attempt", retry_in_step + 1) or (retry_in_step + 1)),
+                            "check_image_file": toctou_guard.get("check_image_file", ""),
+                        },
+                    }
+                    actions.append(action_record)
+                    experience_rr.record_action(action_record)
+
+            elif action_name == "swipe":
+                direction = str(parameters.get("direction", "down")).lower()
+                toctou_guard = evaluate_toctou_pre_action(
+                    device=device,
+                    data_dir=data_dir,
+                    step=step,
+                    attempt=retry_in_step + 1,
+                    reference_screenshot_path=current_screenshot_path,
+                )
+                guard_score = float(toctou_guard.get("score", 0.0) or 0.0)
+                logger.info(
+                    f"[TOCTOU] step={step} attempt={toctou_guard.get('attempt')} "
+                    f"score={guard_score:.4f} threshold={TOCTOU_IMAGE_SIM_MIN:.4f} "
+                    f"allow={bool(toctou_guard.get('allow'))} reason={toctou_guard.get('reason')}"
+                )
+                if not toctou_guard.get("allow"):
+                    need_toctou_retry = True
+                else:
+                    device.swipe(direction)
+                    action_record = {
+                        "step": step,
+                        "action": "swipe",
+                        "direction": direction,
+                        "screenshot_file": decider_screenshot_file,
+                        "xml_file": current_xml_file,
+                        "toctou_check": {
+                            "score": guard_score,
+                            "threshold": float(toctou_guard.get("threshold", TOCTOU_IMAGE_SIM_MIN) or TOCTOU_IMAGE_SIM_MIN),
+                            "attempt": int(toctou_guard.get("attempt", retry_in_step + 1) or (retry_in_step + 1)),
+                            "check_image_file": toctou_guard.get("check_image_file", ""),
+                        },
+                    }
+                    actions.append(action_record)
+                    experience_rr.record_action(action_record)
+
+            if need_toctou_retry:
+                if retry_in_step >= TOCTOU_MAX_RETRY_PER_STEP:
+                    logger.warning(
+                        f"[TOCTOU] Step {step} exceeded retry budget ({TOCTOU_MAX_RETRY_PER_STEP}); skip action"
+                    )
+                    decider_step_completed = True
+                    break
+
+                retry_in_step += 1
+                check_path = None
+                if isinstance(toctou_guard, dict):
+                    candidate_path = toctou_guard.get("check_image_path")
+                    if isinstance(candidate_path, str) and os.path.exists(candidate_path):
+                        check_path = candidate_path
+                if check_path:
+                    current_screenshot_path = check_path
+                    decider_screenshot_file = os.path.basename(check_path)
+                current_hierarchy_xml, current_xml_file = dump_hierarchy_for_step(device, data_dir, step)
+                logger.info(
+                    f"[TOCTOU] Retry decider in step {step}: "
+                    f"{retry_in_step}/{TOCTOU_MAX_RETRY_PER_STEP}"
+                )
+                continue
+
+            history.append(json.dumps(decider_response, ensure_ascii=False))
+            time.sleep(1)
+            decider_step_completed = True
+            break
+
+        if abort_current_task:
+            break
+        if stop_reason == "done":
+            break
+        if not decider_step_completed:
+            logger.warning(f"[TOCTOU] Step {step} ended without completion marker; continue next step")
+            continue
 
     if stop_reason is None and step >= MAX_STEPS:
         stop_reason = "max_steps_reached"

@@ -7,11 +7,16 @@ set -euo pipefail
 # 2) 执行: bash runner/mobiagent/auto-search-run-template.sh
 
 APP_NAME="微博"
-DEPTH=2
-BREADTH=2
+DEPTH=2 # 探索页面的深度，3-4
+BREADTH=2 # 在每一个页面探索的广度，5-10，路径总数最多为BREADTH的DEPTH次方
+
+# MobiAgent 相关参数
 DEVICE="Harmony"                 # Android | Harmony
 SERVICE_IP="166.111.53.96"
 DECIDER_PORT=7003
+DECIDER_API_KEY="mobiagent-key"            # 建议通过环境变量注入，不要把密钥写在仓库文件里
+
+# Explorer 相关参数
 EXPLORER_MODEL="qwen/qwen3-vl-235b-a22b-instruct" # qwen/qwen3.5-plus-02-15
 OPENROUTER_BASE_URL="https://openrouter.ai/api/v1"
 USE_QWEN3="on"                   # on | off
@@ -44,6 +49,7 @@ CMD=(
   --device "$DEVICE"
   --service_ip "$SERVICE_IP"
   --decider_port "$DECIDER_PORT"
+  --decider_api_key "$DECIDER_API_KEY"
   --openrouter_base_url "$OPENROUTER_BASE_URL"
   --openrouter_api_key "$OPENROUTER_API_KEY"
   --explorer_model "$EXPLORER_MODEL"

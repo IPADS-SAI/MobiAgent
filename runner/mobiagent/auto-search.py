@@ -1916,7 +1916,7 @@ def explore_dfs(
 
 
 def init_decider_client(service_ip: str, decider_port: int) -> OpenAI:
-    return OpenAI(api_key="0", base_url=f"http://{service_ip}:{decider_port}/v1")
+    return OpenAI(api_key="mobiagent-key", base_url=f"http://{service_ip}:{decider_port}/v1")
 
 
 def init_explorer_client(base_url: str, api_key: str) -> OpenAI:
@@ -1934,7 +1934,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", type=str, default="Android", choices=["Android", "Harmony"], help="设备类型")
     parser.add_argument("--service_ip", type=str, default="localhost", help="Decider 服务IP")
     parser.add_argument("--decider_port", type=int, default=8000, help="Decider 服务端口")
-
+    parser.add_argument("--decider_api_key", type=str, default=os.getenv("DECIDER_API_KEY", "mobiagent-key"), help="Decider API Key")
     parser.add_argument("--openrouter_base_url", type=str, default="https://openrouter.ai/api/v1", help="Explorer 的 Base URL")
     parser.add_argument("--openrouter_api_key", type=str, default=os.getenv("OPENROUTER_API_KEY", ""), help="OpenRouter API Key")
     parser.add_argument("--explorer_model", type=str, default="google/gemini-3-flash-preview", help="通用大模型名称")

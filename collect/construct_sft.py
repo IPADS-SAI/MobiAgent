@@ -5,6 +5,8 @@ from PIL import Image
 import random
 import argparse
 from tqdm import tqdm
+from importlib.util import spec_from_file_location, module_from_spec
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import re
 from functools import reduce
@@ -52,22 +54,36 @@ class AlpacaImageEntry:
     images: List[str]
     input: str = ""
 
+@dataclass
+class ChatImageEntry:
+    messages: List[dict]
+    images: List[str]
+
 grounder_prompt = load_prompt("grounder_coordinates.md")
 grounder_prompt_bbox = load_prompt("grounder_bbox.md")
 grounder_prompt_qwen3_coordinates = load_prompt("grounder_qwen3_coordinates.md")
 grounder_prompt_qwen3_bbox = load_prompt("grounder_qwen3_bbox.md")
 
-# decider_prompt = load_prompt("decider.md")
-# decider_prompt_no_history = load_prompt("decider_nohistory.md")
 decider_prompt = load_prompt("decider_v2.md")
 decider_prompt_no_history = load_prompt("decider_nohistory_v2.md")
-# decider_prompt_qwen3 = load_prompt("decider_qwen3.md")
-# decider_prompt_qwen3_no_history = load_prompt("decider_qwen3_nohistory.md")
 decider_prompt_qwen3 = decider_prompt
 decider_prompt_qwen3_no_history = decider_prompt_no_history
 
 e2e_prompt = load_prompt("e2e_qwen3.md")
 e2e_prompt_no_history = load_prompt("e2e_nohistory_qwen3.md")
+
+def load_py_prompt(filename):
+    prompt_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "prompts"))
+    prompt_path = os.path.join(prompt_dir, filename)
+    spec = spec_from_file_location(filename, prompt_path)
+    if spec is None or spec.loader is None:
+        raise FileNotFoundError(f"Unable to load prompt module: {prompt_path}")
+    module = module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+decider_qwen3_e2e_module = load_py_prompt("decider_qwen3_e2e.py")
+decider_qwen3_e2e_nohistory_module = load_py_prompt("decider_qwen3_e2e_nohistory.py")
 
 def dump_json_with_jsonl(out_path, data):
     # Write standard JSON and, when possible, a line-delimited JSONL for easier downstream loading
@@ -100,6 +116,13 @@ def create_entries_for_one_step(num_repeat, instruction, output, image_path):
     entry = AlpacaImageEntry(
         instruction=instruction,
         output=output,
+        images=[image_path]
+    )
+    return [entry] * num_repeat
+
+def create_chat_entries_for_one_step(num_repeat, messages, image_path):
+    entry = ChatImageEntry(
+        messages=messages,
         images=[image_path]
     )
     return [entry] * num_repeat
@@ -142,6 +165,10 @@ def validate_action(action_type, param):
     param_name_mapping = {
         "click": ["target_element","bbox"],
         "input": ["text"],
+        "click_input": ["target_element","text","bbox"],
+        "open_app": ["app_name"],
+        "press_home": [],
+        "press_back": [],
         "swipe": ["direction", "start_coords", "end_coords"],
         "wait": [],
         "done": ["status"]
@@ -179,12 +206,19 @@ def relative_bbox(bbox, width, height):
     rel_y2 = y2 / height * 1000
     return [int(rel_x1), int(rel_y1), int(rel_x2), int(rel_y2)]
 
+def safe_scale(value, factor, denom):
+    if value is None or denom in (0, None):
+        return None
+    return value * factor / denom
+
 def construct_ss_data(single_step_data_path, out_path, factor=0.5, train_ratio=0.9, do_copy=True, use_qwen3=False, e2e=False):
     if not os.path.exists(single_step_data_path):
         return [], [], [], []
 
     augment_config_path = os.path.join(os.path.dirname(__file__), 'augment_config.json')
     rules = load_augmentation_rules(augment_config_path)
+
+    use_qwen3_e2e_chat = e2e and use_qwen3
 
     # 初始化所有返回变量
     decider_ss_entry_train = []
@@ -194,7 +228,8 @@ def construct_ss_data(single_step_data_path, out_path, factor=0.5, train_ratio=0
 
     decider_ss_path = os.path.join(single_step_data_path, "decider")
     if os.path.exists(decider_ss_path):
-        for root, dirs, files in tqdm(os.walk(decider_ss_path), desc="constructing single step decider dataset"):
+        total_dirs = sum(len(dirs) for _, dirs, _ in os.walk(decider_ss_path))
+        for root, dirs, files in tqdm(os.walk(decider_ss_path), total=total_dirs, desc="constructing single step decider dataset"):
             if len(files) == 0:
                 continue
             if "react.json" not in files:
@@ -239,16 +274,54 @@ def construct_ss_data(single_step_data_path, out_path, factor=0.5, train_ratio=0
                         action = actions[i - 1]
                         bbox = action.get("bounds", None)
                         # 根据factor、width和height调整bbox,调整为1000*1000相对坐标
-                        bbox = [int(bbox[0] * factor/width * 1000), int(bbox[1] * factor/height * 1000), int(bbox[2] * factor/width * 1000), int(bbox[3] * factor/height * 1000)] if bbox else None
+                        if bbox and isinstance(bbox, list) and len(bbox) == 4:
+                            scaled = [
+                                safe_scale(bbox[0], factor, width),
+                                safe_scale(bbox[1], factor, height),
+                                safe_scale(bbox[2], factor, width),
+                                safe_scale(bbox[3], factor, height)
+                            ]
+                            bbox = [int(v * 1000) for v in scaled] if all(v is not None for v in scaled) else None
+                        else:
+                            bbox = None
                         if bbox:
                             param.update(dict(bbox=bbox))
+
+                if e2e and action_type == "click_input":
+                    if i - 1 < len(actions):
+                        action = actions[i - 1]
+                        bbox = action.get("bounds", None)
+                        # 根据factor、width和height调整bbox,调整为1000*1000相对坐标
+                        if bbox and isinstance(bbox, list) and len(bbox) == 4:
+                            scaled = [
+                                safe_scale(bbox[0], factor, width),
+                                safe_scale(bbox[1], factor, height),
+                                safe_scale(bbox[2], factor, width),
+                                safe_scale(bbox[3], factor, height)
+                            ]
+                            bbox = [int(v * 1000) for v in scaled] if all(v is not None for v in scaled) else None
+                        else:
+                            bbox = None
+                        if bbox:
+                            param.update(dict(bbox=bbox))
+                        
                 
                 if e2e and action_type == "swipe":
                     if "direction" in param:
                         if i - 1 < len(actions):
                             action = actions[i - 1]
-                            start_coords = [int(action["press_position_x"] * factor/width * 1000), int(action["press_position_y"] * factor/height * 1000)] if "press_position_x" in action and "press_position_y" in action else None
-                            end_coords = [int(action["release_position_x"] * factor/width * 1000), int(action["release_position_y"] * factor/height * 1000)] if "release_position_x" in action and "release_position_y" in action else None
+                            if "press_position_x" in action and "press_position_y" in action:
+                                sx = safe_scale(action.get("press_position_x"), factor, width)
+                                sy = safe_scale(action.get("press_position_y"), factor, height)
+                                start_coords = [int(sx * 1000), int(sy * 1000)] if sx is not None and sy is not None else None
+                            else:
+                                start_coords = None
+                            if "release_position_x" in action and "release_position_y" in action:
+                                ex = safe_scale(action.get("release_position_x"), factor, width)
+                                ey = safe_scale(action.get("release_position_y"), factor, height)
+                                end_coords = [int(ex * 1000), int(ey * 1000)] if ex is not None and ey is not None else None
+                            else:
+                                end_coords = None
                             if start_coords and end_coords:
                                 param.update(dict(start_coords=start_coords, end_coords=end_coords))
                             else:
@@ -270,24 +343,40 @@ def construct_ss_data(single_step_data_path, out_path, factor=0.5, train_ratio=0
                     output_dict = dict(reasoning=reasoning, action=action_type, parameters=param)
                     if use_qwen3:
                         output, _ = format_qwen3_decider_output(output_dict)
-                        if e2e:
-                            instruction = e2e_prompt_no_history.format(task=task)
-                        else:
-                            instruction = decider_prompt_qwen3_no_history.format(task=task)
                     else:
                         output = json.dumps(output_dict, ensure_ascii=False)
-                        if e2e:
-                            instruction = e2e_prompt_no_history.format(task=task)
+                    if use_qwen3_e2e_chat:
+                        user_content = decider_qwen3_e2e_nohistory_module.DECIDER_USER_PROMPT.format(task=task)
+                        user_content = f"{user_content}\n\n<image>\n\n{decider_qwen3_e2e_nohistory_module.DECIDER_CURRENT_STEP_PROMPT}"
+                        messages = [
+                            {"role": "system", "content": decider_qwen3_e2e_nohistory_module.DECIDER_SYSTEM_PROMPT},
+                            {"role": "user", "content": user_content},
+                            {"role": "assistant", "content": output}
+                        ]
+                        entries = create_chat_entries_for_one_step(
+                            num_repeat=augment_num_repeat("decider_no_history", augment_rule, is_train),
+                            messages=messages,
+                            image_path=out_abspath
+                        )
+                    else:
+                        if use_qwen3:
+                            if e2e:
+                                instruction = e2e_prompt_no_history.format(task=task)
+                            else:
+                                instruction = decider_prompt_qwen3_no_history.format(task=task)
                         else:
-                            instruction = decider_prompt_no_history.format(task=task)
+                            if e2e:
+                                instruction = e2e_prompt_no_history.format(task=task)
+                            else:
+                                instruction = decider_prompt_no_history.format(task=task)
 
-                    aug_num_repeat = augment_num_repeat("decider_no_history", augment_rule, is_train)
-                    entries = create_entries_for_one_step(
-                        num_repeat=aug_num_repeat,
-                        instruction=instruction,
-                        output=output,
-                        image_path=out_abspath
-                    )
+                        aug_num_repeat = augment_num_repeat("decider_no_history", augment_rule, is_train)
+                        entries = create_entries_for_one_step(
+                            num_repeat=aug_num_repeat,
+                            instruction=instruction,
+                            output=output,
+                            image_path=out_abspath
+                        )
                     if print_flag:
                         print(entries)
                     if is_train:
@@ -297,7 +386,8 @@ def construct_ss_data(single_step_data_path, out_path, factor=0.5, train_ratio=0
 
     grounder_ss_path = os.path.join(single_step_data_path, "grounder")
     if os.path.exists(grounder_ss_path):
-        for root, dirs, files in tqdm(os.walk(grounder_ss_path), desc="constructing single step grounder dataset"):
+        total_dirs = sum(len(dirs) for _, dirs, _ in os.walk(grounder_ss_path))
+        for root, dirs, files in tqdm(os.walk(grounder_ss_path), total=total_dirs, desc="constructing single step grounder dataset"):
             if len(files) == 0:
                 continue
             if "react.json" not in files:
@@ -430,7 +520,12 @@ def create_decider_entries_for_one_task(task, react_data, actions, root, data_pa
     # if e2e and use_qwen3:
     #     raise ValueError("qwen3 e2e is not supported")
 
-    if e2e:
+    use_qwen3_e2e_chat = e2e and use_qwen3
+
+    if use_qwen3_e2e_chat:
+        prompt_template = None
+        no_history_prompt_template = None
+    elif e2e:
         prompt_template = e2e_prompt
         no_history_prompt_template = e2e_prompt_no_history
     elif use_qwen3:
@@ -464,7 +559,42 @@ def create_decider_entries_for_one_task(task, react_data, actions, root, data_pa
                 action = actions[i - 1]
                 bbox = action.get("bounds", None)
                 # 根据factor、width和height调整bbox,调整为1000*1000相对坐标
-                bbox = [int(bbox[0] * factor/width * 1000), int(bbox[1] * factor/height * 1000), int(bbox[2] * factor/width * 1000), int(bbox[3] * factor/height * 1000)] if bbox else None
+                if bbox and isinstance(bbox, list) and len(bbox) == 4:
+                    scaled = [
+                        safe_scale(bbox[0], factor, width),
+                        safe_scale(bbox[1], factor, height),
+                        safe_scale(bbox[2], factor, width),
+                        safe_scale(bbox[3], factor, height)
+                    ]
+                    bbox = [int(v * 1000) for v in scaled] if all(v is not None for v in scaled) else None
+                else:
+                    bbox = None
+            else:
+                print(f"[e2e]Error: Action index {i-1} out of range for actions list (len={len(actions)}) at {root}. Skipping bbox.")
+                bbox = None
+                return [], [], []
+
+            if bbox:
+                param.update(dict(bbox=bbox))
+            else:
+                print(f"[e2e]error: action {i} has no bbox in {root}")
+                return [], [], []
+        
+        if e2e and action_type == "click_input":
+            if i - 1 < len(actions):
+                action = actions[i - 1]
+                bbox = action.get("bounds", None)
+                # 根据factor、width和height调整bbox,调整为1000*1000相对坐标
+                if bbox and isinstance(bbox, list) and len(bbox) == 4:
+                    scaled = [
+                        safe_scale(bbox[0], factor, width),
+                        safe_scale(bbox[1], factor, height),
+                        safe_scale(bbox[2], factor, width),
+                        safe_scale(bbox[3], factor, height)
+                    ]
+                    bbox = [int(v * 1000) for v in scaled] if all(v is not None for v in scaled) else None
+                else:
+                    bbox = None
             else:
                 print(f"[e2e]Error: Action index {i-1} out of range for actions list (len={len(actions)}) at {root}. Skipping bbox.")
                 bbox = None
@@ -484,8 +614,18 @@ def create_decider_entries_for_one_task(task, react_data, actions, root, data_pa
                 # end_coords :[release_position_x,release_position_y]
                 if i - 1 < len(actions):
                     action = actions[i - 1]
-                    start_coords = [int(action["press_position_x"] * factor/width * 1000), int(action["press_position_y"] * factor/height * 1000)] if "press_position_x" in action and "press_position_y" in action else None
-                    end_coords = [int(action["release_position_x"] * factor/width * 1000), int(action["release_position_y"] * factor/height * 1000)] if "release_position_x" in action and "release_position_y" in action else None
+                    if "press_position_x" in action and "press_position_y" in action:
+                        sx = safe_scale(action.get("press_position_x"), factor, width)
+                        sy = safe_scale(action.get("press_position_y"), factor, height)
+                        start_coords = [int(sx * 1000), int(sy * 1000)] if sx is not None and sy is not None else None
+                    else:
+                        start_coords = None
+                    if "release_position_x" in action and "release_position_y" in action:
+                        ex = safe_scale(action.get("release_position_x"), factor, width)
+                        ey = safe_scale(action.get("release_position_y"), factor, height)
+                        end_coords = [int(ex * 1000), int(ey * 1000)] if ex is not None and ey is not None else None
+                    else:
+                        end_coords = None
                     param.update(dict(start_coords=start_coords, end_coords=end_coords))
                 else:
                     print(f"[e2e]Error: Action index {i-1} out of range for actions list (len={len(actions)}) at {root}. Skipping swipe coords.")
@@ -502,21 +642,45 @@ def create_decider_entries_for_one_task(task, react_data, actions, root, data_pa
 
         # partial_histories是当前action的前几个action
         # 对input类和done类型特殊处理
-        if action_type in ["input"]:
+        if action_type in ["input","done"]:
             min_history_length = min(4, len(history))
             partial_histories = [history[i:] for i in range(len(history) + 1 - min_history_length)]
         else:
             partial_histories = [history[i:] for i in range(len(history) + 1)]
 
-        partial_histories = [partial_histories[0]] + random.sample(partial_histories[1:], min(2, len(partial_histories) - 1))
+        # # done 样本不使用空历史，避免生成 "(No history)" 的完成动作数据
+        # if action_type == "done":
+        #     partial_histories = [h for h in partial_histories if len(h) > 0]
+        #     if len(partial_histories) == 0 and len(history) > 0:
+        #         partial_histories = [history]
+
+        if len(partial_histories) > 1:
+            partial_histories = [partial_histories[0]] + random.sample(partial_histories[1:], min(2, len(partial_histories) - 1))
 
         for partial_history in partial_histories:
-            normal_entries.extend(create_entries_for_one_step(
-                num_repeat=pos_num_repeat * reason_aug_num_repeat, 
-                instruction=prompt_template.format(task=task, history=history_str(partial_history)), 
-                output=output, 
-                image_path=out_abspath
-            ))
+            if use_qwen3_e2e_chat:
+                user_content = decider_qwen3_e2e_module.DECIDER_USER_PROMPT.format(
+                    task=task,
+                    history=history_str(partial_history)
+                )
+                user_content = f"{user_content}\n\n<image>\n\n{decider_qwen3_e2e_module.DECIDER_CURRENT_STEP_PROMPT}"
+                messages = [
+                    {"role": "system", "content": decider_qwen3_e2e_module.DECIDER_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_content},
+                    {"role": "assistant", "content": output}
+                ]
+                normal_entries.extend(create_chat_entries_for_one_step(
+                    num_repeat=pos_num_repeat * reason_aug_num_repeat,
+                    messages=messages,
+                    image_path=out_abspath
+                ))
+            else:
+                normal_entries.extend(create_entries_for_one_step(
+                    num_repeat=pos_num_repeat * reason_aug_num_repeat, 
+                    instruction=prompt_template.format(task=task, history=history_str(partial_history)), 
+                    output=output, 
+                    image_path=out_abspath
+                ))
 
         if use_qwen3:
             history.append(brief_action)
@@ -551,26 +715,57 @@ def create_decider_entries_for_one_task(task, react_data, actions, root, data_pa
             else:
                 terminate_output = json.dumps(terminate_output_dict, ensure_ascii=False)
 
-            terminate_entries.extend(create_entries_for_one_step(
-                num_repeat=1, # 终止样本不需要重复
-                instruction=prompt_template.format(task=task, history=history_str(history)),
-                output=terminate_output,
-                image_path=random.choice(unexpected_img_safe_abspaths)
-            ))
+            if use_qwen3_e2e_chat:
+                user_content = decider_qwen3_e2e_module.DECIDER_USER_PROMPT.format(
+                    task=task,
+                    history=history_str(history)
+                )
+                user_content = f"{user_content}\n\n<image>\n\n{decider_qwen3_e2e_module.DECIDER_CURRENT_STEP_PROMPT}"
+                messages = [
+                    {"role": "system", "content": decider_qwen3_e2e_module.DECIDER_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_content},
+                    {"role": "assistant", "content": terminate_output}
+                ]
+                terminate_entries.extend(create_chat_entries_for_one_step(
+                    num_repeat=1,
+                    messages=messages,
+                    image_path=random.choice(unexpected_img_safe_abspaths)
+                ))
+            else:
+                terminate_entries.extend(create_entries_for_one_step(
+                    num_repeat=1, # 终止样本不需要重复
+                    instruction=prompt_template.format(task=task, history=history_str(history)),
+                    output=terminate_output,
+                    image_path=random.choice(unexpected_img_safe_abspaths)
+                ))
 
         
         # 无历史action训练集 (input类型不生成no history数据)
         if action_type not in ["input", "done"]:
-            no_history_entries.extend(create_entries_for_one_step(
-                num_repeat=pos_num_repeat * reason_no_history_aug_num_repeat,
-                instruction=no_history_prompt_template.format(task=task),
-                output=output,
-                image_path=out_abspath
-            ))
+            if use_qwen3_e2e_chat:
+                user_content = decider_qwen3_e2e_nohistory_module.DECIDER_USER_PROMPT.format(task=task)
+                user_content = f"{user_content}\n\n<image>\n\n{decider_qwen3_e2e_nohistory_module.DECIDER_CURRENT_STEP_PROMPT}"
+                messages = [
+                    {"role": "system", "content": decider_qwen3_e2e_nohistory_module.DECIDER_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_content},
+                    {"role": "assistant", "content": output}
+                ]
+                no_history_entries.extend(create_chat_entries_for_one_step(
+                    num_repeat=pos_num_repeat * reason_no_history_aug_num_repeat,
+                    messages=messages,
+                    image_path=out_abspath
+                ))
+            else:
+                no_history_entries.extend(create_entries_for_one_step(
+                    num_repeat=pos_num_repeat * reason_no_history_aug_num_repeat,
+                    instruction=no_history_prompt_template.format(task=task),
+                    output=output,
+                    image_path=out_abspath
+                ))
 
     return normal_entries, no_history_entries, terminate_entries
 
-def construct_ds(data_path, single_step_data_path, unexpected_img_path, out_path, factor=0.5, train_ratio=0.9, e2e=False, do_copy=True, use_qwen3=False, json_dir=""):
+def construct_ds(data_path, single_step_data_path, unexpected_img_path, out_path, factor=0.5, train_ratio=0.9, e2e=False, do_copy=True, use_qwen3=False, json_dir="", num_workers=8):
     os.makedirs(out_path, exist_ok=True)
     
     e2e_entries_train = []
@@ -607,20 +802,24 @@ def construct_ds(data_path, single_step_data_path, unexpected_img_path, out_path
             unexpected_img_safe_abspaths.append(out_abspath)
     else:
         unexpected_img_safe_abspaths = []
-    # 1. 预统计目录数量
-    total_dirs = sum(1 for _ in os.walk(data_path))
+    def process_trace(root, files):
+        local_decider_train = []
+        local_decider_no_history_train = []
+        local_terminate_train = []
+        local_grounder_train = []
 
-    # 2. 带 total 的 tqdm
-    for root, dirs, files in tqdm(
-            os.walk(data_path),
-            total=total_dirs,
-            desc="constructing dataset"
-    ):
-    # for root, dirs, files in tqdm(os.walk(data_path), desc="constructing dataset"):
-        if len(files) == 0:
-            continue
-        if "actions.json" not in files or "react.json" not in files or "parse.error" in files:
-            continue
+        local_decider_val = []
+        local_decider_no_history_val = []
+        local_terminate_val = []
+        local_grounder_val = []
+
+        local_e2e_train = []
+        local_e2e_no_history_train = []
+        local_e2e_terminate_train = []
+
+        local_e2e_val = []
+        local_e2e_no_history_val = []
+        local_e2e_terminate_val = []
 
         actions_json = os.path.join(root, "actions.json")
         with open(actions_json, 'r', encoding='utf-8') as file:
@@ -638,6 +837,29 @@ def construct_ds(data_path, single_step_data_path, unexpected_img_path, out_path
             except json.JSONDecodeError as e:
                 print(f"Error decoding JSON in {root}.")
                 raise e
+
+        # 跳过一些过时数据
+        # 1. 当含有 “input”动作时跳过
+        # 2. 当 react_data 数量与actions 数量不匹配时跳过
+        skip_trace = False
+        for react in react_data:
+            action_type = react["function"]["name"]
+            if action_type == "input":
+                skip_trace = True
+                print(f"Skipping directory {root} due to presence of 'input' action.")
+                break
+        if skip_trace:
+            return (local_decider_train, local_decider_no_history_train, local_terminate_train, local_grounder_train,
+                    local_decider_val, local_decider_no_history_val, local_terminate_val, local_grounder_val,
+                    local_e2e_train, local_e2e_no_history_train, local_e2e_terminate_train,
+                    local_e2e_val, local_e2e_no_history_val, local_e2e_terminate_val)
+
+        if len(react_data) != len(actions):
+            print(f"Warning: Number of ReAct entries ({len(react_data)}) does not match number of actions ({len(actions)}) in {root}. Skipping this directory.")
+            return (local_decider_train, local_decider_no_history_train, local_terminate_train, local_grounder_train,
+                    local_decider_val, local_decider_no_history_val, local_terminate_val, local_grounder_val,
+                    local_e2e_train, local_e2e_no_history_train, local_e2e_terminate_train,
+                    local_e2e_val, local_e2e_no_history_val, local_e2e_terminate_val)
 
         # 多模式适配 将没有done的react补充done，目前全部修正带done
         index = 1
@@ -662,11 +884,14 @@ def construct_ds(data_path, single_step_data_path, unexpected_img_path, out_path
             )
         elif num_img != len(react_data):
             print(f"Warning: Number of images ({num_img}) does not match number of ReAct entries ({len(react_data)}) in {root}. Skipping this directory.")
-            continue
+            return (local_decider_train, local_decider_no_history_train, local_terminate_train, local_grounder_train,
+                    local_decider_val, local_decider_no_history_val, local_terminate_val, local_grounder_val,
+                    local_e2e_train, local_e2e_no_history_train, local_e2e_terminate_train,
+                    local_e2e_val, local_e2e_no_history_val, local_e2e_terminate_val)
 
         if not isinstance(task_description, list):
             task_description = [task_description]
-        
+
         # 第一个任务：原始描述
         # 后三个任务：去除标点
         # 中间：泛化任务
@@ -690,57 +915,110 @@ def construct_ds(data_path, single_step_data_path, unexpected_img_path, out_path
         is_train = random.random() < train_ratio
         try:
             for i, task in enumerate(tasks):
-                normal_entries, no_history_entries, terminate_entries = create_decider_entries_for_one_task(
-                    task, react_data, actions, root, data_path, out_path, factor, rules, unexpected_img_safe_abspaths, is_train, do_copy=((i == 0) and do_copy), e2e=False, use_qwen3=use_qwen3
-                )
-                if normal_entries == [] and no_history_entries == [] and terminate_entries == []:
-                    continue
-                if i != 0:
-                    normal_entries = random.sample(normal_entries, len(normal_entries) // 2)
-                    no_history_entries = random.sample(no_history_entries, len(no_history_entries) // 2)
-                    terminate_entries = random.sample(terminate_entries, len(terminate_entries) // 2)
-                if is_train:
-                    decider_entries_train.extend(normal_entries)
-                    decider_no_history_entries_train.extend(no_history_entries)
-                    terminate_entries_train.extend(terminate_entries)
-                else:
-                    decider_entries_val.extend(normal_entries)
-                    decider_no_history_entries_val.extend(no_history_entries)
-                    terminate_entries_val.extend(terminate_entries)
+                if not (e2e and use_qwen3):
+                    normal_entries, no_history_entries, terminate_entries = create_decider_entries_for_one_task(
+                        task, react_data, actions, root, data_path, out_path, factor, rules, unexpected_img_safe_abspaths, is_train, do_copy=((i == 0) and do_copy), e2e=False, use_qwen3=use_qwen3
+                    )
+                    if not (normal_entries or no_history_entries or terminate_entries):
+                        continue
+                    if i != 0:
+                        normal_entries = random.sample(normal_entries, len(normal_entries) // 2)
+                        no_history_entries = random.sample(no_history_entries, len(no_history_entries) // 2)
+                        terminate_entries = random.sample(terminate_entries, len(terminate_entries) // 2)
+                    if is_train:
+                        local_decider_train.extend(normal_entries)
+                        local_decider_no_history_train.extend(no_history_entries)
+                        local_terminate_train.extend(terminate_entries)
+                    else:
+                        local_decider_val.extend(normal_entries)
+                        local_decider_no_history_val.extend(no_history_entries)
+                        local_terminate_val.extend(terminate_entries)
                 if e2e:
                     e2e_normal_entries, e2e_history_entries, e2e_terminate_entries = create_decider_entries_for_one_task(
-                        task, react_data, actions, root, data_path, out_path, factor, rules, unexpected_img_safe_abspaths, is_train, do_copy=((i == 0) and do_copy), e2e=True, use_qwen3=False
+                        task, react_data, actions, root, data_path, out_path, factor, rules, unexpected_img_safe_abspaths, is_train, do_copy=((i == 0) and do_copy), e2e=True, use_qwen3=use_qwen3
                     )
-                    if e2e_normal_entries == [] and e2e_history_entries == [] and e2e_terminate_entries == []:
+                    if not (e2e_normal_entries or e2e_history_entries or e2e_terminate_entries):
                         continue
 
-                    if i !=0:
+                    if i != 0:
                         e2e_normal_entries = random.sample(e2e_normal_entries, len(e2e_normal_entries) // 2)
                         e2e_history_entries = random.sample(e2e_history_entries, len(e2e_history_entries) // 2)
                         e2e_terminate_entries = random.sample(e2e_terminate_entries, len(e2e_terminate_entries) // 2)
-                        
+
                     if is_train:
-                        e2e_entries_train.extend(e2e_normal_entries)
-                        e2e_no_history_entries_train.extend(e2e_history_entries)
-                        e2e_terminate_entries_train.extend(e2e_terminate_entries)
+                        local_e2e_train.extend(e2e_normal_entries)
+                        local_e2e_no_history_train.extend(e2e_history_entries)
+                        local_e2e_terminate_train.extend(e2e_terminate_entries)
                     else:
-                        e2e_entries_val.extend(e2e_normal_entries)
-                        e2e_no_history_entries_val.extend(e2e_history_entries)
-                        e2e_terminate_entries_val.extend(e2e_terminate_entries)
+                        local_e2e_val.extend(e2e_normal_entries)
+                        local_e2e_no_history_val.extend(e2e_history_entries)
+                        local_e2e_terminate_val.extend(e2e_terminate_entries)
 
         except Exception as e:
             print(f"Error generating decider entries in {root}: {e}")
+
         if e2e is not True:
             try:
                 grounder_entries = create_grounder_entries_for_one_trace(react_data, actions, root, data_path, out_path, factor, rules, is_train, do_copy=False, use_qwen3=use_qwen3)
                 if is_train:
-                    grounder_entries_train.extend(grounder_entries)
+                    local_grounder_train.extend(grounder_entries)
                 else:
-                    grounder_entries_val.extend(grounder_entries)
+                    local_grounder_val.extend(grounder_entries)
             except Exception as e:
                 print(f"Error generating grounder entries in {root}: {e}")
 
-    decider_ss_entry_train, decider_ss_entry_val, grounder_ss_entry_train, grounder_ss_entry_val = construct_ss_data(single_step_data_path, out_path, factor, train_ratio, do_copy=do_copy, use_qwen3=use_qwen3)
+        return (local_decider_train, local_decider_no_history_train, local_terminate_train, local_grounder_train,
+                local_decider_val, local_decider_no_history_val, local_terminate_val, local_grounder_val,
+                local_e2e_train, local_e2e_no_history_train, local_e2e_terminate_train,
+                local_e2e_val, local_e2e_no_history_val, local_e2e_terminate_val)
+
+    # 1. 预收集可处理目录
+    trace_roots = []
+    total_dirs = sum(1 for _ in os.walk(data_path))
+    for root, dirs, files in tqdm(os.walk(data_path), total=total_dirs, desc="scanning dataset"):
+        if len(files) == 0:
+            continue
+        if "actions.json" not in files or "react.json" not in files or "parse.error" in files:
+            continue
+        trace_roots.append((root, files))
+
+    # 2. 多线程并行处理
+    num_workers = max(1, int(num_workers))
+    with ThreadPoolExecutor(max_workers=num_workers) as executor:
+        futures = [executor.submit(process_trace, root, files) for root, files in trace_roots]
+        for future in tqdm(as_completed(futures), total=len(futures), desc="constructing dataset"):
+            (local_decider_train, local_decider_no_history_train, local_terminate_train, local_grounder_train,
+             local_decider_val, local_decider_no_history_val, local_terminate_val, local_grounder_val,
+             local_e2e_train, local_e2e_no_history_train, local_e2e_terminate_train,
+             local_e2e_val, local_e2e_no_history_val, local_e2e_terminate_val) = future.result()
+
+            decider_entries_train.extend(local_decider_train)
+            decider_no_history_entries_train.extend(local_decider_no_history_train)
+            terminate_entries_train.extend(local_terminate_train)
+            grounder_entries_train.extend(local_grounder_train)
+
+            decider_entries_val.extend(local_decider_val)
+            decider_no_history_entries_val.extend(local_decider_no_history_val)
+            terminate_entries_val.extend(local_terminate_val)
+            grounder_entries_val.extend(local_grounder_val)
+
+            e2e_entries_train.extend(local_e2e_train)
+            e2e_no_history_entries_train.extend(local_e2e_no_history_train)
+            e2e_terminate_entries_train.extend(local_e2e_terminate_train)
+
+            e2e_entries_val.extend(local_e2e_val)
+            e2e_no_history_entries_val.extend(local_e2e_no_history_val)
+            e2e_terminate_entries_val.extend(local_e2e_terminate_val)
+
+    decider_ss_entry_train, decider_ss_entry_val, grounder_ss_entry_train, grounder_ss_entry_val = construct_ss_data(
+        single_step_data_path,
+        out_path,
+        factor,
+        train_ratio,
+        do_copy=do_copy,
+        use_qwen3=use_qwen3,
+        e2e=e2e
+    )
 
     # 合并训练集数据
     terminate_entries_train = random.sample(terminate_entries_train, min(len(decider_entries_train) // 75, len(terminate_entries_train)))
@@ -847,6 +1125,7 @@ if __name__ == "__main__":
     parser.add_argument('--no_copy', action='store_true', help='do not copy images to the output path')
     parser.add_argument('--use_qwen3', action='store_true', help='use qwen3-vl mobile agent format')
     parser.add_argument('--json_dir',type=str, default="", help="output json path of train dataset (default: null)")
+    parser.add_argument('--num_workers', type=int, default=64, help='number of worker threads for data construction')
     args = parser.parse_args()
     construct_ds(
         data_path=args.data_path,
@@ -858,5 +1137,6 @@ if __name__ == "__main__":
         e2e=args.e2e,
         do_copy=(not args.no_copy),
         use_qwen3=args.use_qwen3,
-        json_dir=args.json_dir
+        json_dir=args.json_dir,
+        num_workers=args.num_workers
     )

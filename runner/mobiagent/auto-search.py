@@ -55,8 +55,8 @@ try:
 except Exception:
     KeyCode = None
 
-
-logging.basicConfig(
+#设置日志配置
+logging.basicConfig( 
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
 )
@@ -81,14 +81,14 @@ AUTO_DECIDER_USER_PROMPT = (
     "- Do not output done."
 )
 
-
+#加载中文字体
 def _load_font(size: int = 36) -> ImageFont.FreeTypeFont:
     try:
         return ImageFont.truetype("msyh.ttf", size)
     except Exception:
         return ImageFont.load_default()
 
-
+#在每一步的截图上绘制动作相关的可视化标记，生成多个版本的标注图片，方便后续分析和调试
 def annotate_action_visuals(
     action: str,
     action_record: Dict[str, Any],
@@ -195,7 +195,8 @@ def save_raw_screenshot(data_dir: str, step_index: int, device_type: str) -> str
         wf.write(rf.read())
     return dst
 
-
+# 根据已执行的动作序列，生成一个完整的人类可读的任务描述
+# 如果动作记录中包含 "source_task" 字段，则优先使用这些字段来构建任务描述，按照动作的顺序依次组合成一个步骤清单；如果没有，则回退到使用传入的 task_description 参数；如果仍然没有，则生成一个默认的描述，如 "打开{app_name}"。
 def _compute_task_description(
     actions: List[Dict[str, Any]],
     app_name: str,
@@ -217,7 +218,7 @@ def _compute_task_description(
         return f"打开{app_name}，" + "，".join(step_desc_parts)
     return task_description or f"打开{app_name}"
 
-
+# 将动作记录和模型反应持久化到输出目录，生成标准化的 actions.json 和 react.json 文件，供后续分析和调试使用
 def persist_outputs(
     output_dir: str,
     app_name: str,
@@ -274,7 +275,7 @@ def persist_outputs(
     with open(os.path.join(output_dir, "react.json"), "w", encoding="utf-8") as f:
         json.dump(normalized_reacts, f, ensure_ascii=False, indent=4)
 
-
+# 保存单步输出
 def persist_step_output(
     output_dir: str,
     app_name: str,
@@ -289,7 +290,7 @@ def persist_step_output(
         task_description=action_record.get("source_task"),
     )
 
-
+# 将该路径涉及的所有步骤目录中的文件复制到指定路径，并在复制过程中根据新的顺序重命名文件，确保在 path_dir 中形成一个连续的步骤序列，方便后续分析和调试使用
 def copy_step_artifacts_to_path(steps_dir: str, path_dir: str, step_indices: List[int]) -> None:
     """将指定 step 目录中的截图/标注/xml 等文件复制到 path 目录，并在 path 内重编号。"""
     os.makedirs(path_dir, exist_ok=True)
@@ -314,7 +315,7 @@ def copy_step_artifacts_to_path(steps_dir: str, path_dir: str, step_indices: Lis
             except Exception as e:
                 logging.warning(f"Failed to copy {src} -> {dst}: {e}")
 
-
+# 模拟用户点击设备的"返回"按钮，用于在探索过程中回溯到上一级界面。
 def navigate_back(device, device_type: str) -> None:
     """执行返回上一层。"""
     try:
@@ -339,12 +340,12 @@ def _get_current_screen_size(device_type: str) -> Optional[tuple[int, int]]:
         logging.warning(f"Failed to read current screenshot size: {e}")
         return None
 
-
+# 给定一个滑动方向，返回其相反方向，用于实现回溯操作中的反向滑动。
 def _reverse_direction(direction: str) -> str:
     mapping = {"UP": "DOWN", "DOWN": "UP", "LEFT": "RIGHT", "RIGHT": "LEFT"}
     return mapping.get(direction.upper(), "DOWN")
 
-
+# 将屏幕上的绝对像素坐标边界框转换为Qwen3模型使用的0-1000范围内的相对坐标
 def _convert_bbox_to_qwen3_relative(bbox: List[int], img_w: int, img_h: int) -> List[int]:
     if img_w <= 0 or img_h <= 0:
         return bbox
@@ -356,7 +357,7 @@ def _convert_bbox_to_qwen3_relative(bbox: List[int], img_w: int, img_h: int) -> 
         int(round(y2 / img_h * 1000)),
     ]
 
-
+# 获取应用的包名， 包名是Android/Harmony系统中每个应用的唯一标识符，如 "com.example.app"，在自动探索过程中用于识别当前前台应用是否与目标应用匹配。
 def _get_app_package_name(device, app_name: str) -> Optional[str]:
     if not app_name:
         return None
@@ -421,7 +422,7 @@ def _extract_foreground_from_hierarchy(hierarchy_text: str) -> tuple[str, str]:
 
     return _walk(obj)
 
-
+# 通过多种方式（API调用、Shell命令、层级解析）获取当前前台运行的应用信息，包括包名和页面名称，并记录信息来源。
 def _get_foreground_app_state(device, device_type: str, hierarchy_text: str = "") -> Dict[str, str]:
     state = {"package": "", "ability": "", "source": "unknown"}
     driver = getattr(device, "d", None)
@@ -468,7 +469,7 @@ def _get_foreground_app_state(device, device_type: str, hierarchy_text: str = ""
         state.update({"package": pkg, "ability": ability, "source": "hierarchy"})
     return state
 
-
+# 判断当前前台应用是否与目标应用匹配，主要通过包名进行匹配，如果包名信息不可用，则回退到层级文本中进行模糊匹配，以提高在信息不完整情况下的鲁棒性。
 def _is_app_in_foreground(device, device_type: str, app_name: Optional[str], hierarchy_text: str) -> bool:
     if not app_name:
         return True
@@ -494,7 +495,7 @@ def _is_app_in_foreground(device, device_type: str, app_name: Optional[str], hie
         return package_name in hierarchy_text
     return True
 
-
+# 根据动作记录中的信息，模拟用户在设备上执行相应的操作，如点击、输入、滑动等，并在执行过程中进行必要的错误处理和日志记录，以确保探索过程的稳定性和可追踪性。
 def replay_action_record(device, action_record: Dict[str, Any]) -> bool:
     action_type = str(action_record.get("type", "")).lower()
     try:
@@ -537,7 +538,7 @@ def replay_action_record(device, action_record: Dict[str, Any]) -> bool:
         return False
     return False
 
-
+# 根据动作记录中的信息，执行相应的回溯操作，如点击返回按钮、执行反向滑动等，以尝试回到上一级界面，帮助模型在探索过程中进行有效的路径回退和重新尝试。
 def perform_backtrack_action(device, device_type: str, action_record: Optional[Dict[str, Any]]) -> None:
     if not action_record:
         navigate_back(device, device_type)
@@ -545,7 +546,7 @@ def perform_backtrack_action(device, device_type: str, action_record: Optional[D
 
     action_type = str(action_record.get("type", "")).lower()
     if action_type == "click_input":
-        navigate_back(device, device_type)
+        navigate_back(device, device_type) #关闭输入法？
         navigate_back(device, device_type)
         return
 
@@ -565,12 +566,29 @@ def perform_backtrack_action(device, device_type: str, action_record: Optional[D
 
     navigate_back(device, device_type)
 
-
+#对UI层级文本进行归一化处理，去除动态内容的影响，提取稳定的结构特征
 def _normalize_hierarchy_text(text: str) -> str:
     text = re.sub(r"\d+", "#", text)
     return "".join(text.split())
 
+# 根据页面元素数量动态计算相似度阈值：元素越多（如feed流），正常内容刷新的波动越大，阈值适当降低以避免误判为页面跳转。
+def _compute_adaptive_similarity_threshold(hierarchy_text: str) -> float:
+    if not hierarchy_text:
+        return 0.9
+    if hierarchy_text.lstrip().startswith("<"):
+        tokens = _collect_struct_tokens_from_xml(hierarchy_text)
+    else:
+        try:
+            obj = json.loads(hierarchy_text)
+            tokens = _collect_struct_tokens_from_json(obj)
+        except Exception:
+            tokens = []
+    element_count = len(tokens)
+    # 元素数 <=5 时阈值 0.93，元素数 >=30 时阈值 0.70，中间线性插值
+    return max(0.70, 0.95 - 0.01 * min(element_count, 25))
 
+
+# 计算UI层级文本的指纹，首先对文本进行归一化处理，然后使用SHA-1哈希算法生成一个16字符长度的指纹字符串，用于快速比较不同界面的相似度和识别唯一界面。
 def _hierarchy_fingerprint(hierarchy_text: str) -> str:
     if not hierarchy_text:
         return ""
@@ -579,11 +597,11 @@ def _hierarchy_fingerprint(hierarchy_text: str) -> str:
         return ""
     return hashlib.sha1(normalized.encode("utf-8")).hexdigest()[:16]
 
-
+# 获取当前时间戳的字符串表示，格式为 "YYYY-MM-DDTHH:MM:SS"，用于记录页面索引的创建和更新时刻，方便后续的排序和管理。
 def _now_ts() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S")
 
-
+# 将页面索引信息保存到指定的JSON文件中，页面索引包含每个页面的唯一指纹、页面ID、输出目录、状态、尝试次数、创建时间、最后尝试时间、最后错误信息、快照信息、层级深度和去重键等元数据，以便后续的查询和管理。
 def _save_ui_page_index(index_path: str, page_registry: Dict[str, Dict[str, Any]], index_lock: threading.Lock) -> None:
     with index_lock:
         try:
@@ -596,7 +614,7 @@ def _save_ui_page_index(index_path: str, page_registry: Dict[str, Dict[str, Any]
         except Exception as e:
             logging.warning(f"Failed to save ui page index: {e}")
 
-
+# 从指定的JSON文件中加载页面索引信息，并将其转换为一个字典，键为页面指纹，值为页面的元数据信息，包括页面ID、输出目录、状态、尝试次数、创建时间、最后尝试时间、最后错误信息、快照信息、层级深度和去重键等，以便后续的查询和管理。
 def _load_ui_page_index(index_path: str) -> Dict[str, Dict[str, Any]]:
     if not os.path.exists(index_path):
         return {}
@@ -621,7 +639,7 @@ def _load_ui_page_index(index_path: str) -> Dict[str, Dict[str, Any]]:
         logging.warning(f"Failed to load ui page index: {e}")
         return {}
 
-
+# 计算下一个页面ID，遍历现有页面索引中的页面ID，找到最大的ID值并加1，确保新页面的ID是唯一且连续的，便于后续的页面管理和查询。
 def _next_page_id(page_registry: Dict[str, Dict[str, Any]]) -> int:
     max_id = 0
     for item in page_registry.values():
@@ -657,7 +675,7 @@ def _compute_dhash_hex(image_path: str, hash_size: int = 8) -> str:
         value = (value << 1) | bit
     return f"{value:016x}"
 
-
+# 从UI层级文本中提取可点击元素的类名、资源ID和边界框信息，生成一个结构化的特征列表，用于计算界面结构的指纹，以便在探索过程中识别相似界面和进行去重。
 def _collect_struct_tokens_from_xml(hierarchy_text: str) -> List[str]:
     tokens: List[str] = []
     try:
@@ -1201,37 +1219,42 @@ def build_explorer_prompt(
     breadth: int,
     hierarchy_text: str,
     action_history: List[Dict[str, Any]],
+    already_explored: Optional[List[str]] = None,
 ) -> str:
-    """构建通用大模型的候选动作生成提示词。"""
+    “””构建通用大模型的候选动作生成提示词。”””
     history_text = format_action_history(action_history)
-    return f"""
-你是移动端GUI探索助手。请结合截图、层级信息以及已发生的交互动作序列，输出当前界面“最有可能被用户下一步操作”的前{breadth}个单步任务，优先选择左侧、顶部或者底部的导航栏中的元素，并尽可能保证前后动作的连贯性。
+    already_explored_text = “”
+    if already_explored:
+        items = “\n”.join(f”- {t}” for t in already_explored)
+        already_explored_text = f”\n已在当前页面完成探索的操作（请勿重复生成）:\n{items}\n”
+    return f”””
+你是移动端GUI探索助手。请结合截图、层级信息以及已发生的交互动作序列，输出当前界面”最有可能被用户下一步操作”的前{breadth}个单步任务，优先选择左侧、顶部或者底部的导航栏中的元素，并尽可能保证前后动作的连贯性。
 
 要求：
 1) 只输出 JSON，不要输出任何额外文本。
 2) 输出字段必须是：
 {{
-  "candidates": [
+  “candidates”: [
     {{
-      "rank": 1,
-      "single_step_task": "一句话单步任务，例如：点击“搜索框”并输入“咖啡"",
-      "reason": "为什么这个动作高概率"
+      “rank”: 1,
+      “single_step_task”: “一句话单步任务，例如：点击”搜索框”并输入”咖啡””,
+      “reason”: “为什么这个动作高概率”
     }}
   ]
 }}
 3) candidates 数量 <= {breadth}，按概率从高到低排序。
 4) single_step_task 必须可执行、原子化（单步），避免多步串联。
-5) 如果是点击输入框的动作，务必跟上合理的当前界面下的输入文本，例如：点击“搜索框”并输入“咖啡”。
+5) 如果是点击输入框的动作，务必跟上合理的当前界面下的输入文本，例如：点击”搜索框”并输入”咖啡”。
 6) 若界面左侧、底部或者顶部侧边栏存在导航列表项（例如设置列表，菜单列表等），请你优先输出对各个列表项的点击操作，如果当前界面显示的列表项不全，可以输出滑动操作以查看更多列表项。
 7) 候选动作需要与最近的交互动作序列保持连贯，避免与已发生动作明显冲突；必要时可继续完成上一动作的后续步骤。
-8) 如果界面的右下角有“我的”、“个人中心”之类的入口图标，并且该图标没有被选中（图标是实心或者如表下面有下滑杠，表示选中），建议优先输出点击该入口的动作。
+8) 如果界面的右下角有”我的”、”个人中心”之类的入口图标，并且该图标没有被选中（图标是实心或者如表下面有下滑杠，表示选中），建议优先输出点击该入口的动作。
 9) 如果界面上有返回按钮，请不要点击返回按钮了，除非当前界面没有其他明显的可交互元素了。
 10) 最近已经交互过的动作，请不要重复执行了，除非当前界面没有其他明显的可交互元素了。
-
+{already_explored_text}
 当前探索深度: {depth}
-最近交互动作序列(按时间顺序，最多展示20条):
+当前路径动作序列(按时间顺序，最多展示20条):
 {history_text}
-""".strip()
+“””.strip()
 
 # 当前UI层级(可能截断):
 # {hierarchy_text[:12000]}
@@ -1301,6 +1324,85 @@ def append_done_to_path(
     return actions_with_done, reacts_with_done
 
 
+# OPT-5: 候选动作语义去重，过滤近似重复候选，保留 rank 更高的
+def _deduplicate_candidates(
+    candidates: List[Dict[str, Any]],
+    already_explored: Optional[List[str]] = None,
+    sim_threshold: float = 0.75,
+) -> List[Dict[str, Any]]:
+    """对 Explorer 返回的候选做字符级相似度去重，并过滤已探索的任务。"""
+    kept: List[Dict[str, Any]] = []
+    for cand in candidates:
+        task = str(cand.get("single_step_task", "")).strip()
+        if not task:
+            continue
+        # 过滤与已探索任务相似度 >0.8 的候选
+        if already_explored:
+            skip = False
+            for explored in already_explored:
+                ratio = difflib.SequenceMatcher(None, task, explored).ratio()
+                if ratio > 0.8:
+                    logging.info(f"Candidate dedup: skip '{task}' (similar to explored '{explored}', sim={ratio:.2f})")
+                    skip = True
+                    break
+            if skip:
+                continue
+        # 过滤与已保留候选相似度 >sim_threshold 的候选
+        duplicate = False
+        for prev in kept:
+            prev_task = str(prev.get("single_step_task", ""))
+            ratio = difflib.SequenceMatcher(None, task, prev_task).ratio()
+            if ratio > sim_threshold:
+                logging.info(f"Candidate dedup: skip '{task}' (similar to kept '{prev_task}', sim={ratio:.2f})")
+                duplicate = True
+                break
+        if not duplicate:
+            kept.append(cand)
+    return kept
+
+
+# OPT-9: Explorer 响应缓存，避免回溯后对相同页面重复调用 Explorer API
+class ExplorerCache:
+    def __init__(self, ttl_sec: float = 300.0):
+        self._cache: Dict[str, Any] = {}
+        self._ttl = ttl_sec
+
+    def _make_key(self, struct_fp: str, depth: int, breadth: int, already_explored: Optional[List[str]]) -> str:
+        explored_hash = hashlib.md5("|".join(sorted(already_explored or [])).encode()).hexdigest()[:8]
+        return f"{struct_fp}|{depth}|{breadth}|{explored_hash}"
+
+    def get(self, struct_fp: str, depth: int, breadth: int, already_explored: Optional[List[str]]) -> Optional[List[Dict]]:
+        key = self._make_key(struct_fp, depth, breadth, already_explored)
+        entry = self._cache.get(key)
+        if entry and (time.time() - entry["ts"]) < self._ttl:
+            return list(entry["candidates"])
+        return None
+
+    def put(self, struct_fp: str, depth: int, breadth: int, already_explored: Optional[List[str]], candidates: List[Dict]) -> None:
+        key = self._make_key(struct_fp, depth, breadth, already_explored)
+        self._cache[key] = {"candidates": list(candidates), "ts": time.time()}
+
+
+# OPT-10: 设备状态缓存，合并 screenshot+hierarchy 采集，减少重复设备调用
+class ScreenStateCache:
+    def __init__(self, staleness_sec: float = 0.3):
+        self._screenshot_b64: Optional[str] = None
+        self._hierarchy_text: Optional[str] = None
+        self._last_capture: float = 0.0
+        self._staleness = staleness_sec
+
+    def capture(self, device, device_type: str, force: bool = False):
+        now = time.time()
+        if force or self._screenshot_b64 is None or (now - self._last_capture) > self._staleness:
+            self._screenshot_b64 = get_screenshot(device, device_type)
+            self._hierarchy_text = get_hierarchy_text(device)
+            self._last_capture = now
+        return self._screenshot_b64, self._hierarchy_text
+
+    def invalidate(self) -> None:
+        self._last_capture = 0.0
+
+
 def call_explorer_model(
     explorer_client: OpenAI,
     explorer_model: str,
@@ -1309,9 +1411,10 @@ def call_explorer_model(
     depth: int,
     breadth: int,
     action_history: List[Dict[str, Any]],
+    already_explored: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
     """调用远端通用大模型，返回候选单步任务列表。"""
-    prompt = build_explorer_prompt(depth, breadth, hierarchy_text, action_history)
+    prompt = build_explorer_prompt(depth, breadth, hierarchy_text, action_history, already_explored=already_explored)
 
     messages = [
         {
@@ -1631,13 +1734,21 @@ def explore_dfs(
     ui_collect_queue_size: int,
     path_actions: Optional[List[Dict[str, Any]]] = None,
     path_reacts: Optional[List[Dict[str, Any]]] = None,
+    visited_tasks: Optional[Dict[str, set]] = None,       # OPT-6: 已探索任务记录 {hierarchy_fp: {task, ...}}
+    explorer_cache: Optional["ExplorerCache"] = None,     # OPT-9: Explorer 响应缓存
+    screen_cache: Optional["ScreenStateCache"] = None,    # OPT-10: 设备状态缓存
 ) -> None:
     """DFS探索：每层挑选H个候选，逐个执行并回溯。"""
     if current_depth >= depth_limit:
         return
 
-    screenshot_b64 = get_screenshot(device, device_type)
-    hierarchy_text = get_hierarchy_text(device)
+    # OPT-10: 用 ScreenStateCache 合并采集，避免重复设备调用
+    if screen_cache is not None:
+        screenshot_b64, hierarchy_text = screen_cache.capture(device, device_type, force=True)
+    else:
+        screenshot_b64 = get_screenshot(device, device_type)
+        hierarchy_text = get_hierarchy_text(device)
+
     if (
         enable_ui_semantic_collect
         and collect_queue is not None
@@ -1659,16 +1770,41 @@ def explore_dfs(
             index_path=index_path,
             ui_collect_queue_size=ui_collect_queue_size,
         )
-    action_history = list(actions)
-    candidates = call_explorer_model(
-        explorer_client,
-        explorer_model,
-        screenshot_b64,
-        hierarchy_text,
-        current_depth,
-        breadth,
-        action_history,
-    )
+
+    # OPT-6: 用当前路径（非全局历史）作为 Explorer 上下文，提升语义连贯性
+    action_history = list(path_actions) if path_actions else list(actions)
+
+    # OPT-6: 从 visited_tasks 取当前页面已探索的任务列表
+    if visited_tasks is None:
+        visited_tasks = {}
+    current_page_fp = _hierarchy_fingerprint(hierarchy_text)
+    already_explored_list = list(visited_tasks.get(current_page_fp, set()))
+
+    # OPT-9: 先查 Explorer 缓存
+    struct_fp = _compute_hierarchy_struct_fingerprint(hierarchy_text)
+    cached_candidates = None
+    if explorer_cache is not None:
+        cached_candidates = explorer_cache.get(struct_fp, current_depth, breadth, already_explored_list)
+    if cached_candidates is not None:
+        # 过滤缓存中已被探索的候选
+        candidates = [c for c in cached_candidates if c.get("single_step_task", "") not in visited_tasks.get(current_page_fp, set())]
+        logging.info(f"Depth={current_depth}, Explorer cache hit, {len(candidates)} candidates after filter")
+    else:
+        candidates = call_explorer_model(
+            explorer_client,
+            explorer_model,
+            screenshot_b64,
+            hierarchy_text,
+            current_depth,
+            breadth,
+            action_history,
+            already_explored=already_explored_list,
+        )
+        if explorer_cache is not None:
+            explorer_cache.put(struct_fp, current_depth, breadth, already_explored_list, candidates)
+
+    # OPT-5: 候选语义去重
+    candidates = _deduplicate_candidates(candidates, already_explored=already_explored_list)
     base_hierarchy_text = hierarchy_text
 
     logging.info(f"Depth={current_depth}, got {len(candidates)} candidates")
@@ -1689,14 +1825,15 @@ def explore_dfs(
                 _normalize_hierarchy_text(base_hierarchy_text),
                 _normalize_hierarchy_text(current_hierarchy_text),
             ).ratio()
-            if similarity < 0.9:
+            page_change_threshold = _compute_adaptive_similarity_threshold(base_hierarchy_text)
+            if similarity < page_change_threshold:
                 remaining = max(breadth - cand_idx, 0)
                 if remaining == 0:
                     break
                 color = "\033[93m"
                 reset = "\033[0m"
                 logging.info(
-                    f"{color}Page changed (similarity={similarity:.3f} < 0.900). "
+                    f"{color}Page changed (similarity={similarity:.3f} < threshold={page_change_threshold:.3f}). "
                     f"Regenerating {remaining} candidates.{reset}"
                 )
                 screenshot_b64 = get_screenshot(device, device_type)
@@ -1722,15 +1859,22 @@ def explore_dfs(
                         index_path=index_path,
                         ui_collect_queue_size=ui_collect_queue_size,
                     )
-                candidates = candidates[:cand_idx] + call_explorer_model(
+                # 更新当前页面的已探索列表（页面变了，对应新的 fp）
+                new_page_fp = _hierarchy_fingerprint(base_hierarchy_text)
+                new_already_explored = list(visited_tasks.get(new_page_fp, set()))
+                new_candidates = call_explorer_model(
                     explorer_client,
                     explorer_model,
                     screenshot_b64,
                     base_hierarchy_text,
                     current_depth,
                     remaining,
-                    list(actions),
+                    list(path_actions) if path_actions else list(actions),
+                    already_explored=new_already_explored,
                 )
+                # OPT-5: 对重生成的候选也做去重
+                new_candidates = _deduplicate_candidates(new_candidates, already_explored=new_already_explored)
+                candidates = candidates[:cand_idx] + new_candidates
 
         cand = candidates[cand_idx]
         task = cand["single_step_task"]
@@ -1751,6 +1895,13 @@ def explore_dfs(
 
         action_record = None
         pre_hierarchy_text = get_hierarchy_text(device)
+        get_screenshot(device, device_type)  # 更新临时截图文件，用于回溯验证
+        pre_screenshot_path = "screenshot-Android.jpg" if device_type == "Android" else "screenshot-Harmony.jpg"
+        pre_struct_fp = _compute_hierarchy_struct_fingerprint(pre_hierarchy_text)
+        try:
+            pre_dhash = _compute_dhash_hex(pre_screenshot_path)
+        except Exception:
+            pre_dhash = ""
         try:
             # step_result = execute_decider_one_step(
             #     decider_client=explorer_client,
@@ -1806,6 +1957,15 @@ def explore_dfs(
             reacts.append(react_item)
             current_path_actions.append(action_record)
             current_path_reacts.append(react_item)
+
+            # OPT-6: 记录当前页面已执行的任务，防止后续候选重复
+            if current_page_fp not in visited_tasks:
+                visited_tasks[current_page_fp] = set()
+            visited_tasks[current_page_fp].add(task)
+
+            # OPT-10: 动作执行后使设备状态缓存失效
+            if screen_cache is not None:
+                screen_cache.invalidate()
 
             persist_step_output(step_output_dir, app_name, action_record, react_item)
 
@@ -1872,12 +2032,15 @@ def explore_dfs(
                     ui_collect_queue_size=ui_collect_queue_size,
                     path_actions=current_path_actions,
                     path_reacts=current_path_reacts,
+                    visited_tasks=visited_tasks,
+                    explorer_cache=explorer_cache,
+                    screen_cache=screen_cache,
                 )
 
         except Exception as e:
             logging.error(f"Failed to execute candidate at depth {current_depth}: {e}")
 
-        # 回溯：默认执行返回，再检查是否回到正确界面
+        # 回溯：执行返回动作
         perform_backtrack_action(device, device_type, action_record)
 
         post_back_hierarchy = get_hierarchy_text(device)
@@ -1890,27 +2053,58 @@ def explore_dfs(
             time.sleep(DEVICE_WAIT_TIME * 2)
             post_back_hierarchy = get_hierarchy_text(device)
 
-        expected_fp = _hierarchy_fingerprint(pre_hierarchy_text)
-        actual_fp = _hierarchy_fingerprint(post_back_hierarchy)
-        if expected_fp and actual_fp and expected_fp != actual_fp:
-            similarity_after_back = difflib.SequenceMatcher(
-                None,
-                _normalize_hierarchy_text(pre_hierarchy_text),
-                _normalize_hierarchy_text(post_back_hierarchy),
-            ).ratio()
-            if len(current_path_actions) >= 2 and similarity_after_back < 0.9: #如果返回的不是上一级UI界面
-                recovery_action = current_path_actions[-2]
-                logging.warning(
-                    "\033[93mBacktrack may overshoot (sim=%.3f). Replaying previous action(type=%s) to recover parent page.\033[0m",
-                    similarity_after_back,
-                    recovery_action.get("type", ""),
+        # 三重验证：文本指纹 + 结构指纹 + 视觉dHash，2/3通过则认为回溯成功
+        post_back_screenshot_path = "screenshot-Android.jpg" if device_type == "Android" else "screenshot-Harmony.jpg"
+        get_screenshot(device, device_type)  # 更新临时截图文件
+
+        fp_ok = (_hierarchy_fingerprint(pre_hierarchy_text) == _hierarchy_fingerprint(post_back_hierarchy))
+        struct_ok = (pre_struct_fp == _compute_hierarchy_struct_fingerprint(post_back_hierarchy))
+        try:
+            post_dhash = _compute_dhash_hex(post_back_screenshot_path)
+            visual_ok = (bin(int(pre_dhash, 16) ^ int(post_dhash, 16)).count("1") <= 3) if pre_dhash and post_dhash else fp_ok
+        except Exception:
+            visual_ok = fp_ok  # 视觉比对失败时退化为文本指纹结果
+
+        verified = (int(fp_ok) + int(struct_ok) + int(visual_ok)) >= 2
+
+        if not verified:
+            logging.warning(
+                "\033[93mBacktrack verification failed (fp=%s struct=%s visual=%s). Attempting full path replay.\033[0m",
+                fp_ok, struct_ok, visual_ok,
+            )
+            # 全路径重播恢复：从App根重播当前路径的所有前置动作
+            recovered = False
+            for attempt in range(2):
+                device.start_app(app_name)
+                time.sleep(DEVICE_WAIT_TIME * 2)
+                replay_ok = True
+                for replay_act in current_path_actions[:-1]:
+                    if not replay_action_record(device, replay_act):
+                        replay_ok = False
+                        break
+                    time.sleep(DEVICE_WAIT_TIME)
+                if not replay_ok:
+                    logging.warning("\033[93mPath replay action failed on attempt %d.\033[0m", attempt + 1)
+                    continue
+                # 重新验证
+                replay_hierarchy = get_hierarchy_text(device)
+                get_screenshot(device, device_type)
+                r_fp_ok = (_hierarchy_fingerprint(pre_hierarchy_text) == _hierarchy_fingerprint(replay_hierarchy))
+                r_struct_ok = (pre_struct_fp == _compute_hierarchy_struct_fingerprint(replay_hierarchy))
+                try:
+                    r_dhash = _compute_dhash_hex(post_back_screenshot_path)
+                    r_visual_ok = (bin(int(pre_dhash, 16) ^ int(r_dhash, 16)).count("1") <= 3) if pre_dhash and r_dhash else r_fp_ok
+                except Exception:
+                    r_visual_ok = r_fp_ok
+                if (int(r_fp_ok) + int(r_struct_ok) + int(r_visual_ok)) >= 2:
+                    recovered = True
+                    logging.info("\033[92mFull path replay recovery succeeded on attempt %d.\033[0m", attempt + 1)
+                    break
+            if not recovered:
+                logging.error(
+                    "\033[91mBacktrack recovery failed after full path replay. Skipping remaining candidates at this depth.\033[0m"
                 )
-                replay_action_record(device, recovery_action)
-            else:
-                logging.info(
-                    "\033[93mBacktrack verification mismatch but no recovery action replay (sim=%.3f).\033[0m",
-                    similarity_after_back,
-                )
+                break  # 跳出候选循环，不污染后续兄弟候选的数据
 
         cand_idx += 1
 
@@ -2064,6 +2258,11 @@ def main() -> None:
     try:
         decider_model = DECIDER_MODEL_PLACEHOLDER
 
+        # 初始化 OPT-5/6/9/10 所需的会话级对象
+        visited_tasks: Dict[str, set] = {}
+        explorer_cache = ExplorerCache(ttl_sec=300.0)
+        screen_cache = ScreenStateCache(staleness_sec=0.3)
+
         explore_dfs(
             app_name=args.app_name,
             depth_limit=args.depth,
@@ -2094,6 +2293,9 @@ def main() -> None:
             index_path=index_path,
             ui_collect_async=ui_collect_async,
             ui_collect_queue_size=args.ui_collect_queue_size,
+            visited_tasks=visited_tasks,
+            explorer_cache=explorer_cache,
+            screen_cache=screen_cache,
             )
     finally:
         if enable_ui_semantic_collect and ui_collect_async and collect_queue is not None:

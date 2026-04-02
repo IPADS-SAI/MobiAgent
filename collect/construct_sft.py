@@ -166,10 +166,10 @@ def validate_action(action_type, param):
         "click": ["target_element","bbox"],
         "input": ["text"],
         "click_input": ["target_element","text","bbox"],
-        "open_app": ["app_name"],
-        "press_home": [],
-        "press_back": [],
         "swipe": ["direction", "start_coords", "end_coords"],
+        "open_app": ["app_name"],
+        "press_home":[],
+        "press_back":[],
         "wait": [],
         "done": ["status"]
     }

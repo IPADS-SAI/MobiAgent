@@ -44,37 +44,6 @@
 
 ---
 
-### OPT-3：自适应页面变化相似度阈值
-
-**文件**：`MobiAgent/runner/mobiagent/auto-search.py`
-
-#### 问题
-候选广度循环中判断页面是否跳转的阈值硬编码为 `0.9`，无法适应不同复杂度的页面：
-- **feed 流页面**（外卖首页、推荐列表等，50+ 元素）：内容自动刷新、时间戳变化导致相似度正常波动到 0.85 左右，频繁误触发候选重生成，浪费 Explorer API 调用
-- **简单弹窗**（2-5 个按钮）：任何真实跳转相似度变化都很大，0.9 阈值反而合适
-
-#### 修改内容
-
-**新增函数** `_compute_adaptive_similarity_threshold(hierarchy_text) -> float`（第 574 行附近）：
-- 统计页面 clickable 元素数量，复用已有的 `_collect_struct_tokens_from_xml/json`
-- 元素数 ≤5 时阈值 0.93，元素数 ≥30 时阈值 0.70，中间线性插值：
-  `threshold = max(0.70, 0.95 - 0.01 * min(element_count, 25))`
-
-**替换第 1710 行**：
-- 旧：`if similarity < 0.9`
-- 新：`page_change_threshold = _compute_adaptive_similarity_threshold(base_hierarchy_text)` + `if similarity < page_change_threshold`
-
-**更新日志格式**：日志中同步打印实际使用的阈值，便于调试观察。
-
-#### 复用的已有函数（无新增函数）
-
-| 函数 | 原位置 |
-|------|--------|
-| `_collect_struct_tokens_from_xml()` | 第 662 行 |
-| `_collect_struct_tokens_from_json()` | 第 680 行 |
-
----
-
 ### OPT-5：候选动作执行前语义去重
 
 **文件**：`MobiAgent/runner/mobiagent/auto-search.py`
@@ -161,3 +130,53 @@ Explorer 模型经常返回语义近似的候选（如"点击设置"与"进入�
 - 递归调用时透传
 
 **`main()`** 初始化 `screen_cache = ScreenStateCache(staleness_sec=0.3)`
+
+
+
+### 4.6
+#### 问题1
+经常小箭头返回导致死循环
+#### 修改内容
+修改prompt，告诉模型尽量不点击小箭头
+
+#### 问题2
+更改手机和模型后框识别有无
+#### 修改内容
+bat中新增4个可调参数
+`BBOX_IOU_THRESHOLD`	IoU 门槛降低，更容易匹配到 XML 元素
+`BBOX_CENTER_DIST_RATIO`	中心距容忍范围扩大近 2 倍
+`BBOX_AREA_RATIO_MIN`	允许匹配更小的元素
+`BBOX_AREA_RATIO_MAX`	允许匹配更大的元素
+
+#### 问题3
+对于广告弹窗的处理
+#### 修改内容
+- `build_explorer_prompt()` 新增第 11 条：要求模型检测广告/弹窗并返回 `popup: {detected, close_point}` 字段，坐标格式 0-1000
+- `call_explorer_model()` 新增解析 `popup_info` 并作为第二返回值
+- `explore_dfs()` 新增弹窗自动关闭循环：有 `close_point` 则点击，否则按返回键；关闭后重新调用 Explorer 验证，最多重试 `popup_dismiss_max_attempts` 次（默认 2，可通过 bat 参数配置）
+1、点击关闭
+2、等待稳定
+3、重新explorer检查是否还有广告
+4、若有再重试
+
+#### 新问题 广告类型多种多样，可能有的必须要等待一定时间在解决
+
+
+#### 问题4
+对于不同页面的判断，比如美团的待付款 待收款 多个选项界面非常相似，且会陷入循环 回溯后同一个界面重新进入后选项变了
+#### 修改内容
+回溯验证三重指纹中的文本指纹（`fp_ok`）改用稳定文本指纹：
+- 新增 `_stable_text_fingerprint()`：只提取 resource-id 或 class 包含 `title/tab/nav/toolbar/header/bottom/action_bar` 等关键词的固定 UI 元素文字计算 SHA1，忽略推荐内容、商家名称等动态文字
+- 提取不到稳定元素时自动退化为原全文本指纹 `_hierarchy_fingerprint()`
+- 替换回溯验证（第 2232 行）和全路径重播验证（第 2270 行）中的 `fp_ok` / `r_fp_ok` 计算
+- 效果：动态 feed 页面（美团首页等）回溯后内容刷新不再导致 `fp_ok = False` 误判；待付款/待收货等 Tab 因标题文字不同仍能正确区分
+
+
+#### 问题5
+一些加载页面，模型立刻判断检测，导致问题
+#### 修改内容
+动作执行后新增两段式等待逻辑（`_wait_for_page_loaded`）：
+1. 先固定等待 `PAGE_LOAD_WAIT_SEC`（默认 1.5s），让页面开始渲染
+2. 再循环最多 `PAGE_LOAD_STABLE_MAX_POLLS` 次（默认 6 次，每次间隔 0.5s），将截图发给 VLM 判断页面是否仍处于加载状态（spinner、骨架屏、空白内容区、"加载中"文字等）；VLM 回答 NO 或调用失败时立即退出循环，不阻塞流程
+两个参数均可在 bat 文件中配置，适配不同 App 和手机性能
+

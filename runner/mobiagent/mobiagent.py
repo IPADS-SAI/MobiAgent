@@ -1236,11 +1236,23 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3
         handler()
         
     
+    from datetime import datetime
+    
+    # 获取当前日期、星期和时间
+    now = datetime.now()
+    weekdays = ['星期一', '星期二', '星期三', '星期四', '星期五', '星期六', '星期日']
+    execution_timestamp = {
+        "date": now.strftime("%Y-%m-%d"),
+        "weekday": weekdays[now.weekday()],
+        "time": now.strftime("%H:%M:%S")
+    }
+    
     data = {
         "app_name": app,
         "task_type": None,
         "old_task_description": old_task,
         "task_description": task,
+        "execution_timestamp": execution_timestamp,
         "action_count": len(actions),
         "actions": actions
     }

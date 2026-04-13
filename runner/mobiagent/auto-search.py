@@ -252,6 +252,17 @@ def persist_outputs(
         normalized.pop("source_task", None)
         normalized_actions.append(normalized)
 
+    from datetime import datetime
+    
+    # 获取当前日期、星期和时间
+    now = datetime.now()
+    weekdays = ['星期一', '星期二', '星期三', '星期四', '星期五', '星期六', '星期日']
+    execution_timestamp = {
+        "date": now.strftime("%Y-%m-%d"),
+        "weekday": weekdays[now.weekday()],
+        "time": now.strftime("%H:%M:%S")
+    }
+    
     normalized_reacts: List[Dict[str, Any]] = []
     for idx, item in enumerate(reacts, 1):
         normalized = dict(item)
@@ -264,6 +275,7 @@ def persist_outputs(
         "task_type": "auto_search",
         "old_task_description": None,
         "task_description": computed_task_description,
+        "execution_timestamp": execution_timestamp,
         "action_count": len(normalized_actions),
         "actions": normalized_actions,
     }

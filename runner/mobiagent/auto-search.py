@@ -55,8 +55,8 @@ try:
 except Exception:
     KeyCode = None
 
-
-logging.basicConfig(
+#设置日志配置
+logging.basicConfig( 
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
 )
@@ -66,9 +66,23 @@ EXPLORER_MAX_TOKENS = 1024
 MAX_RETRIES = 3
 DEVICE_WAIT_TIME = 0.6
 DECIDER_MODEL_PLACEHOLDER = ""
+
+# 页面加载等待（由 main() 从命令行参数覆写）
+# 固定等待：每次动作后固定睡眠的秒数
+PAGE_LOAD_WAIT_SEC: float = 1.5
+# 智能等待：最多轮询几次，每次间隔 0.5s，检测 hierarchy 是否稳定
+PAGE_LOAD_STABLE_MAX_POLLS: int = 6  # 最多等 3s（6 × 0.5s）
+PAGE_LOAD_STABLE_POLL_INTERVAL: float = 0.5
+
+# BBox 精炼阈值（由 main() 从命令行参数覆写，换模型/换手机时在 bat 里调整）
+BBOX_REFINE_IOU_THRESHOLD = 0.3       # IoU >= 此值则采用 XML 元素边框
+BBOX_REFINE_CENTER_DIST_RATIO = 0.08  # 中心距 / 屏幕对角线 <= 此值才匹配
+BBOX_REFINE_AREA_RATIO_MIN = 0.5      # 候选元素面积 / 模型 bbox 面积的下限
+BBOX_REFINE_AREA_RATIO_MAX = 2.0      # 候选元素面积 / 模型 bbox 面积的上限
 AUTO_DECIDER_CURRENT_STEP_PROMPT = (
     "Please provide the next action based on the screenshot and your action history. "
     "You should do careful reasoning before providing the action."
+    "Do not choose the back action unless you have a clear reason to believe the current screen is not the target screen and going back is necessary to reach the target screen."
 )
 AUTO_DECIDER_USER_PROMPT = (
     "### Current Task\n"
@@ -81,14 +95,96 @@ AUTO_DECIDER_USER_PROMPT = (
     "- Do not output done."
 )
 
+def _cv2_imread_unicode(path: str):
+    """cv2.imread that handles non-ASCII paths on Windows."""
+    import numpy as np
+    try:
+        arr = np.fromfile(path, dtype=np.uint8)
+        return cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    except Exception:
+        return None
 
+def _cv2_imwrite_unicode(path: str, img) -> bool:
+    """cv2.imwrite that handles non-ASCII paths on Windows."""
+    try:
+        ext = os.path.splitext(path)[1]
+        ok, buf = cv2.imencode(ext, img)
+        if ok:
+            buf.tofile(path)
+            return True
+    except Exception:
+        pass
+    return False
+
+def _wait_for_page_loaded(
+    decider_client: "OpenAI",
+    decider_model: str,
+    device,
+    device_type: str,
+) -> None:
+    """动作执行后等待页面加载完成：先固定等待，再让 VLM 判断截图是否仍处于加载状态。
+    如果 VLM 判断还在加载，则等待 PAGE_LOAD_STABLE_POLL_INTERVAL 后重试，
+    最多重试 PAGE_LOAD_STABLE_MAX_POLLS 次。
+    """
+    time.sleep(PAGE_LOAD_WAIT_SEC)
+
+    for poll in range(PAGE_LOAD_STABLE_MAX_POLLS):
+        screenshot_b64 = get_screenshot(device, device_type)
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/jpeg;base64,{screenshot_b64}"},
+                    },
+                    {
+                        "type": "text",
+                        "text": (
+                            "Look at this mobile app screenshot. "
+                            "Is the page still loading? "
+                            "Signs of loading include: spinning indicators, skeleton screens, "
+                            "blank/white content areas, progress bars, "
+                            "or text like '加载中' / '正在加载' / 'Loading'. "
+                            "Reply with exactly one word: YES or NO."
+                        ),
+                    },
+                ],
+            }
+        ]
+        try:
+            resp = decider_client.chat.completions.create(
+                model=decider_model,
+                messages=messages,
+                max_tokens=8,
+                timeout=15,
+            )
+            answer = (resp.choices[0].message.content or "").strip().upper()
+            still_loading = answer.startswith("YES")
+        except Exception as e:
+            logging.warning("Page-load VLM check failed (poll=%d): %s", poll + 1, e)
+            still_loading = False  # 模型调用失败时不阻塞，直接继续
+
+        if not still_loading:
+            if poll > 0:
+                logging.info("Page loaded after %d extra poll(s).", poll)
+            break
+
+        logging.info(
+            "Page still loading (poll=%d/%d), waiting %.1fs...",
+            poll + 1, PAGE_LOAD_STABLE_MAX_POLLS, PAGE_LOAD_STABLE_POLL_INTERVAL,
+        )
+        time.sleep(PAGE_LOAD_STABLE_POLL_INTERVAL)
+
+
+#加载中文字体
 def _load_font(size: int = 36) -> ImageFont.FreeTypeFont:
     try:
         return ImageFont.truetype("msyh.ttf", size)
     except Exception:
         return ImageFont.load_default()
 
-
+#在每一步的截图上绘制动作相关的可视化标记，生成多个版本的标注图片，方便后续分析和调试
 def annotate_action_visuals(
     action: str,
     action_record: Dict[str, Any],
@@ -130,14 +226,14 @@ def annotate_action_visuals(
             bounds_path = os.path.join(data_dir, f"{step_index}_bounds.jpg")
             img_bounds.save(bounds_path)
 
-            cv2image = cv2.imread(bounds_path)
+            cv2image = _cv2_imread_unicode(bounds_path)
             if cv2image is not None:
                 x = action_record.get("position_x")
                 y = action_record.get("position_y")
                 if x is not None and y is not None:
                     cv2.circle(cv2image, (int(x), int(y)), 12, (0, 255, 0), -1)
                     click_point_path = os.path.join(data_dir, f"{step_index}_click_point.jpg")
-                    cv2.imwrite(click_point_path, cv2image)
+                    _cv2_imwrite_unicode(click_point_path, cv2image)
 
     if action == "swipe":
         sx = action_record.get("press_position_x")
@@ -145,7 +241,7 @@ def annotate_action_visuals(
         ex = action_record.get("release_position_x")
         ey = action_record.get("release_position_y")
         if None not in (sx, sy, ex, ey):
-            cv2image = cv2.imread(highlighted_path)
+            cv2image = _cv2_imread_unicode(highlighted_path)
             if cv2image is not None:
                 cv2.arrowedLine(
                     cv2image,
@@ -156,7 +252,7 @@ def annotate_action_visuals(
                     tipLength=0.3,
                 )
                 swipe_path = os.path.join(data_dir, f"{step_index}_swipe.jpg")
-                cv2.imwrite(swipe_path, cv2image)
+                _cv2_imwrite_unicode(swipe_path, cv2image)
 
 
 def save_hierarchy(device, device_type: str, data_dir: str, step_index: int) -> None:
@@ -195,7 +291,8 @@ def save_raw_screenshot(data_dir: str, step_index: int, device_type: str) -> str
         wf.write(rf.read())
     return dst
 
-
+# 根据已执行的动作序列，生成一个完整的人类可读的任务描述
+# 如果动作记录中包含 "source_task" 字段，则优先使用这些字段来构建任务描述，按照动作的顺序依次组合成一个步骤清单；如果没有，则回退到使用传入的 task_description 参数；如果仍然没有，则生成一个默认的描述，如 "打开{app_name}"。
 def _compute_task_description(
     actions: List[Dict[str, Any]],
     app_name: str,
@@ -217,7 +314,7 @@ def _compute_task_description(
         return f"打开{app_name}，" + "，".join(step_desc_parts)
     return task_description or f"打开{app_name}"
 
-
+# 将动作记录和模型反应持久化到输出目录，生成标准化的 actions.json 和 react.json 文件，供后续分析和调试使用
 def persist_outputs(
     output_dir: str,
     app_name: str,
@@ -286,7 +383,7 @@ def persist_outputs(
     with open(os.path.join(output_dir, "react.json"), "w", encoding="utf-8") as f:
         json.dump(normalized_reacts, f, ensure_ascii=False, indent=4)
 
-
+# 保存单步输出
 def persist_step_output(
     output_dir: str,
     app_name: str,
@@ -301,7 +398,7 @@ def persist_step_output(
         task_description=action_record.get("source_task"),
     )
 
-
+# 将该路径涉及的所有步骤目录中的文件复制到指定路径，并在复制过程中根据新的顺序重命名文件，确保在 path_dir 中形成一个连续的步骤序列，方便后续分析和调试使用
 def copy_step_artifacts_to_path(steps_dir: str, path_dir: str, step_indices: List[int]) -> None:
     """将指定 step 目录中的截图/标注/xml 等文件复制到 path 目录，并在 path 内重编号。"""
     os.makedirs(path_dir, exist_ok=True)
@@ -326,7 +423,7 @@ def copy_step_artifacts_to_path(steps_dir: str, path_dir: str, step_indices: Lis
             except Exception as e:
                 logging.warning(f"Failed to copy {src} -> {dst}: {e}")
 
-
+# 模拟用户点击设备的"返回"按钮，用于在探索过程中回溯到上一级界面。
 def navigate_back(device, device_type: str) -> None:
     """执行返回上一层。"""
     try:
@@ -351,12 +448,12 @@ def _get_current_screen_size(device_type: str) -> Optional[tuple[int, int]]:
         logging.warning(f"Failed to read current screenshot size: {e}")
         return None
 
-
+# 给定一个滑动方向，返回其相反方向，用于实现回溯操作中的反向滑动。
 def _reverse_direction(direction: str) -> str:
     mapping = {"UP": "DOWN", "DOWN": "UP", "LEFT": "RIGHT", "RIGHT": "LEFT"}
     return mapping.get(direction.upper(), "DOWN")
 
-
+# 将屏幕上的绝对像素坐标边界框转换为Qwen3模型使用的0-1000范围内的相对坐标
 def _convert_bbox_to_qwen3_relative(bbox: List[int], img_w: int, img_h: int) -> List[int]:
     if img_w <= 0 or img_h <= 0:
         return bbox
@@ -368,7 +465,7 @@ def _convert_bbox_to_qwen3_relative(bbox: List[int], img_w: int, img_h: int) -> 
         int(round(y2 / img_h * 1000)),
     ]
 
-
+# 获取应用的包名， 包名是Android/Harmony系统中每个应用的唯一标识符，如 "com.example.app"，在自动探索过程中用于识别当前前台应用是否与目标应用匹配。
 def _get_app_package_name(device, app_name: str) -> Optional[str]:
     if not app_name:
         return None
@@ -433,7 +530,7 @@ def _extract_foreground_from_hierarchy(hierarchy_text: str) -> tuple[str, str]:
 
     return _walk(obj)
 
-
+# 通过多种方式（API调用、Shell命令、层级解析）获取当前前台运行的应用信息，包括包名和页面名称，并记录信息来源。
 def _get_foreground_app_state(device, device_type: str, hierarchy_text: str = "") -> Dict[str, str]:
     state = {"package": "", "ability": "", "source": "unknown"}
     driver = getattr(device, "d", None)
@@ -480,7 +577,7 @@ def _get_foreground_app_state(device, device_type: str, hierarchy_text: str = ""
         state.update({"package": pkg, "ability": ability, "source": "hierarchy"})
     return state
 
-
+# 判断当前前台应用是否与目标应用匹配，主要通过包名进行匹配，如果包名信息不可用，则回退到层级文本中进行模糊匹配，以提高在信息不完整情况下的鲁棒性。
 def _is_app_in_foreground(device, device_type: str, app_name: Optional[str], hierarchy_text: str) -> bool:
     if not app_name:
         return True
@@ -506,7 +603,7 @@ def _is_app_in_foreground(device, device_type: str, app_name: Optional[str], hie
         return package_name in hierarchy_text
     return True
 
-
+# 根据动作记录中的信息，模拟用户在设备上执行相应的操作，如点击、输入、滑动等，并在执行过程中进行必要的错误处理和日志记录，以确保探索过程的稳定性和可追踪性。
 def replay_action_record(device, action_record: Dict[str, Any]) -> bool:
     action_type = str(action_record.get("type", "")).lower()
     try:
@@ -549,7 +646,7 @@ def replay_action_record(device, action_record: Dict[str, Any]) -> bool:
         return False
     return False
 
-
+# 根据动作记录中的信息，执行相应的回溯操作，如点击返回按钮、执行反向滑动等，以尝试回到上一级界面，帮助模型在探索过程中进行有效的路径回退和重新尝试。
 def perform_backtrack_action(device, device_type: str, action_record: Optional[Dict[str, Any]]) -> None:
     if not action_record:
         navigate_back(device, device_type)
@@ -557,7 +654,7 @@ def perform_backtrack_action(device, device_type: str, action_record: Optional[D
 
     action_type = str(action_record.get("type", "")).lower()
     if action_type == "click_input":
-        navigate_back(device, device_type)
+        navigate_back(device, device_type) #关闭输入法？
         navigate_back(device, device_type)
         return
 
@@ -577,12 +674,29 @@ def perform_backtrack_action(device, device_type: str, action_record: Optional[D
 
     navigate_back(device, device_type)
 
-
+#对UI层级文本进行归一化处理，去除动态内容的影响，提取稳定的结构特征
 def _normalize_hierarchy_text(text: str) -> str:
     text = re.sub(r"\d+", "#", text)
     return "".join(text.split())
 
+# 根据页面元素数量动态计算相似度阈值：元素越多（如feed流），正常内容刷新的波动越大，阈值适当降低以避免误判为页面跳转。
+def _compute_adaptive_similarity_threshold(hierarchy_text: str) -> float:
+    if not hierarchy_text:
+        return 0.9
+    if hierarchy_text.lstrip().startswith("<"):
+        tokens = _collect_struct_tokens_from_xml(hierarchy_text)
+    else:
+        try:
+            obj = json.loads(hierarchy_text)
+            tokens = _collect_struct_tokens_from_json(obj)
+        except Exception:
+            tokens = []
+    element_count = len(tokens)
+    # 元素数 <=5 时阈值 0.93，元素数 >=30 时阈值 0.70，中间线性插值
+    return max(0.70, 0.95 - 0.01 * min(element_count, 25))
 
+
+# 计算UI层级文本的指纹，首先对文本进行归一化处理，然后使用SHA-1哈希算法生成一个16字符长度的指纹字符串，用于快速比较不同界面的相似度和识别唯一界面。
 def _hierarchy_fingerprint(hierarchy_text: str) -> str:
     if not hierarchy_text:
         return ""
@@ -592,10 +706,68 @@ def _hierarchy_fingerprint(hierarchy_text: str) -> str:
     return hashlib.sha1(normalized.encode("utf-8")).hexdigest()[:16]
 
 
+# 稳定文本指纹关键词：匹配导航栏/标题/底部Tab等固定UI元素的 resource-id 片段
+_STABLE_RESOURCE_ID_KEYWORDS = (
+    "title", "tab", "nav", "toolbar", "header",
+    "bottom", "action_bar", "actionbar", "topbar",
+)
+# 稳定文本指纹关键词：匹配对应的 class 名片段
+_STABLE_CLASS_KEYWORDS = (
+    "Toolbar", "ActionBar", "TabLayout", "BottomNavigationView",
+    "NavigationView", "TabBar",
+)
+
+def _stable_text_fingerprint(hierarchy_text: str) -> str:
+    """只对导航栏/标题/底部Tab等固定UI元素的文字计算指纹，忽略内容区动态文字。
+    提取不到稳定元素时退化为完整文本指纹。"""
+    if not hierarchy_text:
+        return ""
+    stable_texts: List[str] = []
+    try:
+        if hierarchy_text.lstrip().startswith("<"):
+            root = ET.fromstring(hierarchy_text)
+            for node in root.iter():
+                res_id = node.attrib.get("resource-id", "").lower()
+                cls = node.attrib.get("class", "")
+                text = node.attrib.get("text", "").strip()
+                if not text:
+                    continue
+                if any(kw in res_id for kw in _STABLE_RESOURCE_ID_KEYWORDS) or \
+                   any(kw in cls for kw in _STABLE_CLASS_KEYWORDS):
+                    stable_texts.append(text)
+        else:
+            obj = json.loads(hierarchy_text)
+            def _walk_stable(node: Any) -> None:
+                if isinstance(node, dict):
+                    attrs = node.get("attributes") if isinstance(node.get("attributes"), dict) else node
+                    res_id = str(attrs.get("resource-id", attrs.get("id", ""))).lower()
+                    cls = str(attrs.get("className", attrs.get("class", "")))
+                    text = str(attrs.get("text", attrs.get("content", ""))).strip()
+                    if text and (
+                        any(kw in res_id for kw in _STABLE_RESOURCE_ID_KEYWORDS) or
+                        any(kw in cls for kw in _STABLE_CLASS_KEYWORDS)
+                    ):
+                        stable_texts.append(text)
+                    for v in node.values():
+                        _walk_stable(v)
+                elif isinstance(node, list):
+                    for item in node:
+                        _walk_stable(item)
+            _walk_stable(obj)
+    except Exception:
+        pass
+
+    if not stable_texts:
+        return _hierarchy_fingerprint(hierarchy_text)
+
+    joined = "|".join(sorted(stable_texts))
+    return hashlib.sha1(joined.encode("utf-8")).hexdigest()[:16]
+
+# 获取当前时间戳的字符串表示，格式为 "YYYY-MM-DDTHH:MM:SS"，用于记录页面索引的创建和更新时刻，方便后续的排序和管理。
 def _now_ts() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S")
 
-
+# 将页面索引信息保存到指定的JSON文件中，页面索引包含每个页面的唯一指纹、页面ID、输出目录、状态、尝试次数、创建时间、最后尝试时间、最后错误信息、快照信息、层级深度和去重键等元数据，以便后续的查询和管理。
 def _save_ui_page_index(index_path: str, page_registry: Dict[str, Dict[str, Any]], index_lock: threading.Lock) -> None:
     with index_lock:
         try:
@@ -608,7 +780,7 @@ def _save_ui_page_index(index_path: str, page_registry: Dict[str, Dict[str, Any]
         except Exception as e:
             logging.warning(f"Failed to save ui page index: {e}")
 
-
+# 从指定的JSON文件中加载页面索引信息，并将其转换为一个字典，键为页面指纹，值为页面的元数据信息，包括页面ID、输出目录、状态、尝试次数、创建时间、最后尝试时间、最后错误信息、快照信息、层级深度和去重键等，以便后续的查询和管理。
 def _load_ui_page_index(index_path: str) -> Dict[str, Dict[str, Any]]:
     if not os.path.exists(index_path):
         return {}
@@ -633,7 +805,7 @@ def _load_ui_page_index(index_path: str) -> Dict[str, Dict[str, Any]]:
         logging.warning(f"Failed to load ui page index: {e}")
         return {}
 
-
+# 计算下一个页面ID，遍历现有页面索引中的页面ID，找到最大的ID值并加1，确保新页面的ID是唯一且连续的，便于后续的页面管理和查询。
 def _next_page_id(page_registry: Dict[str, Dict[str, Any]]) -> int:
     max_id = 0
     for item in page_registry.values():
@@ -669,7 +841,7 @@ def _compute_dhash_hex(image_path: str, hash_size: int = 8) -> str:
         value = (value << 1) | bit
     return f"{value:016x}"
 
-
+# 从UI层级文本中提取可点击元素的类名、资源ID和边界框信息，生成一个结构化的特征列表，用于计算界面结构的指纹，以便在探索过程中识别相似界面和进行去重。
 def _collect_struct_tokens_from_xml(hierarchy_text: str) -> List[str]:
     tokens: List[str] = []
     try:
@@ -1159,7 +1331,7 @@ def refine_bbox_with_hierarchy(
     bcx = (bx1 + bx2) / 2
     bcy = (by1 + by2) / 2
     b_area = max(1, (bx2 - bx1) * (by2 - by1))
-    max_center_dist = (img_w**2 + img_h**2) ** 0.5 * 0.08
+    max_center_dist = (img_w**2 + img_h**2) ** 0.5 * BBOX_REFINE_CENTER_DIST_RATIO
 
     for cand in bounds_list:
         iou = _bbox_iou(bbox, cand)
@@ -1167,7 +1339,7 @@ def refine_bbox_with_hierarchy(
             best_iou = iou
             best_bbox = cand
 
-    if best_iou >= 0.3:
+    if best_iou >= BBOX_REFINE_IOU_THRESHOLD:
         logging.info(
             f"{green}BBox refined by IoU (iou={best_iou:.3f}) from {bbox} to {best_bbox}.{reset}"
         )
@@ -1179,7 +1351,7 @@ def refine_bbox_with_hierarchy(
     center_dist = ((ccx - bcx) ** 2 + (ccy - bcy) ** 2) ** 0.5
     c_area = max(1, (cx2 - cx1) * (cy2 - cy1))
     area_ratio = c_area / b_area if b_area else 1.0
-    if center_dist <= max_center_dist and 0.5 <= area_ratio <= 2.0:
+    if center_dist <= max_center_dist and BBOX_REFINE_AREA_RATIO_MIN <= area_ratio <= BBOX_REFINE_AREA_RATIO_MAX:
         logging.info(
             f"{green}BBox refined by center/area from {bbox} to {best_bbox}.{reset}"
         )
@@ -1213,11 +1385,16 @@ def build_explorer_prompt(
     breadth: int,
     hierarchy_text: str,
     action_history: List[Dict[str, Any]],
+    already_explored: Optional[List[str]] = None,
 ) -> str:
     """构建通用大模型的候选动作生成提示词。"""
     history_text = format_action_history(action_history)
+    already_explored_text = ""
+    if already_explored:
+        items = "\n".join(f"- {t}" for t in already_explored)
+        already_explored_text = f"\n已在当前页面完成探索的操作（请勿重复生成）:\n{items}\n"
     return f"""
-你是移动端GUI探索助手。请结合截图、层级信息以及已发生的交互动作序列，输出当前界面“最有可能被用户下一步操作”的前{breadth}个单步任务，优先选择左侧、顶部或者底部的导航栏中的元素，并尽可能保证前后动作的连贯性。
+你是移动端GUI探索助手。请结合截图、层级信息以及已发生的交互动作序列，输出当前界面"最有可能被用户下一步操作"的前{breadth}个单步任务，优先选择左侧、顶部或者底部的导航栏中的元素，并尽可能保证前后动作的连贯性。尽量不选择返回按钮和重复的动作。如果只剩下返回按钮，则终止这条收集。
 
 要求：
 1) 只输出 JSON，不要输出任何额外文本。
@@ -1226,22 +1403,25 @@ def build_explorer_prompt(
   "candidates": [
     {{
       "rank": 1,
-      "single_step_task": "一句话单步任务，例如：点击“搜索框”并输入“咖啡"",
+      "single_step_task": "一句话单步任务，例如：点击"搜索框"并输入"咖啡"",
       "reason": "为什么这个动作高概率"
     }}
   ]
 }}
 3) candidates 数量 <= {breadth}，按概率从高到低排序。
 4) single_step_task 必须可执行、原子化（单步），避免多步串联。
-5) 如果是点击输入框的动作，务必跟上合理的当前界面下的输入文本，例如：点击“搜索框”并输入“咖啡”。
+5) 如果是点击输入框的动作，务必跟上合理的当前界面下的输入文本，例如：点击"搜索框"并输入"咖啡"。
 6) 若界面左侧、底部或者顶部侧边栏存在导航列表项（例如设置列表，菜单列表等），请你优先输出对各个列表项的点击操作，如果当前界面显示的列表项不全，可以输出滑动操作以查看更多列表项。
 7) 候选动作需要与最近的交互动作序列保持连贯，避免与已发生动作明显冲突；必要时可继续完成上一动作的后续步骤。
-8) 如果界面的右下角有“我的”、“个人中心”之类的入口图标，并且该图标没有被选中（图标是实心或者如表下面有下滑杠，表示选中），建议优先输出点击该入口的动作。
-9) 如果界面上有返回按钮，请不要点击返回按钮了，除非当前界面没有其他明显的可交互元素了。
+8) 如果界面的右下角有"我的"、"个人中心"之类的入口图标，并且该图标没有被选中（图标是实心或者如表下面有下滑杠，表示选中），建议优先输出点击该入口的动作。
+9) 【严禁】不得生成任何点击返回按钮、返回箭头、左上角"<"图标、后退、回退的候选动作。这类动作会破坏探索路径的连贯性，即使界面上有返回按钮也不要选它。唯一例外：当前界面完全没有其他任何可交互元素时，才可以输出返回操作。
 10) 最近已经交互过的动作，请不要重复执行了，除非当前界面没有其他明显的可交互元素了。
-
+11) 【广告/弹窗检测】仔细观察截图，判断当前界面是否被广告、活动推广、权限请求、新手引导等弹窗遮挡了主界面内容。
+- 如果有弹窗遮挡主界面：在 JSON 中额外添加 "popup" 字段：{{"detected": true, "close_point": [x, y]}}，close_point 是关闭/跳过按钮的中心坐标，使用 0-1000 相对坐标格式（与图片宽高对应）。如果找不到关闭按钮，只返回 {{"detected": true}}。
+- 如果没有弹窗遮挡：不需要 popup 字段。
+{already_explored_text}
 当前探索深度: {depth}
-最近交互动作序列(按时间顺序，最多展示20条):
+当前路径动作序列(按时间顺序，最多展示20条):
 {history_text}
 """.strip()
 
@@ -1313,6 +1493,85 @@ def append_done_to_path(
     return actions_with_done, reacts_with_done
 
 
+# OPT-5: 候选动作语义去重，过滤近似重复候选，保留 rank 更高的
+def _deduplicate_candidates(
+    candidates: List[Dict[str, Any]],
+    already_explored: Optional[List[str]] = None,
+    sim_threshold: float = 0.75,
+) -> List[Dict[str, Any]]:
+    """对 Explorer 返回的候选做字符级相似度去重，并过滤已探索的任务。"""
+    kept: List[Dict[str, Any]] = []
+    for cand in candidates:
+        task = str(cand.get("single_step_task", "")).strip()
+        if not task:
+            continue
+        # 过滤与已探索任务相似度 >0.8 的候选
+        if already_explored:
+            skip = False
+            for explored in already_explored:
+                ratio = difflib.SequenceMatcher(None, task, explored).ratio()
+                if ratio > 0.8:
+                    logging.info(f"Candidate dedup: skip '{task}' (similar to explored '{explored}', sim={ratio:.2f})")
+                    skip = True
+                    break
+            if skip:
+                continue
+        # 过滤与已保留候选相似度 >sim_threshold 的候选
+        duplicate = False
+        for prev in kept:
+            prev_task = str(prev.get("single_step_task", ""))
+            ratio = difflib.SequenceMatcher(None, task, prev_task).ratio()
+            if ratio > sim_threshold:
+                logging.info(f"Candidate dedup: skip '{task}' (similar to kept '{prev_task}', sim={ratio:.2f})")
+                duplicate = True
+                break
+        if not duplicate:
+            kept.append(cand)
+    return kept
+
+
+# OPT-9: Explorer 响应缓存，避免回溯后对相同页面重复调用 Explorer API
+class ExplorerCache:
+    def __init__(self, ttl_sec: float = 300.0):
+        self._cache: Dict[str, Any] = {}
+        self._ttl = ttl_sec
+
+    def _make_key(self, struct_fp: str, depth: int, breadth: int, already_explored: Optional[List[str]]) -> str:
+        explored_hash = hashlib.md5("|".join(sorted(already_explored or [])).encode()).hexdigest()[:8]
+        return f"{struct_fp}|{depth}|{breadth}|{explored_hash}"
+
+    def get(self, struct_fp: str, depth: int, breadth: int, already_explored: Optional[List[str]]) -> Optional[List[Dict]]:
+        key = self._make_key(struct_fp, depth, breadth, already_explored)
+        entry = self._cache.get(key)
+        if entry and (time.time() - entry["ts"]) < self._ttl:
+            return list(entry["candidates"])
+        return None
+
+    def put(self, struct_fp: str, depth: int, breadth: int, already_explored: Optional[List[str]], candidates: List[Dict]) -> None:
+        key = self._make_key(struct_fp, depth, breadth, already_explored)
+        self._cache[key] = {"candidates": list(candidates), "ts": time.time()}
+
+
+# OPT-10: 设备状态缓存，合并 screenshot+hierarchy 采集，减少重复设备调用
+class ScreenStateCache:
+    def __init__(self, staleness_sec: float = 0.3):
+        self._screenshot_b64: Optional[str] = None
+        self._hierarchy_text: Optional[str] = None
+        self._last_capture: float = 0.0
+        self._staleness = staleness_sec
+
+    def capture(self, device, device_type: str, force: bool = False):
+        now = time.time()
+        if force or self._screenshot_b64 is None or (now - self._last_capture) > self._staleness:
+            self._screenshot_b64 = get_screenshot(device, device_type)
+            self._hierarchy_text = get_hierarchy_text(device)
+            self._last_capture = now
+        return self._screenshot_b64, self._hierarchy_text
+
+    def invalidate(self) -> None:
+        self._last_capture = 0.0
+
+
 def call_explorer_model(
     explorer_client: OpenAI,
     explorer_model: str,
@@ -1321,9 +1580,12 @@ def call_explorer_model(
     depth: int,
     breadth: int,
     action_history: List[Dict[str, Any]],
-) -> List[Dict[str, Any]]:
-    """调用远端通用大模型，返回候选单步任务列表。"""
-    prompt = build_explorer_prompt(depth, breadth, hierarchy_text, action_history)
+    already_explored: Optional[List[str]] = None,
+) -> tuple[List[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    """调用远端通用大模型，返回 (候选单步任务列表, popup_info)。
+    popup_info 结构：{"detected": True, "close_point": [x, y] 或 None}；无弹窗时为 None。
+    """
+    prompt = build_explorer_prompt(depth, breadth, hierarchy_text, action_history, already_explored=already_explored)
 
     messages = [
         {
@@ -1369,7 +1631,18 @@ def call_explorer_model(
 
             if not normalized:
                 raise ValueError("No valid candidates returned")
-            return normalized
+
+            # 解析 popup 字段（不影响 candidates）
+            popup_info: Optional[Dict[str, Any]] = None
+            raw_popup = parsed.get("popup")
+            if isinstance(raw_popup, dict) and raw_popup.get("detected"):
+                close_pt = raw_popup.get("close_point")
+                if isinstance(close_pt, (list, tuple)) and len(close_pt) == 2:
+                    popup_info = {"detected": True, "close_point": list(close_pt)}
+                else:
+                    popup_info = {"detected": True, "close_point": None}
+
+            return normalized, popup_info
         except Exception as e:
             last_err = e
             logging.warning(f"Explorer model parse/call failed (attempt={attempt + 1}): {e}")
@@ -1588,6 +1861,7 @@ def execute_decider_one_step(
     except Exception as e:
         logging.warning(f"Failed to annotate action visuals: {e}")
 
+    _wait_for_page_loaded(decider_client, decider_model, device, device_type)
     post_hierarchy_text = get_hierarchy_text(device)
 
     return {
@@ -1643,13 +1917,22 @@ def explore_dfs(
     ui_collect_queue_size: int,
     path_actions: Optional[List[Dict[str, Any]]] = None,
     path_reacts: Optional[List[Dict[str, Any]]] = None,
+    visited_tasks: Optional[Dict[str, set]] = None,       # OPT-6: 已探索任务记录 {hierarchy_fp: {task, ...}}
+    explorer_cache: Optional["ExplorerCache"] = None,     # OPT-9: Explorer 响应缓存
+    screen_cache: Optional["ScreenStateCache"] = None,    # OPT-10: 设备状态缓存
+    popup_dismiss_max_attempts: int = 2,                  # 弹窗自动关闭最大尝试次数，0 表示禁用
 ) -> None:
     """DFS探索：每层挑选H个候选，逐个执行并回溯。"""
     if current_depth >= depth_limit:
         return
 
-    screenshot_b64 = get_screenshot(device, device_type)
-    hierarchy_text = get_hierarchy_text(device)
+    # OPT-10: 用 ScreenStateCache 合并采集，避免重复设备调用
+    if screen_cache is not None:
+        screenshot_b64, hierarchy_text = screen_cache.capture(device, device_type, force=True)
+    else:
+        screenshot_b64 = get_screenshot(device, device_type)
+        hierarchy_text = get_hierarchy_text(device)
+
     if (
         enable_ui_semantic_collect
         and collect_queue is not None
@@ -1671,16 +1954,87 @@ def explore_dfs(
             index_path=index_path,
             ui_collect_queue_size=ui_collect_queue_size,
         )
-    action_history = list(actions)
-    candidates = call_explorer_model(
-        explorer_client,
-        explorer_model,
-        screenshot_b64,
-        hierarchy_text,
-        current_depth,
-        breadth,
-        action_history,
-    )
+
+    # OPT-6: 用当前路径（非全局历史）作为 Explorer 上下文，提升语义连贯性
+    action_history = list(path_actions) if path_actions else list(actions)
+
+    # OPT-6: 从 visited_tasks 取当前页面已探索的任务列表
+    if visited_tasks is None:
+        visited_tasks = {}
+    current_page_fp = _hierarchy_fingerprint(hierarchy_text)
+    already_explored_list = list(visited_tasks.get(current_page_fp, set()))
+
+    # OPT-9: 先查 Explorer 缓存
+    struct_fp = _compute_hierarchy_struct_fingerprint(hierarchy_text)
+    cached_candidates = None
+    if explorer_cache is not None:
+        cached_candidates = explorer_cache.get(struct_fp, current_depth, breadth, already_explored_list)
+    popup_info: Optional[Dict[str, Any]] = None
+    if cached_candidates is not None:
+        # 过滤缓存中已被探索的候选
+        candidates = [c for c in cached_candidates if c.get("single_step_task", "") not in visited_tasks.get(current_page_fp, set())]
+        logging.info(f"Depth={current_depth}, Explorer cache hit, {len(candidates)} candidates after filter")
+    else:
+        candidates, popup_info = call_explorer_model(
+            explorer_client,
+            explorer_model,
+            screenshot_b64,
+            hierarchy_text,
+            current_depth,
+            breadth,
+            action_history,
+            already_explored=already_explored_list,
+        )
+        if explorer_cache is not None:
+            explorer_cache.put(struct_fp, current_depth, breadth, already_explored_list, candidates)
+
+    # 弹窗自动关闭：Explorer 返回 popup_info 时处理，最多尝试 popup_dismiss_max_attempts 次
+    for _popup_attempt in range(popup_dismiss_max_attempts):
+        if not (popup_info and popup_info.get("detected")):
+            break
+        close_pt = popup_info.get("close_point")
+        if close_pt:
+            size = _get_current_screen_size(device_type)
+            if size:
+                img_w, img_h = size
+                if use_qwen3:
+                    abs_pt = convert_qwen3_coordinates_to_absolute(close_pt, img_w, img_h, is_bbox=False)
+                else:
+                    abs_pt = close_pt
+                device.click(int(abs_pt[0]), int(abs_pt[1]))
+                logging.info(
+                    f"\033[93m[PopupDismiss] clicked close at {abs_pt} (attempt {_popup_attempt + 1})\033[0m"
+                )
+            else:
+                navigate_back(device, device_type)
+                logging.info(
+                    f"\033[93m[PopupDismiss] no screen size, pressed back (attempt {_popup_attempt + 1})\033[0m"
+                )
+        else:
+            navigate_back(device, device_type)
+            logging.info(
+                f"\033[93m[PopupDismiss] no close_point, pressed back (attempt {_popup_attempt + 1})\033[0m"
+            )
+        _wait_for_page_stable(device)
+        # 刷新状态并重新让 Explorer 判断是否还有弹窗
+        if screen_cache is not None:
+            screenshot_b64, hierarchy_text = screen_cache.capture(device, device_type, force=True)
+        else:
+            screenshot_b64 = get_screenshot(device, device_type)
+            hierarchy_text = get_hierarchy_text(device)
+        candidates, popup_info = call_explorer_model(
+            explorer_client,
+            explorer_model,
+            screenshot_b64,
+            hierarchy_text,
+            current_depth,
+            breadth,
+            action_history,
+            already_explored=already_explored_list,
+        )
+
+    # OPT-5: 候选语义去重
+    candidates = _deduplicate_candidates(candidates, already_explored=already_explored_list)
     base_hierarchy_text = hierarchy_text
 
     logging.info(f"Depth={current_depth}, got {len(candidates)} candidates")
@@ -1701,14 +2055,15 @@ def explore_dfs(
                 _normalize_hierarchy_text(base_hierarchy_text),
                 _normalize_hierarchy_text(current_hierarchy_text),
             ).ratio()
-            if similarity < 0.9:
+            page_change_threshold = _compute_adaptive_similarity_threshold(base_hierarchy_text)
+            if similarity < page_change_threshold:
                 remaining = max(breadth - cand_idx, 0)
                 if remaining == 0:
                     break
                 color = "\033[93m"
                 reset = "\033[0m"
                 logging.info(
-                    f"{color}Page changed (similarity={similarity:.3f} < 0.900). "
+                    f"{color}Page changed (similarity={similarity:.3f} < threshold={page_change_threshold:.3f}). "
                     f"Regenerating {remaining} candidates.{reset}"
                 )
                 screenshot_b64 = get_screenshot(device, device_type)
@@ -1734,15 +2089,22 @@ def explore_dfs(
                         index_path=index_path,
                         ui_collect_queue_size=ui_collect_queue_size,
                     )
-                candidates = candidates[:cand_idx] + call_explorer_model(
+                # 更新当前页面的已探索列表（页面变了，对应新的 fp）
+                new_page_fp = _hierarchy_fingerprint(base_hierarchy_text)
+                new_already_explored = list(visited_tasks.get(new_page_fp, set()))
+                new_candidates, _ = call_explorer_model(
                     explorer_client,
                     explorer_model,
                     screenshot_b64,
                     base_hierarchy_text,
                     current_depth,
                     remaining,
-                    list(actions),
+                    list(path_actions) if path_actions else list(actions),
+                    already_explored=new_already_explored,
                 )
+                # OPT-5: 对重生成的候选也做去重
+                new_candidates = _deduplicate_candidates(new_candidates, already_explored=new_already_explored)
+                candidates = candidates[:cand_idx] + new_candidates
 
         cand = candidates[cand_idx]
         task = cand["single_step_task"]
@@ -1763,6 +2125,13 @@ def explore_dfs(
 
         action_record = None
         pre_hierarchy_text = get_hierarchy_text(device)
+        get_screenshot(device, device_type)  # 更新临时截图文件，用于回溯验证
+        pre_screenshot_path = "screenshot-Android.jpg" if device_type == "Android" else "screenshot-Harmony.jpg"
+        pre_struct_fp = _compute_hierarchy_struct_fingerprint(pre_hierarchy_text)
+        try:
+            pre_dhash = _compute_dhash_hex(pre_screenshot_path)
+        except Exception:
+            pre_dhash = ""
         try:
             # step_result = execute_decider_one_step(
             #     decider_client=explorer_client,
@@ -1819,6 +2188,15 @@ def explore_dfs(
             current_path_actions.append(action_record)
             current_path_reacts.append(react_item)
 
+            # OPT-6: 记录当前页面已执行的任务，防止后续候选重复
+            if current_page_fp not in visited_tasks:
+                visited_tasks[current_page_fp] = set()
+            visited_tasks[current_page_fp].add(task)
+
+            # OPT-10: 动作执行后使设备状态缓存失效
+            if screen_cache is not None:
+                screen_cache.invalidate()
+
             persist_step_output(step_output_dir, app_name, action_record, react_item)
 
             if current_depth + 1 >= depth_limit:
@@ -1837,7 +2215,7 @@ def explore_dfs(
                     path_task_description,
                 )
                 done_index = len(full_path_actions)
-                # done 对应的观测应为“最后一个真实动作执行后”的页面状态
+                # done 对应的观测应为"最后一个真实动作执行后"的页面状态
                 # 这里在回溯前额外抓取一次当前截图/层级并按 done 序号落盘。
                 try:
                     get_screenshot(device, device_type)
@@ -1884,12 +2262,17 @@ def explore_dfs(
                     ui_collect_queue_size=ui_collect_queue_size,
                     path_actions=current_path_actions,
                     path_reacts=current_path_reacts,
+                    visited_tasks=visited_tasks,
+                    explorer_cache=explorer_cache,
+                    screen_cache=screen_cache,
+                    popup_dismiss_max_attempts=popup_dismiss_max_attempts,
                 )
 
         except Exception as e:
             logging.error(f"Failed to execute candidate at depth {current_depth}: {e}")
 
-        # 回溯：默认执行返回，再检查是否回到正确界面
+        # 回溯：执行返回动作
+        app_was_restarted = False
         perform_backtrack_action(device, device_type, action_record)
 
         post_back_hierarchy = get_hierarchy_text(device)
@@ -1901,34 +2284,83 @@ def explore_dfs(
             device.start_app(app_name)
             time.sleep(DEVICE_WAIT_TIME * 2)
             post_back_hierarchy = get_hierarchy_text(device)
+            app_was_restarted = True
 
-        expected_fp = _hierarchy_fingerprint(pre_hierarchy_text)
-        actual_fp = _hierarchy_fingerprint(post_back_hierarchy)
-        if expected_fp and actual_fp and expected_fp != actual_fp:
-            similarity_after_back = difflib.SequenceMatcher(
-                None,
-                _normalize_hierarchy_text(pre_hierarchy_text),
-                _normalize_hierarchy_text(post_back_hierarchy),
-            ).ratio()
-            if len(current_path_actions) >= 2 and similarity_after_back < 0.9: #如果返回的不是上一级UI界面
-                recovery_action = current_path_actions[-2]
-                logging.warning(
-                    "\033[93mBacktrack may overshoot (sim=%.3f). Replaying previous action(type=%s) to recover parent page.\033[0m",
-                    similarity_after_back,
-                    recovery_action.get("type", ""),
-                )
-                replay_action_record(device, recovery_action)
+        post_back_screenshot_path = "screenshot-Android.jpg" if device_type == "Android" else "screenshot-Harmony.jpg"
+        get_screenshot(device, device_type)  # 更新临时截图文件
+
+        if app_was_restarted:
+            # App 意外退出后重启，动态内容必然导致指纹不同，只验证 App 是否回到前台
+            verified = _is_app_in_foreground(device, device_type, app_name, post_back_hierarchy)
+            fp_ok = struct_ok = visual_ok = verified
+            if verified:
+                logging.info("\033[92mBacktrack verified via app restart (dynamic content expected to differ).\033[0m")
             else:
-                logging.info(
-                    "\033[93mBacktrack verification mismatch but no recovery action replay (sim=%.3f).\033[0m",
-                    similarity_after_back,
+                logging.warning("\033[91mApp did not return to foreground after restart.\033[0m")
+        else:
+            # 三重验证：文本指纹 + 结构指纹 + 视觉dHash，2/3通过则认为回溯成功
+            fp_ok = (_stable_text_fingerprint(pre_hierarchy_text) == _stable_text_fingerprint(post_back_hierarchy))
+            struct_ok = (pre_struct_fp == _compute_hierarchy_struct_fingerprint(post_back_hierarchy))
+            try:
+                post_dhash = _compute_dhash_hex(post_back_screenshot_path)
+                visual_ok = (bin(int(pre_dhash, 16) ^ int(post_dhash, 16)).count("1") <= 3) if pre_dhash and post_dhash else fp_ok
+            except Exception:
+                visual_ok = fp_ok  # 视觉比对失败时退化为文本指纹结果
+            verified = (int(fp_ok) + int(struct_ok) + int(visual_ok)) >= 2
+
+        if not verified:
+            logging.warning(
+                "\033[93mBacktrack verification failed (fp=%s struct=%s visual=%s). Attempting full path replay.\033[0m",
+                fp_ok, struct_ok, visual_ok,
+            )
+            # 全路径重播恢复：从App根重播当前路径的所有前置动作
+            recovered = False
+            for attempt in range(2):
+                device.start_app(app_name)
+                time.sleep(DEVICE_WAIT_TIME * 2)
+                replay_ok = True
+                for replay_act in current_path_actions[:-1]:
+                    if not replay_action_record(device, replay_act):
+                        replay_ok = False
+                        break
+                    time.sleep(DEVICE_WAIT_TIME)
+                if not replay_ok:
+                    logging.warning("\033[93mPath replay action failed on attempt %d.\033[0m", attempt + 1)
+                    continue
+                # 重新验证：若无前置动作需要重播（第一步），App 在前台即视为恢复成功
+                replay_hierarchy = get_hierarchy_text(device)
+                get_screenshot(device, device_type)
+                if not current_path_actions[:-1]:
+                    r_recovered = _is_app_in_foreground(device, device_type, app_name, replay_hierarchy)
+                    if r_recovered:
+                        recovered = True
+                        logging.info("\033[92mFull path replay recovery succeeded (first step, app in foreground).\033[0m")
+                        break
+                    continue
+                r_fp_ok = (_stable_text_fingerprint(pre_hierarchy_text) == _stable_text_fingerprint(replay_hierarchy))
+                r_struct_ok = (pre_struct_fp == _compute_hierarchy_struct_fingerprint(replay_hierarchy))
+                try:
+                    r_dhash = _compute_dhash_hex(post_back_screenshot_path)
+                    r_visual_ok = (bin(int(pre_dhash, 16) ^ int(r_dhash, 16)).count("1") <= 3) if pre_dhash and r_dhash else r_fp_ok
+                except Exception:
+                    r_visual_ok = r_fp_ok
+                if (int(r_fp_ok) + int(r_struct_ok) + int(r_visual_ok)) >= 2:
+                    recovered = True
+                    logging.info("\033[92mFull path replay recovery succeeded on attempt %d.\033[0m", attempt + 1)
+                    break
+            if not recovered:
+                logging.error(
+                    "\033[91mBacktrack recovery failed after full path replay. Skipping remaining candidates at this depth.\033[0m"
                 )
+                break  # 跳出候选循环，不污染后续兄弟候选的数据
 
         cand_idx += 1
 
 
-def init_decider_client(service_ip: str, decider_port: int) -> OpenAI:
-    return OpenAI(api_key="mobiagent-key", base_url=f"http://{service_ip}:{decider_port}/v1")
+def init_decider_client(service_ip: str, decider_port: int, base_url: str = "", api_key: str = "") -> OpenAI:
+    if base_url:
+        return OpenAI(api_key=api_key or "0", base_url=base_url)
+    return OpenAI(api_key="0", base_url=f"http://{service_ip}:{decider_port}/v1")
 
 
 def init_explorer_client(base_url: str, api_key: str) -> OpenAI:
@@ -1946,7 +2378,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", type=str, default="Android", choices=["Android", "Harmony"], help="设备类型")
     parser.add_argument("--service_ip", type=str, default="localhost", help="Decider 服务IP")
     parser.add_argument("--decider_port", type=int, default=8000, help="Decider 服务端口")
+    
     parser.add_argument("--decider_api_key", type=str, default=os.getenv("DECIDER_API_KEY", "mobiagent-key"), help="Decider API Key")
+
+    parser.add_argument("--decider_base_url", type=str, default="", help="Decider Base URL（优先于 service_ip+port）")
+    parser.add_argument("--decider_model", type=str, default="", help="Decider 模型名（为空时使用占位符）")
+
     parser.add_argument("--openrouter_base_url", type=str, default="https://openrouter.ai/api/v1", help="Explorer 的 Base URL")
     parser.add_argument("--openrouter_api_key", type=str, default=os.getenv("OPENROUTER_API_KEY", ""), help="OpenRouter API Key")
     parser.add_argument("--explorer_model", type=str, default="google/gemini-3-flash-preview", help="通用大模型名称")
@@ -1972,6 +2409,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ui_collect_max_items", type=int, default=32, help="页面采集最多元素数")
     parser.add_argument("--ui_collect_max_vlm_calls", type=int, default=12, help="页面采集VLM调用预算")
     parser.add_argument("--ui_collect_min_area", type=int, default=16, help="页面采集最小框面积")
+    # 页面加载等待
+    parser.add_argument("--page_load_wait_sec", type=float, default=1.5, help="动作后固定等待秒数（等页面开始渲染）")
+    parser.add_argument("--page_load_stable_max_polls", type=int, default=6, help="页面稳定轮询最大次数（每次0.5s，总最大等待=次数×0.5s）")
+    # BBox 精炼阈值（换模型/换手机时调整）
+    parser.add_argument("--bbox_iou_threshold", type=float, default=0.3, help="BBox精炼IoU阈值(0~1)，模型坐标越不准确则调低")
+    parser.add_argument("--bbox_center_dist_ratio", type=float, default=0.08, help="BBox精炼中心距/对角线比例，模型偏差大则调高")
+    parser.add_argument("--bbox_area_ratio_min", type=float, default=0.5, help="BBox精炼面积比下限")
+    parser.add_argument("--bbox_area_ratio_max", type=float, default=2.0, help="BBox精炼面积比上限")
+    # 弹窗自动关闭
+    parser.add_argument("--popup_dismiss_max_attempts", type=int, default=2, help="弹窗自动关闭最大尝试次数，0 表示禁用")
     return parser.parse_args()
 
 
@@ -1990,6 +2437,19 @@ def main() -> None:
         raise ValueError("ui_collect_queue_size 必须 > 0")
     if args.ui_collect_drain_timeout_sec < 0:
         raise ValueError("ui_collect_drain_timeout_sec 必须 >= 0")
+
+    # 覆写页面加载等待全局参数
+    global PAGE_LOAD_WAIT_SEC, PAGE_LOAD_STABLE_MAX_POLLS
+    PAGE_LOAD_WAIT_SEC = args.page_load_wait_sec
+    PAGE_LOAD_STABLE_MAX_POLLS = args.page_load_stable_max_polls
+
+    # 覆写 BBox 精炼全局阈值
+    global BBOX_REFINE_IOU_THRESHOLD, BBOX_REFINE_CENTER_DIST_RATIO
+    global BBOX_REFINE_AREA_RATIO_MIN, BBOX_REFINE_AREA_RATIO_MAX
+    BBOX_REFINE_IOU_THRESHOLD = args.bbox_iou_threshold
+    BBOX_REFINE_CENTER_DIST_RATIO = args.bbox_center_dist_ratio
+    BBOX_REFINE_AREA_RATIO_MIN = args.bbox_area_ratio_min
+    BBOX_REFINE_AREA_RATIO_MAX = args.bbox_area_ratio_max
 
     # 数据目录
     if args.data_dir:
@@ -2011,7 +2471,7 @@ def main() -> None:
     ui_collect_base_url = args.ui_collect_base_url or explorer_base_url
     ui_collect_api_key = args.ui_collect_api_key or explorer_api_key
 
-    decider_client = init_decider_client(args.service_ip, args.decider_port)
+    decider_client = init_decider_client(args.service_ip, args.decider_port, args.decider_base_url, args.decider_api_key)
     explorer_client = init_explorer_client(explorer_base_url, explorer_api_key)
     use_qwen3 = args.use_qwen3 == "on"
     allow_hierarchy_text_decider = args.allow_hierarchy_text_decider == "on"
@@ -2074,7 +2534,12 @@ def main() -> None:
         collect_thread.start()
 
     try:
-        decider_model = DECIDER_MODEL_PLACEHOLDER
+        decider_model = args.decider_model or DECIDER_MODEL_PLACEHOLDER
+
+        # 初始化 OPT-5/6/9/10 所需的会话级对象
+        visited_tasks: Dict[str, set] = {}
+        explorer_cache = ExplorerCache(ttl_sec=300.0)
+        screen_cache = ScreenStateCache(staleness_sec=0.3)
 
         explore_dfs(
             app_name=args.app_name,
@@ -2106,6 +2571,10 @@ def main() -> None:
             index_path=index_path,
             ui_collect_async=ui_collect_async,
             ui_collect_queue_size=args.ui_collect_queue_size,
+            visited_tasks=visited_tasks,
+            explorer_cache=explorer_cache,
+            screen_cache=screen_cache,
+            popup_dismiss_max_attempts=args.popup_dismiss_max_attempts,
             )
     finally:
         if enable_ui_semantic_collect and ui_collect_async and collect_queue is not None:

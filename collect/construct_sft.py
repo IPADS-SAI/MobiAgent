@@ -192,6 +192,24 @@ def format_qwen3_decider_output(output_dict):
     output_json = json.dumps(output_dict, ensure_ascii=False)
     return output_json, output_json
 
+def build_decider_output_dict(action_type, param, reasoning=None, include_reasoning=True):
+    output_dict = {}
+    if include_reasoning:
+        output_dict["reasoning"] = reasoning
+    output_dict["action"] = action_type
+    output_dict["parameters"] = param
+    return output_dict
+
+def get_decider_system_prompt(module, no_reasoning=False):
+    if no_reasoning:
+        return getattr(module, "DECIDER_SYSTEM_PROMPT_NO_REASONING", module.DECIDER_SYSTEM_PROMPT)
+    return module.DECIDER_SYSTEM_PROMPT
+
+def get_decider_current_step_prompt(module, no_reasoning=False):
+    if no_reasoning:
+        return getattr(module, "DECIDER_CURRENT_STEP_PROMPT_NO_REASONING", module.DECIDER_CURRENT_STEP_PROMPT)
+    return module.DECIDER_CURRENT_STEP_PROMPT
+
 def relative_point(point, width, height):
     x, y = point
     rel_x = x / width * 1000
@@ -211,7 +229,7 @@ def safe_scale(value, factor, denom):
         return None
     return value * factor / denom
 
-def construct_ss_data(single_step_data_path, out_path, factor=0.5, train_ratio=0.9, do_copy=True, use_qwen3=False, e2e=False):
+def construct_ss_data(single_step_data_path, out_path, factor=0.5, train_ratio=0.9, do_copy=True, use_qwen3=False, e2e=False, no_reasoning=False):
     if not os.path.exists(single_step_data_path):
         return [], [], [], []
 
@@ -219,6 +237,7 @@ def construct_ss_data(single_step_data_path, out_path, factor=0.5, train_ratio=0
     rules = load_augmentation_rules(augment_config_path)
 
     use_qwen3_e2e_chat = e2e and use_qwen3
+    use_no_reasoning = no_reasoning and use_qwen3_e2e_chat
 
     # 初始化所有返回变量
     decider_ss_entry_train = []
@@ -340,16 +359,21 @@ def construct_ss_data(single_step_data_path, out_path, factor=0.5, train_ratio=0
                 for task in random_tasks:
                     if print_flag:
                         print(f"Processing SS Decider - Train: {is_train}, Task: {task}")
-                    output_dict = dict(reasoning=reasoning, action=action_type, parameters=param)
+                    output_dict = build_decider_output_dict(
+                        action_type=action_type,
+                        param=param,
+                        reasoning=reasoning,
+                        include_reasoning=not use_no_reasoning
+                    )
                     if use_qwen3:
                         output, _ = format_qwen3_decider_output(output_dict)
                     else:
                         output = json.dumps(output_dict, ensure_ascii=False)
                     if use_qwen3_e2e_chat:
                         user_content = decider_qwen3_e2e_nohistory_module.DECIDER_USER_PROMPT.format(task=task)
-                        user_content = f"{user_content}\n\n<image>\n\n{decider_qwen3_e2e_nohistory_module.DECIDER_CURRENT_STEP_PROMPT}"
+                        user_content = f"{user_content}\n\n<image>\n\n{get_decider_current_step_prompt(decider_qwen3_e2e_nohistory_module, no_reasoning=use_no_reasoning)}"
                         messages = [
-                            {"role": "system", "content": decider_qwen3_e2e_nohistory_module.DECIDER_SYSTEM_PROMPT},
+                            {"role": "system", "content": get_decider_system_prompt(decider_qwen3_e2e_nohistory_module, no_reasoning=use_no_reasoning)},
                             {"role": "user", "content": user_content},
                             {"role": "assistant", "content": output}
                         ]
@@ -509,7 +533,7 @@ def create_grounder_entries_for_one_trace(react_data, actions, root, data_path, 
                 print(f"warning: action {i} has no valid bounds in {root}")
     return grounder_entries
 
-def create_decider_entries_for_one_task(task, react_data, actions, root, data_path, out_path, factor, rules, unexpected_img_safe_abspaths, is_train, do_copy=False, e2e=False, use_qwen3=False):
+def create_decider_entries_for_one_task(task, react_data, actions, root, data_path, out_path, factor, rules, unexpected_img_safe_abspaths, is_train, do_copy=False, e2e=False, use_qwen3=False, no_reasoning=False):
     # decider
     normal_entries = []
     no_history_entries = []
@@ -521,6 +545,7 @@ def create_decider_entries_for_one_task(task, react_data, actions, root, data_pa
     #     raise ValueError("qwen3 e2e is not supported")
 
     use_qwen3_e2e_chat = e2e and use_qwen3
+    use_no_reasoning = no_reasoning and use_qwen3_e2e_chat
 
     if use_qwen3_e2e_chat:
         prompt_template = None
@@ -634,7 +659,12 @@ def create_decider_entries_for_one_task(task, react_data, actions, root, data_pa
                 print(f"[e2e]Error: action {i} has no direction in {root}")
                 return [], [], []
 
-        output_dict = dict(reasoning=reasoning, action=action_type, parameters=param)
+        output_dict = build_decider_output_dict(
+            action_type=action_type,
+            param=param,
+            reasoning=reasoning,
+            include_reasoning=not use_no_reasoning
+        )
         if use_qwen3:
             output, brief_action = format_qwen3_decider_output(output_dict)
         else:
@@ -663,9 +693,9 @@ def create_decider_entries_for_one_task(task, react_data, actions, root, data_pa
                     task=task,
                     history=history_str(partial_history)
                 )
-                user_content = f"{user_content}\n\n<image>\n\n{decider_qwen3_e2e_module.DECIDER_CURRENT_STEP_PROMPT}"
+                user_content = f"{user_content}\n\n<image>\n\n{get_decider_current_step_prompt(decider_qwen3_e2e_module, no_reasoning=use_no_reasoning)}"
                 messages = [
-                    {"role": "system", "content": decider_qwen3_e2e_module.DECIDER_SYSTEM_PROMPT},
+                    {"role": "system", "content": get_decider_system_prompt(decider_qwen3_e2e_module, no_reasoning=use_no_reasoning)},
                     {"role": "user", "content": user_content},
                     {"role": "assistant", "content": output}
                 ]
@@ -709,7 +739,12 @@ def create_decider_entries_for_one_task(task, react_data, actions, root, data_pa
             ]
 
             terminate_reasoning = "，".join(map(random.choice, [terminate_reasoning_part1, terminate_reasoning_part2, terminate_reasoning_part3]))
-            terminate_output_dict = dict(reasoning=terminate_reasoning, action="done", parameters={"status": "failed"})
+            terminate_output_dict = build_decider_output_dict(
+                action_type="done",
+                param={"status": "failed"},
+                reasoning=terminate_reasoning,
+                include_reasoning=not use_no_reasoning
+            )
             if use_qwen3:
                 terminate_output, _ = format_qwen3_decider_output(terminate_output_dict)
             else:
@@ -720,9 +755,9 @@ def create_decider_entries_for_one_task(task, react_data, actions, root, data_pa
                     task=task,
                     history=history_str(history)
                 )
-                user_content = f"{user_content}\n\n<image>\n\n{decider_qwen3_e2e_module.DECIDER_CURRENT_STEP_PROMPT}"
+                user_content = f"{user_content}\n\n<image>\n\n{get_decider_current_step_prompt(decider_qwen3_e2e_module, no_reasoning=use_no_reasoning)}"
                 messages = [
-                    {"role": "system", "content": decider_qwen3_e2e_module.DECIDER_SYSTEM_PROMPT},
+                    {"role": "system", "content": get_decider_system_prompt(decider_qwen3_e2e_module, no_reasoning=use_no_reasoning)},
                     {"role": "user", "content": user_content},
                     {"role": "assistant", "content": terminate_output}
                 ]
@@ -744,9 +779,9 @@ def create_decider_entries_for_one_task(task, react_data, actions, root, data_pa
         if action_type not in ["input", "done"]:
             if use_qwen3_e2e_chat:
                 user_content = decider_qwen3_e2e_nohistory_module.DECIDER_USER_PROMPT.format(task=task)
-                user_content = f"{user_content}\n\n<image>\n\n{decider_qwen3_e2e_nohistory_module.DECIDER_CURRENT_STEP_PROMPT}"
+                user_content = f"{user_content}\n\n<image>\n\n{get_decider_current_step_prompt(decider_qwen3_e2e_nohistory_module, no_reasoning=use_no_reasoning)}"
                 messages = [
-                    {"role": "system", "content": decider_qwen3_e2e_nohistory_module.DECIDER_SYSTEM_PROMPT},
+                    {"role": "system", "content": get_decider_system_prompt(decider_qwen3_e2e_nohistory_module, no_reasoning=use_no_reasoning)},
                     {"role": "user", "content": user_content},
                     {"role": "assistant", "content": output}
                 ]
@@ -765,7 +800,7 @@ def create_decider_entries_for_one_task(task, react_data, actions, root, data_pa
 
     return normal_entries, no_history_entries, terminate_entries
 
-def construct_ds(data_path, single_step_data_path, unexpected_img_path, out_path, factor=0.5, train_ratio=0.9, e2e=False, do_copy=True, use_qwen3=False, json_dir="", num_workers=8):
+def construct_ds(data_path, single_step_data_path, unexpected_img_path, out_path, factor=0.5, train_ratio=0.9, e2e=False, do_copy=True, use_qwen3=False, json_dir="", num_workers=8, no_reasoning=False):
     os.makedirs(out_path, exist_ok=True)
     
     e2e_entries_train = []
@@ -917,7 +952,7 @@ def construct_ds(data_path, single_step_data_path, unexpected_img_path, out_path
             for i, task in enumerate(tasks):
                 if not (e2e and use_qwen3):
                     normal_entries, no_history_entries, terminate_entries = create_decider_entries_for_one_task(
-                        task, react_data, actions, root, data_path, out_path, factor, rules, unexpected_img_safe_abspaths, is_train, do_copy=((i == 0) and do_copy), e2e=False, use_qwen3=use_qwen3
+                        task, react_data, actions, root, data_path, out_path, factor, rules, unexpected_img_safe_abspaths, is_train, do_copy=((i == 0) and do_copy), e2e=False, use_qwen3=use_qwen3, no_reasoning=no_reasoning
                     )
                     if not (normal_entries or no_history_entries or terminate_entries):
                         continue
@@ -935,7 +970,7 @@ def construct_ds(data_path, single_step_data_path, unexpected_img_path, out_path
                         local_terminate_val.extend(terminate_entries)
                 if e2e:
                     e2e_normal_entries, e2e_history_entries, e2e_terminate_entries = create_decider_entries_for_one_task(
-                        task, react_data, actions, root, data_path, out_path, factor, rules, unexpected_img_safe_abspaths, is_train, do_copy=((i == 0) and do_copy), e2e=True, use_qwen3=use_qwen3
+                        task, react_data, actions, root, data_path, out_path, factor, rules, unexpected_img_safe_abspaths, is_train, do_copy=((i == 0) and do_copy), e2e=True, use_qwen3=use_qwen3, no_reasoning=no_reasoning
                     )
                     if not (e2e_normal_entries or e2e_history_entries or e2e_terminate_entries):
                         continue
@@ -1017,7 +1052,8 @@ def construct_ds(data_path, single_step_data_path, unexpected_img_path, out_path
         train_ratio,
         do_copy=do_copy,
         use_qwen3=use_qwen3,
-        e2e=e2e
+        e2e=e2e,
+        no_reasoning=no_reasoning
     )
 
     # 合并训练集数据
@@ -1124,6 +1160,7 @@ if __name__ == "__main__":
     parser.add_argument('--e2e',action='store_true',help='construct e2e dataset')
     parser.add_argument('--no_copy', action='store_true', help='do not copy images to the output path')
     parser.add_argument('--use_qwen3', action='store_true', help='use qwen3-vl mobile agent format')
+    parser.add_argument('--no_reasoning', action='store_true', help='use no-reasoning prompt/output format for qwen3 e2e chat data')
     parser.add_argument('--json_dir',type=str, default="", help="output json path of train dataset (default: null)")
     parser.add_argument('--num_workers', type=int, default=64, help='number of worker threads for data construction')
     args = parser.parse_args()
@@ -1138,5 +1175,6 @@ if __name__ == "__main__":
         do_copy=(not args.no_copy),
         use_qwen3=args.use_qwen3,
         json_dir=args.json_dir,
-        num_workers=args.num_workers
+        num_workers=args.num_workers,
+        no_reasoning=args.no_reasoning
     )

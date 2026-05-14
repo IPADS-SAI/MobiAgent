@@ -321,16 +321,17 @@ def init(service_ip, decider_port, grounder_port, planner_port, enable_user_prof
     # 加载环境变量
     env_path = Path(__file__).parent / ".env"
     load_dotenv(env_path)
+    api_key = os.getenv("MOBIAGENT_API_KEY", "mobiagent-key")
     decider_client = OpenAI(
-        api_key = "0",
+        api_key = api_key,
         base_url = f"http://{service_ip}:{decider_port}/v1",
     )
     grounder_client = OpenAI(
-        api_key = "0",
+        api_key = api_key,
         base_url = f"http://{service_ip}:{grounder_port}/v1",
     )
     planner_client = OpenAI(
-        api_key = "0",
+        api_key = api_key,
         base_url = f"http://{service_ip}:{planner_port}/v1",
     )
     

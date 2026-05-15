@@ -130,8 +130,26 @@ bash standalone_embed.sh start
 Required .env:
 ```bash
 MILVUS_URL=http://localhost:19530
-EMBEDDING_MODEL=BAAI/bge-small-zh  # download from Hugging Face
-EMBEDDING_MODEL_DIMS=384           # must match the model
+EMBEDDING_MODEL=/absolute/path/to/local/embedding/model
+EMBEDDING_MODEL_DIMS=512           # must match the model
+MEM0_COLLECTION_NAME=mobiagent_local
+```
+
+Local profile-memory workflow example:
+```bash
+bash profile-mem/standalone_embed.sh start
+bash profile-mem/manage_openai_llm_service.sh start
+```
+
+Example `runner/mobiagent/.env`:
+```bash
+MILVUS_URL=http://127.0.0.1:19530
+EMBEDDING_MODEL=/home/yourname/MobiAgent/profile-mem/models/embeddings/BAAI/bge-small-zh
+EMBEDDING_MODEL_DIMS=512
+MEM0_COLLECTION_NAME=mobiagent_local
+OPENAI_API_KEY=local-openai-key
+OPENAI_BASE_URL=http://127.0.0.1:18001/v1
+MOBIAGENT_API_KEY=mobiagent-key
 ```
 
 #### 2) Neo4j (GraphRAG)

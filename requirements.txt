@@ -31,6 +31,7 @@ uiautomator2
 # Web Framework
 fastapi
 uvicorn
+python-dotenv
 
 # UI
 matplotlib
@@ -42,3 +43,9 @@ llama-index-embeddings-huggingface
 pandas
 hmdriver2
 mem0ai
+
+# Local profile memory
+sentence-transformers
+huggingface-hub
+modelscope
+pymilvus

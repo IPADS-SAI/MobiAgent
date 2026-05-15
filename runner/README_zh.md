@@ -149,11 +149,29 @@ bash standalone_embed.sh start
 必需的 .env：
 ```bash
 MILVUS_URL=http://localhost:19530
-EMBEDDING_MODEL=BAAI/bge-small-zh(从huggingface下载)
-EMBEDDING_MODEL_DIMS=384(与模型维度一致)
+EMBEDDING_MODEL=/absolute/path/to/local/embedding/model
+EMBEDDING_MODEL_DIMS=512(与模型维度一致)
+MEM0_COLLECTION_NAME=mobiagent_local
 ```
 
 > 说明：`EMBEDDING_MODEL` 与 `EMBEDDING_MODEL_DIMS` 必须匹配；如更换模型，请同步修改维度。
+
+本地 profile-memory 的最小工作流：
+```bash
+bash profile-mem/standalone_embed.sh start
+bash profile-mem/manage_openai_llm_service.sh start
+```
+
+`runner/mobiagent/.env` 示例：
+```bash
+MILVUS_URL=http://127.0.0.1:19530
+EMBEDDING_MODEL=/home/yourname/MobiAgent/profile-mem/models/embeddings/BAAI/bge-small-zh
+EMBEDDING_MODEL_DIMS=512
+MEM0_COLLECTION_NAME=mobiagent_local
+OPENAI_API_KEY=local-openai-key
+OPENAI_BASE_URL=http://127.0.0.1:18001/v1
+MOBIAGENT_API_KEY=mobiagent-key
+```
 
 #### 2) Neo4j（GraphRAG）
 

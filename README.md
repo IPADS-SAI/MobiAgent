@@ -184,11 +184,38 @@ bash standalone_embed.sh start
 Add to your `.env` file:
 ```bash
 MILVUS_URL=http://localhost:19530
-EMBEDDING_MODEL=BAAI/bge-small-zh
-EMBEDDING_MODEL_DIMS=384
+EMBEDDING_MODEL=/absolute/path/to/local/embedding/model
+EMBEDDING_MODEL_DIMS=512
+MEM0_COLLECTION_NAME=mobiagent_local
 OPENAI_API_KEY=your_key_here
 OPENAI_BASE_URL=your_llm_endpoint_here
 ```
+
+Minimal local-only setup example:
+
+```bash
+# 1. Start Milvus first
+bash profile-mem/standalone_embed.sh start
+
+# 2. Start a local OpenAI-compatible LLM service for Mem0
+bash profile-mem/manage_openai_llm_service.sh start
+
+# 3. Use the local embedding model and local LLM endpoint in runner/mobiagent/.env
+MILVUS_URL=http://127.0.0.1:19530
+EMBEDDING_MODEL=/home/yourname/MobiAgent/profile-mem/models/embeddings/BAAI/bge-small-zh
+EMBEDDING_MODEL_DIMS=512
+MEM0_COLLECTION_NAME=mobiagent_local
+OPENAI_API_KEY=local-openai-key
+OPENAI_BASE_URL=http://127.0.0.1:18001/v1
+MOBIAGENT_API_KEY=mobiagent-key
+```
+
+Notes:
+- `EMBEDDING_MODEL` can be a local model directory. In this repository, the local verification script downloads `BAAI/bge-small-zh` into `profile-mem/models/embeddings/BAAI/bge-small-zh`.
+- `EMBEDDING_MODEL_DIMS` must match the actual embedding dimension of the local model. For the locally downloaded `BAAI/bge-small-zh` in this environment, the dimension is `512`.
+- `MEM0_COLLECTION_NAME` is recommended when you already have an older Milvus collection with a different vector dimension.
+- The local LLM service can be controlled with `bash profile-mem/manage_openai_llm_service.sh start|stop|status`.
+- You can verify the full local pipeline with `/home/reck/Utils/anaconda3/envs/MobiMind/bin/python profile-mem/verify_mem0_pipeline.py`.
 
 Neo4j (GraphRAG) - Optional for graph-based retrieval:
 

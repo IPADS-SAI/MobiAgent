@@ -579,8 +579,8 @@ class OracleAgent:
         root_dir = Path(__file__).resolve().parent.parent.parent
         file_path = root_dir / "utils" / "experience" / "rr-oracle.json"
         with open(file_path, "r", encoding="utf-8") as f:
-            oracle_data = json.load(f)["subtasks"]
-            # oracle_data = json.load(f)["subtasks-opt"]
+            # oracle_data = json.load(f)["subtasks"]
+            oracle_data = json.load(f)["subtasks-opt"]
         self.mock_actions_table: dict[str, list[tuple[str]]] = {}
         for item in oracle_data:
             subtask = item["subtask"]
@@ -699,6 +699,28 @@ class ExperienceRRTest:
         response_json = json.loads(response_str)
         final_desc = response_json.get("final_task_description", task_description)
         return final_desc, {}
+
+    def get_task_length(self, task_description: str, variables: Optional[dict[str, str]]) -> int:
+        self.num_tasks += 1
+        template = self.retrive_template(task_description)
+        if variables:
+            final_desc = self.fill_template(template, variables)
+        else:
+            final_desc, variables = self.fill_template_planner(template, task_description)
+
+        # get all low-level seq from experience_rr.low_level_table
+        mid_level_seq = MidLevelSequence.from_experience(final_desc, template)
+        
+        # get ground truth
+        gt_actions: list[MobiAgentAction] = []
+        for i, subtask_desc in enumerate(mid_level_seq.sequence):
+            subtask_gt_actions = self.oracle_agent.execute_subtask(subtask_desc, variables)
+            if i != len(mid_level_seq) - 1:
+                # exclude done action
+                subtask_gt_actions = subtask_gt_actions[:-1]
+            gt_actions.extend(subtask_gt_actions)
+        
+        return len(gt_actions)
 
     def execute_task_acttree(self, task_description: str, variables: Optional[dict[str, str]]) -> None:
         self.num_tasks += 1
@@ -928,39 +950,75 @@ class ExperienceRRTest:
                 json.dump(task_dict_serializable, f, ensure_ascii=False)
 
         records = []
-        power_law = False
-        if power_law:
-            def div_ceil(a: int, b: int) -> int:
-                return (a + b - 1) // b
-            new_task_dict: dict[str, list[dict[str, str]]] = defaultdict(list)
+        # power_law = os.environ.get("POWER_LAW", "False").lower() not in ["false", "0", "no", "n"]
+        # if power_law:
+        #     def div_ceil(a: int, b: int) -> int:
+        #         return (a + b - 1) // b
+        #     new_task_dict: dict[str, list[dict[str, str]]] = defaultdict(list)
+        #     for task_fmt, var_dicts in task_dict.items():
+        #         # sample 1/4 of var_dicts
+        #         var_dicts = random.sample(var_dicts, div_ceil(len(var_dicts), 4))
+        #         # split by 1/5
+        #         random.shuffle(var_dicts)
+        #         num_majority = div_ceil(len(var_dicts), 5)
+        #         majority = var_dicts[:num_majority]
+        #         minority = var_dicts[num_majority:]
+        #         # repeat majority 16 times
+        #         majority = majority * 16
+        #         var_dicts = majority + minority
+        #         random.shuffle(var_dicts)
+        #         new_task_dict[task_fmt] = var_dicts
+        #     task_dict = new_task_dict
+        task_level = os.environ.get("TASK_LEVEL", "False").lower() not in ["false", "0", "no", "n"]
+        repeat_ratio = float(os.environ.get("REPEAT_RATIO", "0.0"))
+        accumulate_replay_rate = os.environ.get("ACCUMULATE_REPLAY_RATE", "False").lower() not in ["false", "0", "no", "n"]
+        if accumulate_replay_rate:
+            tasks = []
             for task_fmt, var_dicts in task_dict.items():
-                # sample 1/4 of var_dicts
-                var_dicts = random.sample(var_dicts, div_ceil(len(var_dicts), 4))
-                # split by 1/5
-                random.shuffle(var_dicts)
-                num_majority = div_ceil(len(var_dicts), 5)
-                majority = var_dicts[:num_majority]
-                minority = var_dicts[num_majority:]
-                # repeat majority 16 times
-                majority = majority * 16
-                var_dicts = majority + minority
-                random.shuffle(var_dicts)
-                new_task_dict[task_fmt] = var_dicts
-            task_dict = new_task_dict
-        for task_fmt, var_dicts in task_dict.items():
-            for var_dict in var_dicts:
-                task_description = task_fmt
-                for k, v in var_dict.items():
-                    task_description = task_description.replace(f"{{{{{k}}}}}", v)
-                logger.info(f"Executing test task: {task_description} with variables {var_dict}")
-                if use_acttree:
-                    self.execute_task_acttree(task_description, var_dict)
-                else:
+                for var_dict in var_dicts:
+                    task_description = task_fmt
+                    for k, v in var_dict.items():
+                        task_description = task_description.replace(f"{{{{{k}}}}}", v)
+                    tasks.append((task_description, var_dict))
+            if repeat_ratio > 0.0:
+                tasks_unique = random.sample(tasks, int(len(tasks) * (1 - repeat_ratio)))
+                tasks_repeat = random.sample(tasks_unique, int(len(tasks) * repeat_ratio))
+                tasks = tasks_unique + tasks_repeat
+            random.shuffle(tasks)
+            if task_level:
+                seen = set()
+                replayed_actions = 0
+                total_actions = 0
+                for i, (task_description, var_dict) in enumerate(tasks, 1):
+                    task_length = self.get_task_length(task_description, var_dict)
+                    total_actions += task_length
+                    if task_description in seen:
+                        replayed_actions += task_length
+                    else:
+                        seen.add(task_description)
+                    records.append({"task_num": i, "accumulated_replay_rate": replayed_actions / total_actions})
+                return pd.DataFrame(records)
+            else:
+                for i, (task_description, var_dict) in enumerate(tasks, 1):
                     self.execute_task(task_description, var_dict)
-            metrics = self.get_metrics()
-            records.append(metrics | {"task": task_fmt})
-            self.reset_metrics()
-        return pd.DataFrame(records)
+                    metrics = self.get_metrics()
+                    records.append({"task_num": i, "accumulated_replay_rate": metrics["num_replayed_actions"] / metrics["num_total_actions"]})
+            return pd.DataFrame(records)
+        else:
+            for task_fmt, var_dicts in task_dict.items():
+                for var_dict in var_dicts:
+                    task_description = task_fmt
+                    for k, v in var_dict.items():
+                        task_description = task_description.replace(f"{{{{{k}}}}}", v)
+                    logger.info(f"Executing test task: {task_description} with variables {var_dict}")
+                    if use_acttree:
+                        self.execute_task_acttree(task_description, var_dict)
+                    else:
+                        self.execute_task(task_description, var_dict)
+                metrics = self.get_metrics()
+                records.append(metrics | {"task": task_fmt})
+                self.reset_metrics()
+            return pd.DataFrame(records)
         # for item in task_data:
         #     task_fmt = item["task"]
         #     variables = item["variables"]
@@ -990,18 +1048,19 @@ class ExperienceRRTest:
         #     self.execute_task(task_description, variables)
         
 if __name__ == "__main__":
+    random.seed(42)
     client = OpenAI()
     planner_model = "gemini-2.5-flash"
     # planner_model = ""
     experience_dir = Path(__file__).resolve().parent.parent.parent / "utils" / "experience"
     
-    template_path = str(experience_dir / "templates-rr.json")
+    template_path = str(experience_dir / "templates-rr-opt.json")
     experience_rr_test = ExperienceRRTest(planner_client=client, planner_model=planner_model, template_path=template_path)
-    df = experience_rr_test.run_test_suite(use_acttree=True)
+    df = experience_rr_test.run_test_suite(use_acttree=False)
     
     logger.info("Test results:")
     logger.info(df)
-    result_path = str(experience_dir / "acttree_oracle_2_1.csv")
+    result_path = str(experience_dir / "experience_oracle_accumulate_replay_rate_task_level_0.2repeat.csv")
     df.to_csv(result_path, index=False)
     logger.info(f"Results saved to {result_path}")
     # experience_rr = ExperienceRR(planner_client=client)

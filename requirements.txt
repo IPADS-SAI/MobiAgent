@@ -48,4 +48,4 @@ mem0ai
 sentence-transformers
 huggingface-hub
 modelscope
-pymilvus
+pymilvus>=2.4,<4

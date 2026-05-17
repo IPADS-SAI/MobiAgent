@@ -1324,12 +1324,18 @@ def get_app_package_name(task_description, use_graphrag=False, device_type="Andr
             print(f"检索到的用户偏好 (使用{'GraphRAG' if use_graphrag else '向量检索'}):\n{user_preferences}")
         else:
             print("未找到相关用户偏好")
+    if user_preferences:
+        user_profile_content = "用户画像与偏好：\n" + "\n".join(f"- {item}" for item in user_preferences)
+    else:
+        user_profile_content = "无"
+
     # 结合上下文
     enhanced_context = combine_context(experience_content, user_preferences)
     # 构建Prompt
     prompt = planner_prompt_template.format(
         task_description=task_description,
-        experience_content=enhanced_context
+        experience_content=experience_content,
+        user_profile_content=user_profile_content
     )
     response_str = planner_client.chat.completions.create(
         model = planner_model,
@@ -1352,7 +1358,44 @@ def get_app_package_name(task_description, use_graphrag=False, device_type="Andr
     return app_name, package_name, final_desc
 
 
-def execute_single_task(task_description, device, data_dir, use_experience, use_graphrag, current_device_type, use_qwen3_model, use_e2e=False):
+def resolve_task_description_with_user_confirmation(original_task_description, planner_task_description, auto_accept_planner_changes=False):
+    """Resolve which task description should be executed."""
+    original_text = (original_task_description or "").strip()
+    planner_text = (planner_task_description or "").strip()
+
+    if not planner_text or planner_text == original_text:
+        logging.info("Planner task description matches the original task description.")
+        return original_task_description
+
+    if auto_accept_planner_changes:
+        logging.info("Auto-accepting planner-rewritten task description.")
+        return planner_task_description
+
+    if not sys.stdin.isatty():
+        logging.warning(
+            "Planner rewrote the task description, but stdin is not interactive. "
+            "Falling back to the original task description."
+        )
+        return original_task_description
+
+    print("\nPlanner 根据 profile/experience 调整了任务描述，请选择要执行的版本：")
+    print("[1] 原始任务")
+    print(textwrap.indent(original_task_description, prefix="    "))
+    print("[2] 修改后任务")
+    print(textwrap.indent(planner_task_description, prefix="    "))
+
+    while True:
+        choice = input("请输入 1 或 2（直接回车默认使用原始任务）: ").strip()
+        if choice in {"", "1"}:
+            logging.info("Using original task description after terminal confirmation.")
+            return original_task_description
+        if choice == "2":
+            logging.info("Using planner-rewritten task description after terminal confirmation.")
+            return planner_task_description
+        print("无效输入，请输入 1 或 2。")
+
+
+def execute_single_task(task_description, device, data_dir, use_experience, use_graphrag, current_device_type, use_qwen3_model, use_e2e=False, auto_accept_planner_changes=False):
     """
     执行单个任务的通用函数
     
@@ -1372,14 +1415,12 @@ def execute_single_task(task_description, device, data_dir, use_experience, use_
         task_description, use_graphrag=use_graphrag, device_type=current_device_type, use_experience=use_experience
     )
 
-    # 根据 use_experience 参数决定是否使用 planner 改写的任务描述
-    if use_experience:
-        logging.info(f"Using experience: using planner-rewritten task description")
-        new_task_description = planner_task_description
-        logging.info(f"New task description: {new_task_description}")
-    else:
-        logging.info(f"Not using experience: using original task description")
-        new_task_description = task_description
+    new_task_description = resolve_task_description_with_user_confirmation(
+        task_description,
+        planner_task_description,
+        auto_accept_planner_changes=auto_accept_planner_changes,
+    )
+    logging.info(f"Final task description for execution: {new_task_description}")
 
     logging.info(f"Starting task in app: {app_name} (package: {package_name})")
     device.app_start(package_name)
@@ -1403,6 +1444,12 @@ if __name__ == "__main__":
     parser.add_argument("--device", type=str, default="Android", choices=["Android", "Harmony"], help="Device type: Android or Harmony (default: Android)")
     parser.add_argument("--use_qwen3", choices=["on", "off"], default="on", help="Whether to use Qwen3VL-based model (default: on)")
     parser.add_argument("--use_experience", choices=["on", "off"], default="off", help="Whether to use experience (use planner for task rewriting) (default: off)")
+    parser.add_argument(
+        "--accept_planner_changes",
+        choices=["on", "off"],
+        default="off",
+        help="Whether to automatically accept planner-rewritten task descriptions without terminal confirmation (default: off)",
+    )
     parser.add_argument("--data_dir", type=str, default=None, help="Directory to save data (default: ./data relative to script location)")
     parser.add_argument("--task_file", type=str, default=None, help="Path to task.json file (default: ./task.json relative to script location)")
     parser.add_argument("--e2e", action="store_true", default=True, help="Enable e2e mode: use e2e_qwen3.md as decider prompt and return coordinates directly from decider (default: True)")
@@ -1438,9 +1485,11 @@ if __name__ == "__main__":
     logging.info(f"Connected to device: {args.device}")
     use_qwen3_model = (args.use_qwen3 == "on")
     use_experience = (args.use_experience == "on")
+    auto_accept_planner_changes = (args.accept_planner_changes == "on")
     current_device_type = args.device  # 保存设备类型用于后续使用
     logging.info(f"Use Qwen3 model: {use_qwen3_model}")
     logging.info(f"Use experience (planner task rewriting): {use_experience}")
+    logging.info(f"Auto accept planner changes: {auto_accept_planner_changes}")
     logging.info(f"Device type: {current_device_type}")
     logging.info(f"Use E2E mode: {args.e2e}")
     # 配置数据保存目录
@@ -1486,7 +1535,7 @@ if __name__ == "__main__":
                 logging.info(f"Processing task {task_index} of {app_name_from_file}/{task_type}: {task_description}")
 
                 
-                execute_single_task(task_description, device, data_dir, use_experience, use_graphrag, current_device_type, use_qwen3_model, args.e2e)
+                execute_single_task(task_description, device, data_dir, use_experience, use_graphrag, current_device_type, use_qwen3_model, args.e2e, auto_accept_planner_changes)
         else:
             # 旧格式：简单任务列表
             existing_dirs = [d for d in os.listdir(data_base_dir) if os.path.isdir(os.path.join(data_base_dir, d)) and d.isdigit()]
@@ -1498,7 +1547,7 @@ if __name__ == "__main__":
             os.makedirs(data_dir, exist_ok=True)
             task_description = task_item
             
-            execute_single_task(task_description, device, data_dir, use_experience, use_graphrag, current_device_type, use_qwen3_model, args.e2e)
+            execute_single_task(task_description, device, data_dir, use_experience, use_graphrag, current_device_type, use_qwen3_model, args.e2e, auto_accept_planner_changes)
     
     # 等待所有偏好提取任务完成
     if preference_extractor and hasattr(preference_extractor, 'executor'):

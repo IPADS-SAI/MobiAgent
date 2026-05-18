@@ -1395,6 +1395,11 @@ def resolve_task_description_with_user_confirmation(original_task_description, p
         print("无效输入，请输入 1 或 2。")
 
 
+def should_use_planner_rewritten_task(use_experience=False):
+    """Only enable planner task rewriting when experience or user profile is active."""
+    return bool(use_experience or (preference_extractor and getattr(preference_extractor, 'mem', None)))
+
+
 def execute_single_task(task_description, device, data_dir, use_experience, use_graphrag, current_device_type, use_qwen3_model, use_e2e=False, auto_accept_planner_changes=False):
     """
     执行单个任务的通用函数
@@ -1415,11 +1420,15 @@ def execute_single_task(task_description, device, data_dir, use_experience, use_
         task_description, use_graphrag=use_graphrag, device_type=current_device_type, use_experience=use_experience
     )
 
-    new_task_description = resolve_task_description_with_user_confirmation(
-        task_description,
-        planner_task_description,
-        auto_accept_planner_changes=auto_accept_planner_changes,
-    )
+    if should_use_planner_rewritten_task(use_experience=use_experience):
+        new_task_description = resolve_task_description_with_user_confirmation(
+            task_description,
+            planner_task_description,
+            auto_accept_planner_changes=auto_accept_planner_changes,
+        )
+    else:
+        logging.info("Planner task rewriting is disabled; using original task description.")
+        new_task_description = task_description
     logging.info(f"Final task description for execution: {new_task_description}")
 
     logging.info(f"Starting task in app: {app_name} (package: {package_name})")

@@ -1,0 +1,16 @@
+{
+  "metadata": {
+    "name": "minimal-command-workflow",
+    "description": "最小可运行示例：仅执行 shell 命令，用于验证 workflow runner 本身。"
+  },
+  "context": {
+    "message": "hello from workflow"
+  },
+  "steps": [
+    {
+      "id": 1,
+      "type": "command",
+      "command": "echo '${context.message}'"
+    }
+  ]
+}

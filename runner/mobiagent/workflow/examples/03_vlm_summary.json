@@ -1,0 +1,27 @@
+{
+  "metadata": {
+    "name": "vlm-summary",
+    "description": "先截图，再调用内置 VLM 工具对图片内容进行总结。"
+  },
+  "defaults": {
+    "device": "Harmony"
+  },
+  "steps": [
+    {
+      "id": 1,
+      "type": "gui_action",
+      "action": "screenshot",
+      "file_name": "vlm_input.jpg"
+    },
+    {
+      "id": 2,
+      "type": "tool",
+      "tool_name": "vlm_qa",
+      "inputs": {
+        "mode": "summary",
+        "image": "${steps.1.output.image_path}",
+        "question": "请总结这张截图中的页面主题、主要按钮和下一步建议操作。"
+      }
+    }
+  ]
+}

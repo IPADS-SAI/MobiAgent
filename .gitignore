@@ -37,4 +37,7 @@ profile-mem/*
 !profile-mem/model_utils.py
 !profile-mem/README_zh.md
 !profile-mem/standalone_embed.sh
+runner/mobiagent/workflow/__pycache__/
+runner/mobiagent/workflow/test-runs/
+runner/mobiagent/.env
 

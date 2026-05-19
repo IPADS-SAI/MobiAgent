@@ -1,0 +1,57 @@
+{
+  "metadata": {
+    "name": "gui-action-touch-swipe-input",
+    "description": "演示 gui_action 如何点击具体坐标、滑动屏幕、激活输入框后输入文字。"
+  },
+  "defaults": {
+    "device": "Harmony"
+  },
+  "steps": [
+    {
+      "id": 1,
+      "type": "gui_task",
+      "task_description": "打开微博"
+    },
+    {
+      "id": 2,
+      "type": "gui_action",
+      "action": "click",
+      "x": 540,
+      "y": 2080
+    },
+    {
+      "id": 3,
+      "type": "gui_action",
+      "action": "swipe_with_coords",
+      "start_x": 540,
+      "start_y": 1700,
+      "end_x": 540,
+      "end_y": 900
+    },
+    {
+      "id": 4,
+      "type": "gui_action",
+      "action": "click",
+      "x": 540,
+      "y": 240
+    },
+    {
+      "id": 5,
+      "type": "gui_action",
+      "action": "input",
+      "text": "雷军"
+    },
+    {
+      "id": 6,
+      "type": "gui_action",
+      "action": "keyevent",
+      "key": "enter"
+    },
+    {
+      "id": 7,
+      "type": "gui_action",
+      "action": "screenshot",
+      "file_name": "after_manual_actions.jpg"
+    }
+  ]
+}

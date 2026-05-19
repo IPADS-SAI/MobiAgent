@@ -26,7 +26,7 @@
     {
       "id": 3,
       "type": "gui_task",
-      "task_description": "查看第一条微博热搜条目",
+      "task_description": "查看第一条微博热搜，注意不是置顶的那条微博热搜，而是左侧数字是1的那条微博热搜",
       "on_error": "stop"
     },
     {

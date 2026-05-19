@@ -57,6 +57,9 @@ GROUNDER_MAX_TOKENS = 128
 DEVICE_WAIT_TIME = 0.5
 APP_STOP_WAIT = 3
 
+ANSI_RESET = "\033[0m"
+ANSI_REASONING_GREEN = "\033[92m"
+
 # 滑动坐标缩放比例
 SWIPE_V_START = 0.3
 SWIPE_V_END = 0.7
@@ -342,6 +345,39 @@ def init(service_ip, decider_port, grounder_port, planner_port, enable_user_prof
         preference_extractor = None
     
 
+def format_model_response_for_log(context, response_str):
+    """Format model responses for logs without leaking prompt contents."""
+    if context != "Decider":
+        return response_str
+
+    parsed_response = _load_json_from_text(response_str)
+    if not isinstance(parsed_response, dict):
+        return response_str
+
+    reasoning = parsed_response.get("reasoning")
+    try:
+        formatted_response = json.dumps(parsed_response, ensure_ascii=False, indent=2)
+    except (TypeError, ValueError):
+        return response_str
+
+    if not (isinstance(reasoning, str) and reasoning):
+        return formatted_response
+
+    if not sys.stdout.isatty():
+        return formatted_response
+
+    reasoning_json = json.dumps(reasoning, ensure_ascii=False)
+    reasoning_line_pattern = rf'(^\s*"reasoning":\s*){re.escape(reasoning_json)}(,?)$'
+
+    return re.sub(
+        reasoning_line_pattern,
+        rf'\1{ANSI_REASONING_GREEN}{reasoning_json}{ANSI_RESET}\2',
+        formatted_response,
+        count=1,
+        flags=re.MULTILINE,
+    )
+
+
 # ============ 工具函数 ============
 
 def call_model_with_validation_retry(client, model, messages, validator_func, max_retries=MAX_RETRIES, max_tokens=256, context="Model"):
@@ -367,11 +403,6 @@ def call_model_with_validation_retry(client, model, messages, validator_func, ma
     for attempt in range(max_retries):
         try:
             start_time = time.time()
-            try:
-                messages_preview = json.dumps(messages, ensure_ascii=False, indent=2)
-                logging.info(f"{context} messages preview:\n{messages_preview[:2000]}")
-            except Exception as e:
-                logging.warning(f"Failed to serialize {context} messages for logging: {e}")
             response_str = client.chat.completions.create(
                 model=model,
                 messages=messages,
@@ -381,7 +412,7 @@ def call_model_with_validation_retry(client, model, messages, validator_func, ma
             ).choices[0].message.content
             end_time = time.time()
             logging.info(f"[evaluation] {context} time taken: {end_time - start_time:.2f} seconds")
-            logging.info(f"{context} response: \n{response_str}")
+            logging.info(f"{context} response: \n{format_model_response_for_log(context, response_str)}")
             
             # 尝试解析 JSON
             parsed_response = robust_json_loads(response_str)
@@ -820,10 +851,7 @@ def build_decider_messages(task, history, screenshot, e2e):
             ]
         }
     ]
-    
-    # 打印用于调试（实际生产建议去掉）
-    print(json.dumps(messages, ensure_ascii=False, indent=2)[:1000] + "...")
-    
+
     return messages
 
 

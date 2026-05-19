@@ -7,6 +7,7 @@ import re
 import shlex
 import subprocess
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -40,6 +41,12 @@ def normalize_workflow_steps(steps: list[dict[str, Any]]) -> list[dict[str, Any]
         normalized_step = dict(step)
         normalized_step["id"] = str(step["id"])
         normalized_step.setdefault("name", normalized_step["id"])
+
+        if normalized_step["type"] == "loop":
+            normalized_step["steps"] = normalize_workflow_steps(normalized_step.get("steps", []))
+        elif normalized_step["type"] == "if":
+            normalized_step["then_steps"] = normalize_workflow_steps(normalized_step.get("then_steps", []))
+            normalized_step["else_steps"] = normalize_workflow_steps(normalized_step.get("else_steps", []))
 
         if normalized_step["id"] in seen_step_ids:
             raise ValueError(f"Duplicate workflow step id: {normalized_step['id']}")
@@ -76,9 +83,23 @@ class WorkflowContext:
         self.run_dir = run_dir
         self.initial_context = initial_context or {}
         self.step_results: dict[str, StepResult] = {}
+        self._step_alias_scopes: list[dict[str, str]] = []
+        self._runtime_scopes: list[dict[str, Any]] = []
 
     def set_step_result(self, result: StepResult) -> None:
         self.step_results[result.step_id] = result
+
+    @contextmanager
+    def push_scope(self, step_aliases: dict[str, str] | None = None, runtime_values: dict[str, Any] | None = None):
+        alias_scope = step_aliases if step_aliases is not None else {}
+        runtime_scope = runtime_values if runtime_values is not None else {}
+        self._step_alias_scopes.append(alias_scope)
+        self._runtime_scopes.append(runtime_scope)
+        try:
+            yield alias_scope
+        finally:
+            self._step_alias_scopes.pop()
+            self._runtime_scopes.pop()
 
     def resolve(self, value: Any) -> Any:
         if isinstance(value, dict):
@@ -102,6 +123,9 @@ class WorkflowContext:
         if not matches:
             return raw
 
+        if len(matches) == 1 and raw.strip() == f"${{{matches[0]}}}":
+            return self._lookup(matches[0])
+
         resolved = raw
         for expression in matches:
             replacement = self._lookup(expression)
@@ -121,6 +145,13 @@ class WorkflowContext:
                 current = current[part]
             return current
 
+        for scope in reversed(self._runtime_scopes):
+            if parts[0] in scope:
+                current = scope[parts[0]]
+                for part in parts[1:]:
+                    current = current[part]
+                return current
+
         if parts[0] == "run":
             mapping = {
                 "dir": str(self.run_dir),
@@ -136,6 +167,10 @@ class WorkflowContext:
             if len(parts) < 3:
                 raise KeyError(f"Invalid step variable expression: {expression}")
             step_id = parts[1]
+            for scope in reversed(self._step_alias_scopes):
+                if step_id in scope:
+                    step_id = scope[step_id]
+                    break
             result = self.step_results[step_id].to_dict()
             current: Any = result
             for part in parts[2:]:
@@ -208,35 +243,7 @@ class WorkflowRunner:
     def run(self) -> dict[str, Any]:
         logging.info("Starting workflow run: %s", self.workflow_path)
         summary_path = self.run_dir / "run_summary.json"
-        stopped = False
-
-        for step in self.steps:
-            step_id = step["id"]
-            started_at = time.time()
-            try:
-                output = self._execute_step(step)
-                result = StepResult(
-                    step_id=step_id,
-                    status="success",
-                    started_at=started_at,
-                    finished_at=time.time(),
-                    output=output,
-                )
-                self.context.set_step_result(result)
-            except Exception as exc:
-                logging.exception("Workflow step failed: %s", step_id)
-                result = StepResult(
-                    step_id=step_id,
-                    status="failed",
-                    started_at=started_at,
-                    finished_at=time.time(),
-                    output={},
-                    error=str(exc),
-                )
-                self.context.set_step_result(result)
-                if step.get("on_error", "stop") != "continue":
-                    stopped = True
-                    break
+        stopped = self._execute_steps(self.steps)
 
         summary = self.context.summary()
         summary["status"] = "failed" if stopped else "success"
@@ -245,21 +252,65 @@ class WorkflowRunner:
         logging.info("Workflow summary written to %s", summary_path)
         return summary
 
-    def _execute_step(self, step: dict[str, Any]) -> dict[str, Any]:
+    def _execute_steps(
+        self,
+        steps: list[dict[str, Any]],
+        actual_prefix: str = "",
+        runtime_values: dict[str, Any] | None = None,
+    ) -> bool:
+        local_aliases: dict[str, str] = {}
+        with self.context.push_scope(local_aliases, runtime_values):
+            for step in steps:
+                local_step_id = step["id"]
+                actual_step_id = local_step_id if not actual_prefix else f"{actual_prefix}.{local_step_id}"
+                started_at = time.time()
+                try:
+                    output = self._execute_step(step, actual_step_id)
+                    result = StepResult(
+                        step_id=actual_step_id,
+                        status="success",
+                        started_at=started_at,
+                        finished_at=time.time(),
+                        output=output,
+                    )
+                except Exception as exc:
+                    logging.exception("Workflow step failed: %s", actual_step_id)
+                    result = StepResult(
+                        step_id=actual_step_id,
+                        status="failed",
+                        started_at=started_at,
+                        finished_at=time.time(),
+                        output={},
+                        error=str(exc),
+                    )
+                    self.context.set_step_result(result)
+                    local_aliases[local_step_id] = actual_step_id
+                    if step.get("on_error", "stop") != "continue":
+                        return True
+                    continue
+
+                self.context.set_step_result(result)
+                local_aliases[local_step_id] = actual_step_id
+        return False
+
+    def _execute_step(self, step: dict[str, Any], actual_step_id: str) -> dict[str, Any]:
         step_type = step["type"]
-        resolved_step = self.context.resolve(step)
         if step_type == "gui_task":
-            return self._run_gui_task(resolved_step)
+            return self._run_gui_task(self.context.resolve(step), actual_step_id)
         if step_type == "gui_action":
-            return self._run_gui_action(resolved_step)
+            return self._run_gui_action(self.context.resolve(step), actual_step_id)
         if step_type == "command":
-            return self._run_command(resolved_step)
+            return self._run_command(self.context.resolve(step), actual_step_id)
         if step_type == "tool":
-            return self._run_tool(resolved_step)
+            return self._run_tool(self.context.resolve(step), actual_step_id)
+        if step_type == "loop":
+            return self._run_loop(step, actual_step_id)
+        if step_type == "if":
+            return self._run_if(step, actual_step_id)
         raise ValueError(f"Unsupported workflow step type: {step_type}")
 
-    def _run_gui_task(self, step: dict[str, Any]) -> dict[str, Any]:
-        step_dir = self._prepare_step_dir(step["id"])
+    def _run_gui_task(self, step: dict[str, Any], actual_step_id: str) -> dict[str, Any]:
+        step_dir = self._prepare_step_dir(actual_step_id)
         current_device_type = step.get("device", self.device_type)
         device = self._get_device(current_device_type)
         use_experience = bool(step.get("use_experience", self.defaults.get("use_experience", False)))
@@ -274,7 +325,7 @@ class WorkflowRunner:
         )
         task_description = str(step["task_description"])
 
-        if step["id"] == "1":
+        if actual_step_id == "1":
             app_name, package_name, planner_task_description = mobiagent.get_app_package_name(
                 task_description,
                 use_graphrag=use_graphrag,
@@ -336,8 +387,8 @@ class WorkflowRunner:
             "accept_planner_changes": auto_accept,
         }
 
-    def _run_gui_action(self, step: dict[str, Any]) -> dict[str, Any]:
-        step_dir = self._prepare_step_dir(step["id"])
+    def _run_gui_action(self, step: dict[str, Any], actual_step_id: str) -> dict[str, Any]:
+        step_dir = self._prepare_step_dir(actual_step_id)
         current_device_type = step.get("device", self.device_type)
         device = self._get_device(current_device_type)
         action = step["action"]
@@ -395,8 +446,8 @@ class WorkflowRunner:
 
         return output
 
-    def _run_command(self, step: dict[str, Any]) -> dict[str, Any]:
-        step_dir = self._prepare_step_dir(step["id"])
+    def _run_command(self, step: dict[str, Any], actual_step_id: str) -> dict[str, Any]:
+        step_dir = self._prepare_step_dir(actual_step_id)
         timeout = float(step.get("timeout_sec", self.defaults.get("command_timeout_sec", 60)))
         capture_output = bool(step.get("capture_output", True))
         allow_failure = bool(step.get("allow_failure", False))
@@ -457,13 +508,99 @@ class WorkflowRunner:
             "stderr_path": str(stderr_path) if capture_output else "",
         }
 
-    def _run_tool(self, step: dict[str, Any]) -> dict[str, Any]:
-        step_dir = self._prepare_step_dir(step["id"])
+    def _run_tool(self, step: dict[str, Any], actual_step_id: str) -> dict[str, Any]:
+        step_dir = self._prepare_step_dir(actual_step_id)
         tool_name = str(step["tool_name"])
         inputs = dict(step.get("inputs", {}))
         output = self.tool_registry.run(tool_name, inputs, self.context, self)
         output["step_dir"] = str(step_dir)
         return output
+
+    def _run_loop(self, step: dict[str, Any], actual_step_id: str) -> dict[str, Any]:
+        resolved_times = self.context.resolve(step.get("times", 0))
+        times = int(resolved_times)
+        if times < 0:
+            raise ValueError("loop.times must be >= 0")
+
+        executed_iterations: list[dict[str, Any]] = []
+        body_steps = step.get("steps", [])
+        for iteration_index in range(times):
+            loop_runtime = {
+                "loop": {
+                    "index": iteration_index + 1,
+                    "index0": iteration_index,
+                    "count": times,
+                    "first": iteration_index == 0,
+                    "last": iteration_index == times - 1,
+                }
+            }
+            iteration_prefix = f"{actual_step_id}.iter{iteration_index + 1}"
+            stopped = self._execute_steps(body_steps, actual_prefix=iteration_prefix, runtime_values=loop_runtime)
+            executed_iterations.append(
+                {
+                    "iteration": iteration_index + 1,
+                    "prefix": iteration_prefix,
+                }
+            )
+            if stopped:
+                raise RuntimeError(f"Loop body stopped at iteration {iteration_index + 1}")
+
+        return {
+            "times": times,
+            "iterations": executed_iterations,
+        }
+
+    def _run_if(self, step: dict[str, Any], actual_step_id: str) -> dict[str, Any]:
+        condition = step.get("condition")
+        matched = self._evaluate_condition(condition)
+        branch_name = "then" if matched else "else"
+        branch_steps = step.get("then_steps", []) if matched else step.get("else_steps", [])
+        if branch_steps:
+            stopped = self._execute_steps(branch_steps, actual_prefix=f"{actual_step_id}.{branch_name}")
+            if stopped:
+                raise RuntimeError(f"If branch '{branch_name}' stopped due to step failure")
+        return {
+            "matched": matched,
+            "branch": branch_name,
+            "executed_step_count": len(branch_steps),
+        }
+
+    def _evaluate_condition(self, condition: Any) -> bool:
+        if isinstance(condition, dict):
+            left = self.context.resolve(condition.get("left"))
+            right = self.context.resolve(condition.get("right"))
+            operator = str(condition.get("operator", "==")).strip()
+            return self._apply_condition_operator(left, operator, right)
+
+        resolved = self.context.resolve(condition)
+        if isinstance(resolved, str):
+            lowered = resolved.strip().lower()
+            if lowered in {"", "0", "false", "no", "none", "null"}:
+                return False
+        return bool(resolved)
+
+    def _apply_condition_operator(self, left: Any, operator: str, right: Any) -> bool:
+        if operator == "==":
+            return left == right
+        if operator == "!=":
+            return left != right
+        if operator == "contains":
+            return str(right) in str(left)
+        if operator == "not_contains":
+            return str(right) not in str(left)
+        if operator == ">":
+            return left > right
+        if operator == ">=":
+            return left >= right
+        if operator == "<":
+            return left < right
+        if operator == "<=":
+            return left <= right
+        if operator == "in":
+            return left in right
+        if operator == "not_in":
+            return left not in right
+        raise ValueError(f"Unsupported condition operator: {operator}")
 
     def _prepare_step_dir(self, step_id: str) -> Path:
         step_dir = self.run_dir / "steps" / step_id

@@ -4,12 +4,14 @@
 
 ## 1. 设计目标
 
-workflow 适合描述一串按顺序执行的自动化步骤，每个步骤都属于下面四类之一：
+workflow 适合描述一串按顺序执行的自动化步骤，每个步骤都属于下面六类之一：
 
 1. `gui_task`：执行一次由模型推理驱动的 GUI 任务，例如“点击 xxx 按钮”“搜索 xxx 博主”。
 2. `gui_action`：执行一次显式 GUI 操作，例如固定坐标点击、固定方向滑动、输入文本、截图、等待。
 3. `command`：执行一次 shell / adb / hdc / python / bash 等命令。
 4. `tool`：调用一个内置工具。首版内置工具是 `vlm_qa`，用于根据图片回答问题或做总结，并保留了后续扩展接口。
+5. `loop`：按给定次数重复执行一组子步骤，适合“截图一次、下滑一次，再重复”的场景。
+6. `if`：按条件决定执行哪一组子步骤，适合“如果不是最后一次循环就继续滑动”的场景。
 
 ## 2. 启动方式
 
@@ -53,7 +55,7 @@ workflow 输入格式使用 JSON，与现有 `runner/mobiagent/task.json` 风格
 每个步骤的公共字段：
 
 - `id`：步骤唯一标识，推荐使用从 `1` 开始递增的数字；程序内部会自动转成字符串处理。
-- `type`：步骤类型，支持 `gui_task`、`gui_action`、`command`、`tool`。
+- `type`：步骤类型，支持 `gui_task`、`gui_action`、`command`、`tool`、`loop`、`if`。
 - `name`：步骤说明，可选；不提供也可以正常运行。
 - `on_error`：失败后的处理方式，支持 `stop` 或 `continue`，默认 `stop`。
 
@@ -250,15 +252,106 @@ workflow 输入格式使用 JSON，与现有 `runner/mobiagent/task.json` 风格
 }
 ```
 
+### 4.5 `loop`
+
+`loop` 用于重复执行一组子步骤，当前支持按固定次数循环。
+
+主要字段：
+
+- `times`：循环次数。
+- `steps`：循环体中的子步骤列表。
+
+循环体中可用变量：
+
+- `${loop.index}`：当前轮次，从 `1` 开始。
+- `${loop.index0}`：当前轮次，从 `0` 开始。
+- `${loop.count}`：总轮次。
+- `${loop.first}`：是否第一轮，布尔值。
+- `${loop.last}`：是否最后一轮，布尔值。
+
+示例：
+
+```json
+{
+  "id": 3,
+  "type": "loop",
+  "times": 3,
+  "steps": [
+    {
+      "id": 1,
+      "type": "gui_action",
+      "action": "screenshot",
+      "file_name": "chat_${loop.index}.jpg"
+    }
+  ]
+}
+```
+
+### 4.6 `if`
+
+`if` 用于条件分支执行。
+
+主要字段：
+
+- `condition`：条件表达式对象。
+- `then_steps`：条件成立时执行的子步骤列表。
+- `else_steps`：条件不成立时执行的子步骤列表，可为空。
+
+`condition` 当前支持的字段：
+
+- `left`
+- `operator`
+- `right`
+
+当前支持的 `operator`：
+
+- `==`
+- `!=`
+- `contains`
+- `not_contains`
+- `>`
+- `>=`
+- `<`
+- `<=`
+- `in`
+- `not_in`
+
+示例：
+
+```json
+{
+  "id": 3,
+  "type": "if",
+  "condition": {
+    "left": "${loop.last}",
+    "operator": "==",
+    "right": false
+  },
+  "then_steps": [
+    {
+      "id": 1,
+      "type": "gui_action",
+      "action": "swipe_with_coords",
+      "start_x": 540,
+      "start_y": 1700,
+      "end_x": 540,
+      "end_y": 900
+    }
+  ],
+  "else_steps": []
+}
+```
+
 ## 5. 变量引用
 
 workflow 支持在字符串中引用运行时变量。当前支持：
 
 - `${context.xxx}`：引用顶层 `context` 中的变量。
+- `${loop.xxx}`：引用当前循环轮次变量，例如 `${loop.index}`、`${loop.last}`。
 - `${run.dir}`：引用当前 workflow 运行目录。
 - `${run.workflow_file}`：引用 workflow 文件路径。
 - `${run.workflow_dir}`：引用 workflow 文件所在目录。
-- `${steps.step_id.output.xxx}`：引用前序步骤输出，其中 `step_id` 使用步骤的 `id`，例如 `${steps.1.output.image_path}`。
+- `${steps.step_id.output.xxx}`：引用前序步骤输出，其中 `step_id` 使用当前作用域内步骤的 `id`，例如 `${steps.1.output.image_path}`。在 `loop` / `if` 内部，这个引用会优先指向当前循环体或当前分支中的同级步骤。
 - `${steps.step_id.status}`：引用前序步骤状态。
 
 示例：
@@ -275,8 +368,11 @@ workflow 支持在字符串中引用运行时变量。当前支持：
 
 - `examples/00_command_only_minimal.json`：最小可运行样例，只执行一条命令。
 - `examples/01_basic_gui_task.json`：执行一个自然语言 GUI 任务。
+- `examples/01_basic_gui_task_weixin.json`：打开微信聊天界面，然后通过 `loop` + `if` 连续截图三次并逐次下滑。
 - `examples/02_gui_action_and_command.json`：组合 GUI action 与 command。
 - `examples/03_vlm_summary.json`：截图后调用 `vlm_qa` 做总结。
+- `examples/04_gui_action_touch_swipe_input.json`：点击坐标、滑动屏幕、激活输入框后输入文字。
+- `examples/05_loop_and_if_minimal.json`：不依赖设备的最小 loop/if 示例，适合先验证控制流逻辑。
 
 ## 7. 运行产物
 

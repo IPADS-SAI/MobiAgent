@@ -1,0 +1,43 @@
+{
+  "metadata": {
+    "name": "loop-and-if-minimal",
+    "description": "最小 loop/if 示例：循环三次打印消息，并在最后一次走不同分支。"
+  },
+  "steps": [
+    {
+      "id": 1,
+      "type": "loop",
+      "times": 3,
+      "steps": [
+        {
+          "id": 1,
+          "type": "command",
+          "command": "echo 'capture round ${loop.index}'"
+        },
+        {
+          "id": 2,
+          "type": "if",
+          "condition": {
+            "left": "${loop.last}",
+            "operator": "==",
+            "right": false
+          },
+          "then_steps": [
+            {
+              "id": 1,
+              "type": "command",
+              "command": "echo 'swipe after ${steps.1.output.stdout}'"
+            }
+          ],
+          "else_steps": [
+            {
+              "id": 1,
+              "type": "command",
+              "command": "echo 'finish after ${steps.1.output.stdout}'"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

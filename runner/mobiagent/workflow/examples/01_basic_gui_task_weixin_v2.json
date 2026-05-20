@@ -29,7 +29,12 @@
     {
       "id": 3,
       "type": "loop",
-      "times": 3,
+      "max_times": 10,
+      "break_if": {
+        "left": "${steps.2.output.structured_output.contains_today_chat}",
+        "operator": "==",
+        "right": false
+      },
       "steps": [
         {
           "id": 1,
@@ -44,16 +49,26 @@
           "inputs": {
             "mode": "summary",
             "image": "${steps.1.output.image_path}",
-            "question": "帮我总结当前界面聊天记录的内容，这是第${loop.index}次截图。"
+            "question": "请分析当前微信聊天界面。这是第${loop.index}次截图。请总结当前截图中可见的聊天内容，并判断当前截图中的聊天记录是否仍然属于今天；如果已经出现更早日期的聊天记录，则应判定为 false。",
+            "json_schema": {
+              "summary": {
+                "type": "string",
+                "description": "对当前截图中可见聊天内容的简要总结"
+              },
+              "contains_today_chat": {
+                "type": "boolean",
+                "description": "如果当前截图中的聊天记录仍然属于今天则为 true；如果已经出现更早日期的聊天记录则为 false"
+              }
+            }
           }
         },
         {
           "id": 3,
           "type": "if",
           "condition": {
-            "left": "${loop.last}",
+            "left": "${steps.2.output.structured_output.contains_today_chat}",
             "operator": "==",
-            "right": false
+            "right": true
           },
           "then_steps": [
             {

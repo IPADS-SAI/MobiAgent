@@ -20,13 +20,13 @@ workflow 适合描述一串按顺序执行的自动化步骤，每个步骤都�
 ```bash
 python -m runner.mobiagent.workflow_runner \
   --workflow_file runner/mobiagent/workflow/examples/00_command_only_minimal.json \
-  --service_ip 166.111.53.96 \
+  --service_ip xxx \
   --decider_port 7003 \
   --grounder_port 7003 \
   --planner_port 7002 \
   --device Harmony
 
-python -m runner.mobiagent.workflow_runner --workflow_file ./runner/mobiagent/workflow/examples/01_basic_gui_task.json --service_ip 166.111.53.96 --decider_port 7003 --grounder_port 7003 --planner_port 7002 --device Harmony --output_dir runner/mobiagent/workflow/test-runs
+python -m runner.mobiagent.workflow_runner --workflow_file ./runner/mobiagent/workflow/examples/01_basic_gui_task.json --service_ip xxxx --decider_port 7003 --grounder_port 7003 --planner_port 7002 --device Harmony --output_dir runner/mobiagent/workflow/test-runs
 ```
 
 常用参数：
@@ -236,6 +236,7 @@ workflow 输入格式使用 JSON，与现有 `runner/mobiagent/task.json` 风格
 - `question`：问题文本。
 - `image`：图片路径。
 - `mode`：`answer` 或 `summary`。
+- `json_schema`：可选，要求模型按结构化 JSON 返回结果。适合返回 `summary` 之外的判断字段，例如 `contains_today_chat`、`is_today_order` 等。
 
 示例：
 
@@ -252,6 +253,36 @@ workflow 输入格式使用 JSON，与现有 `runner/mobiagent/task.json` 风格
 }
 ```
 
+如果你希望 `vlm_qa` 除了总结之外，还返回可供后续逻辑判断的字段，可以这样写：
+
+```json
+{
+  "id": 2,
+  "type": "tool",
+  "tool_name": "vlm_qa",
+  "inputs": {
+    "mode": "summary",
+    "image": "${steps.1.output.image_path}",
+    "question": "请判断当前聊天记录是否仍然属于今天，并总结内容。",
+    "json_schema": {
+      "summary": {
+        "type": "string",
+        "description": "当前截图内容总结"
+      },
+      "contains_today_chat": {
+        "type": "boolean",
+        "description": "当前截图中的聊天记录是否仍然属于今天"
+      }
+    }
+  }
+}
+```
+
+这时工具输出中会多一个：
+
+- `${steps.2.output.structured_output.summary}`
+- `${steps.2.output.structured_output.contains_today_chat}`
+
 ### 4.5 `loop`
 
 `loop` 用于重复执行一组子步骤，当前支持按固定次数循环。
@@ -259,6 +290,8 @@ workflow 输入格式使用 JSON，与现有 `runner/mobiagent/task.json` 风格
 主要字段：
 
 - `times`：循环次数。
+- `max_times`：循环最多执行多少次。适合和 `break_if` 一起使用。
+- `break_if`：可选，循环体每轮执行完后进行判断；如果条件成立，则提前停止循环。
 - `steps`：循环体中的子步骤列表。
 
 循环体中可用变量：
@@ -369,6 +402,7 @@ workflow 支持在字符串中引用运行时变量。当前支持：
 - `examples/00_command_only_minimal.json`：最小可运行样例，只执行一条命令。
 - `examples/01_basic_gui_task.json`：执行一个自然语言 GUI 任务。
 - `examples/01_basic_gui_task_weixin.json`：打开微信聊天界面，然后通过 `loop` + `if` 连续截图三次并逐次下滑。
+- `examples/01_basic_gui_task_weixin_v2.json`：打开微信聊天界面，通过 `vlm_qa + json_schema` 判断当前聊天记录是否仍然属于今天；如果已经翻到更早聊天则停止，同时最多只翻 10 次。
 - `examples/02_gui_action_and_command.json`：组合 GUI action 与 command。
 - `examples/03_vlm_summary.json`：截图后调用 `vlm_qa` 做总结。
 - `examples/04_gui_action_touch_swipe_input.json`：点击坐标、滑动屏幕、激活输入框后输入文字。

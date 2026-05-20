@@ -260,38 +260,46 @@ class WorkflowRunner:
     ) -> bool:
         local_aliases: dict[str, str] = {}
         with self.context.push_scope(local_aliases, runtime_values):
-            for step in steps:
-                local_step_id = step["id"]
-                actual_step_id = local_step_id if not actual_prefix else f"{actual_prefix}.{local_step_id}"
-                started_at = time.time()
-                try:
-                    output = self._execute_step(step, actual_step_id)
-                    result = StepResult(
-                        step_id=actual_step_id,
-                        status="success",
-                        started_at=started_at,
-                        finished_at=time.time(),
-                        output=output,
-                    )
-                except Exception as exc:
-                    logging.exception("Workflow step failed: %s", actual_step_id)
-                    result = StepResult(
-                        step_id=actual_step_id,
-                        status="failed",
-                        started_at=started_at,
-                        finished_at=time.time(),
-                        output={},
-                        error=str(exc),
-                    )
-                    self.context.set_step_result(result)
-                    local_aliases[local_step_id] = actual_step_id
-                    if step.get("on_error", "stop") != "continue":
-                        return True
-                    continue
+            return self._execute_steps_in_scope(steps, actual_prefix, local_aliases)
+        return False
 
+    def _execute_steps_in_scope(
+        self,
+        steps: list[dict[str, Any]],
+        actual_prefix: str,
+        local_aliases: dict[str, str],
+    ) -> bool:
+        for step in steps:
+            local_step_id = step["id"]
+            actual_step_id = local_step_id if not actual_prefix else f"{actual_prefix}.{local_step_id}"
+            started_at = time.time()
+            try:
+                output = self._execute_step(step, actual_step_id)
+                result = StepResult(
+                    step_id=actual_step_id,
+                    status="success",
+                    started_at=started_at,
+                    finished_at=time.time(),
+                    output=output,
+                )
+            except Exception as exc:
+                logging.exception("Workflow step failed: %s", actual_step_id)
+                result = StepResult(
+                    step_id=actual_step_id,
+                    status="failed",
+                    started_at=started_at,
+                    finished_at=time.time(),
+                    output={},
+                    error=str(exc),
+                )
                 self.context.set_step_result(result)
                 local_aliases[local_step_id] = actual_step_id
-        return False
+                if step.get("on_error", "stop") != "continue":
+                    return True
+                continue
+
+            self.context.set_step_result(result)
+            local_aliases[local_step_id] = actual_step_id
 
     def _execute_step(self, step: dict[str, Any], actual_step_id: str) -> dict[str, Any]:
         step_type = step["type"]
@@ -517,36 +525,51 @@ class WorkflowRunner:
         return output
 
     def _run_loop(self, step: dict[str, Any], actual_step_id: str) -> dict[str, Any]:
-        resolved_times = self.context.resolve(step.get("times", 0))
-        times = int(resolved_times)
-        if times < 0:
-            raise ValueError("loop.times must be >= 0")
+        max_times_value = step.get("max_times", step.get("times", 0))
+        max_times = int(self.context.resolve(max_times_value))
+        if max_times < 0:
+            raise ValueError("loop.max_times/times must be >= 0")
 
         executed_iterations: list[dict[str, Any]] = []
         body_steps = step.get("steps", [])
-        for iteration_index in range(times):
+        broke_early = False
+        break_iteration = None
+        break_if_condition = step.get("break_if")
+
+        for iteration_index in range(max_times):
             loop_runtime = {
                 "loop": {
                     "index": iteration_index + 1,
                     "index0": iteration_index,
-                    "count": times,
+                    "count": max_times,
                     "first": iteration_index == 0,
-                    "last": iteration_index == times - 1,
+                    "last": iteration_index == max_times - 1,
                 }
             }
             iteration_prefix = f"{actual_step_id}.iter{iteration_index + 1}"
-            stopped = self._execute_steps(body_steps, actual_prefix=iteration_prefix, runtime_values=loop_runtime)
+            local_aliases: dict[str, str] = {}
+            with self.context.push_scope(local_aliases, loop_runtime):
+                stopped = self._execute_steps_in_scope(body_steps, iteration_prefix, local_aliases)
+                should_break = self._evaluate_condition(break_if_condition) if break_if_condition is not None else False
             executed_iterations.append(
                 {
                     "iteration": iteration_index + 1,
                     "prefix": iteration_prefix,
+                    "break_triggered": should_break,
                 }
             )
             if stopped:
                 raise RuntimeError(f"Loop body stopped at iteration {iteration_index + 1}")
+            if should_break:
+                broke_early = True
+                break_iteration = iteration_index + 1
+                break
 
         return {
-            "times": times,
+            "times": len(executed_iterations),
+            "max_times": max_times,
+            "broke_early": broke_early,
+            "break_iteration": break_iteration,
             "iterations": executed_iterations,
         }
 

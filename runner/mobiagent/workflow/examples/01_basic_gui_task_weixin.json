@@ -1,7 +1,7 @@
 {
   "metadata": {
     "name": "basic-gui-task",
-    "description": "执行一个自然语言 GUI 任务，复用 MobiAgent 的 planner/decider/grounder 链路。"
+    "description": "收集指定微信用户近3页的聊天记录"
   },
   "defaults": {
     "device": "Harmony",
@@ -44,7 +44,7 @@
           "inputs": {
             "mode": "summary",
             "image": "${steps.1.output.image_path}",
-            "question": "帮我总结当前界面聊天记录的内容，这是第${loop.index}次截图。"
+            "question": "帮我用一段话简要总结当前界面聊天记录的内容（不要使用markdown格式，也不要分点），这是第${loop.index}次截图。"
           }
         },
         {

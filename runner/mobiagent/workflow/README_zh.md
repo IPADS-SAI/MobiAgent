@@ -238,6 +238,38 @@ workflow 输入格式使用 JSON，与现有 `runner/mobiagent/task.json` 风格
 - `mode`：`answer` 或 `summary`。
 - `json_schema`：可选，要求模型按结构化 JSON 返回结果。适合返回 `summary` 之外的判断字段，例如 `contains_today_chat`、`is_today_order` 等。
 
+当 `vlm_qa` 以 `mode="summary"` 运行时，workflow 会自动把“总结文本本身”追加保存到输出目录下的 `daily-log/` 中，不会把其他返回字段写进去。
+
+日志文件名规则如下：
+
+- 基础目录：`<output_dir>/daily-log/YYYY-MM-DD/`，其中 `YYYY-MM-DD` 表示本次 workflow 执行日期。
+- 文件名：`<app.package_name>__<workflow_json文件名去掉.json后的名字>__<context中的值按顺序拼接>.md`
+- 如果没有 `context`，则文件名中不会追加 `context` 部分。
+- 每次追加 summary 时，都会自动在前面加递增序号，例如 `1.`、`2.`、`3.`，用于区分同一天内的多次总结。
+- 每个 md 顶部都会带一个 metadata 头，里面包含 workflow JSON 顶层的 `metadata` 信息，以及当前最新条目的 `latest_entry_index`，后续追加 summary 时会基于这个值继续递增。
+
+例如，当前包名是 `com.tencent.mm`，workflow 文件是 `01_basic_gui_task_weixin_v2.json`，`context` 中有 `contact_name: 小赵`，则文件名会类似于：
+
+```text
+daily-log/2026-05-20/com.tencent.mm__01_basic_gui_task_weixin_v2__小赵.md
+```
+
+md 文件头部会类似于：
+
+```text
+<!-- DAILY_LOG_METADATA
+{
+  "workflow_metadata": {
+    "name": "basic-gui-task",
+    "description": "收集指定微信用户的今天聊天记录"
+  },
+  "latest_entry_index": 6
+}
+-->
+```
+
+如果 `vlm_qa` 使用了 `json_schema`，并且其中包含 `summary` 字段，则写入 md 文件的内容只会取 `structured_output.summary`；否则写入原始 summary 文本响应。
+
 示例：
 
 ```json

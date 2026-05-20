@@ -18,6 +18,7 @@ from .tools import ToolRegistry, create_default_tool_registry
 
 
 VARIABLE_PATTERN = re.compile(r"\$\{([^}]+)\}")
+DAILY_LOG_METADATA_PATTERN = re.compile(r"\A<!-- DAILY_LOG_METADATA\n(.*?)\n-->\n*", re.DOTALL)
 
 
 def load_workflow_definition(workflow_file: str | os.PathLike[str]) -> dict[str, Any]:
@@ -218,9 +219,11 @@ class WorkflowRunner:
             raise ValueError("Workflow must contain at least one step")
 
         base_output_dir = Path(output_dir or self.defaults.get("output_dir", self.workflow_path.parent / "runs"))
+        self.base_output_dir = base_output_dir.expanduser().resolve()
         timestamp = time.strftime("%Y%m%d-%H%M%S")
+        self.run_date = time.strftime("%Y-%m-%d")
         workflow_name = self.metadata.get("name") or self.workflow_path.stem
-        self.run_dir = base_output_dir.expanduser().resolve() / f"{timestamp}-{workflow_name}"
+        self.run_dir = self.base_output_dir / f"{timestamp}-{workflow_name}"
         self.run_dir.mkdir(parents=True, exist_ok=True)
 
         self.context = WorkflowContext(
@@ -251,6 +254,101 @@ class WorkflowRunner:
             json.dump(summary, handle, ensure_ascii=False, indent=2)
         logging.info("Workflow summary written to %s", summary_path)
         return summary
+
+    def append_daily_summary_log(self, summary_text: str) -> str:
+        file_name = self._build_daily_log_file_name()
+        daily_log_dir = self.base_output_dir / "daily-log" / self.run_date
+        daily_log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = daily_log_dir / file_name
+
+        text = summary_text.strip()
+        if not text:
+            return str(log_path)
+
+        existing_metadata, existing_body = self._read_daily_log_document(log_path)
+        entry_number = max(
+            int(existing_metadata.get("latest_entry_index", 0) or 0),
+            self._get_last_daily_log_entry_number(existing_body),
+        ) + 1
+        entry_text = f"{entry_number}. {text}"
+
+        body = existing_body.rstrip()
+        if body:
+            body = f"{body}\n\n{entry_text}\n"
+        else:
+            body = f"{entry_text}\n"
+
+        metadata = {
+            "workflow_metadata": self.metadata,
+            "latest_entry_index": entry_number,
+        }
+        log_path.write_text(self._render_daily_log_document(metadata, body), encoding="utf-8")
+        return str(log_path)
+
+    def _read_daily_log_document(self, log_path: Path) -> tuple[dict[str, Any], str]:
+        metadata = {
+            "workflow_metadata": self.metadata,
+            "latest_entry_index": 0,
+        }
+        if not log_path.exists():
+            return metadata, ""
+
+        content = log_path.read_text(encoding="utf-8")
+        match = DAILY_LOG_METADATA_PATTERN.match(content)
+        if not match:
+            return metadata, content
+
+        raw_metadata = match.group(1)
+        try:
+            parsed_metadata = json.loads(raw_metadata)
+        except json.JSONDecodeError:
+            logging.warning("Failed to parse daily-log metadata header: %s", log_path)
+            return metadata, content
+
+        if isinstance(parsed_metadata, dict):
+            metadata.update(parsed_metadata)
+        body = content[match.end():]
+        return metadata, body
+
+    def _get_last_daily_log_entry_number(self, content: str) -> int:
+        matches = re.findall(r"(?m)^(\d+)\.\s", content)
+        if not matches:
+            return 0
+        return int(matches[-1])
+
+    def _render_daily_log_document(self, metadata: dict[str, Any], body: str) -> str:
+        serialized_metadata = json.dumps(metadata, ensure_ascii=False, indent=2)
+        normalized_body = body.lstrip("\n")
+        return f"<!-- DAILY_LOG_METADATA\n{serialized_metadata}\n-->\n\n{normalized_body}"
+
+    def _build_daily_log_file_name(self) -> str:
+        name_parts = [
+            self._sanitize_file_name_part(self.current_package_name or "unknown-package"),
+            self._sanitize_file_name_part(self.workflow_path.stem),
+        ]
+        context_values = self._get_context_file_name_parts()
+        name_parts.extend(context_values)
+        filtered_parts = [part for part in name_parts if part]
+        return "__".join(filtered_parts) + ".md"
+
+    def _get_context_file_name_parts(self) -> list[str]:
+        context_values: list[str] = []
+        for value in self.context.initial_context.values():
+            if value is None:
+                continue
+            if isinstance(value, (dict, list)):
+                serialized = json.dumps(value, ensure_ascii=False, sort_keys=True)
+                context_values.append(self._sanitize_file_name_part(serialized))
+            else:
+                context_values.append(self._sanitize_file_name_part(str(value)))
+        return [value for value in context_values if value]
+
+    def _sanitize_file_name_part(self, value: str) -> str:
+        sanitized = str(value).strip()
+        sanitized = re.sub(r"[\\/:*?\"<>|]+", "_", sanitized)
+        sanitized = re.sub(r"\s+", "-", sanitized)
+        sanitized = sanitized.strip("._-")
+        return sanitized
 
     def _execute_steps(
         self,
@@ -444,10 +542,14 @@ class WorkflowRunner:
         elif action == "app_start":
             package_name = str(step["package_name"])
             device.app_start(package_name)
+            self.current_package_name = package_name
+            self.current_device_type = current_device_type
             output["package_name"] = package_name
         elif action == "app_stop":
             package_name = str(step["package_name"])
             device.app_stop(package_name)
+            if self.current_package_name == package_name:
+                self.current_package_name = None
             output["package_name"] = package_name
         else:
             raise ValueError(f"Unsupported gui_action action: {action}")

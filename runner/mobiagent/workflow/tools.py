@@ -136,6 +136,14 @@ def _image_path_to_data_url(image_path: str) -> str:
     return f"data:{mime};base64,{image_b64}"
 
 
+def _extract_summary_text(output_text: str, structured_output: dict[str, Any] | None) -> str:
+    if structured_output is not None:
+        summary = structured_output.get("summary")
+        if isinstance(summary, str):
+            return summary.strip()
+    return (output_text or "").strip()
+
+
 class VLMQATool(WorkflowTool):
     name = "vlm_qa"
 
@@ -173,6 +181,7 @@ class VLMQATool(WorkflowTool):
             ],
         )
         output_text = response.choices[0].message.content
+        structured_output = None
         result = {
             "tool_name": self.name,
             "mode": mode,
@@ -185,6 +194,12 @@ class VLMQATool(WorkflowTool):
             _validate_structured_output(structured_output, normalized_schema)
             result["structured_output"] = structured_output
             result["json_schema"] = normalized_schema
+
+        if mode == "summary":
+            summary_text = _extract_summary_text(output_text, structured_output)
+            if summary_text:
+                daily_log_path = runner.append_daily_summary_log(summary_text)
+                result["daily_log_path"] = daily_log_path
         return result
 
 

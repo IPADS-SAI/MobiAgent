@@ -1,7 +1,7 @@
 {
   "metadata": {
     "name": "basic-gui-task",
-    "description": "执行一个自然语言 GUI 任务，复用 MobiAgent 的 planner/decider/grounder 链路。"
+    "description": "收集指定微信用户的聊天记录"
   },
   "defaults": {
     "device": "Harmony",

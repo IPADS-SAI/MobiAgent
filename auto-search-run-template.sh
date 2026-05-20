@@ -12,9 +12,9 @@ BREADTH=2 # 在每一个页面探索的广度，5-10，路径总数最多为BREA
 
 # MobiAgent 相关参数
 DEVICE="Harmony"                 # Android | Harmony
-SERVICE_IP="166.111.53.96"
+SERVICE_IP="xxx"
 DECIDER_PORT=7003
-DECIDER_API_KEY="mobiagent-key"            # 建议通过环境变量注入，不要把密钥写在仓库文件里
+DECIDER_API_KEY="xxx"            # 建议通过环境变量注入，不要把密钥写在仓库文件里
 
 # Explorer 相关参数
 EXPLORER_MODEL="qwen/qwen3-vl-235b-a22b-instruct" # qwen/qwen3.5-plus-02-15

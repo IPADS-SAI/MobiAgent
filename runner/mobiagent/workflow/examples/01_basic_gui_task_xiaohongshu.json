@@ -1,0 +1,43 @@
+{
+  "metadata": {
+    "name": "basic-gui-task",
+    "description": "查看小红书上的用户浏览记录"
+  },
+  "defaults": {
+    "device": "Harmony",
+    "use_qwen3": true,
+    "use_e2e": true,
+    "use_experience": false,
+    "accept_planner_changes": false
+  },
+  "steps": [
+    {
+      "id": 1,
+      "type": "gui_task",
+      "task_description": "打开小红书",
+      "on_error": "stop"
+    },
+    {
+      "id": 2,
+      "type": "gui_task",
+      "task_description": "进入个人中心，打开浏览记录页面，查看浏览记录",
+      "on_error": "stop"
+    },
+    {
+      "id": 3,
+      "type": "gui_action",
+      "action": "screenshot",
+      "file_name": "xiaohongshu_history.jpg"
+    },
+    {
+      "id": 4,
+      "type": "tool",
+      "tool_name": "vlm_qa",
+      "inputs": {
+        "mode": "summary",
+        "image": "${steps.3.output.image_path}",
+        "question": "帮我用一段话简要总结当前页面上的小红书浏览记录（不要使用markdown格式，也不要分点，尽量按照记录出现顺序描述每条内容的主题、标题或账号信息）"
+      }
+    }
+  ]
+}

@@ -79,6 +79,7 @@
 - 喜马拉雅:com.ximalaya.ting.xmharmony
 - 百度:com.baidu.baiduapp
 - 手机管家:com.huawei.hmos.systemmanagerform
+- 腾讯视频: com.tencent.videohm
 
 ## 任务要求
 

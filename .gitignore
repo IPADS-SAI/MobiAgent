@@ -40,4 +40,5 @@ profile-mem/*
 runner/mobiagent/workflow/__pycache__/
 runner/mobiagent/workflow/test-runs/
 runner/mobiagent/.env
+collect-apps-info.sh
 

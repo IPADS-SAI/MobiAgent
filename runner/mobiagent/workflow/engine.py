@@ -196,12 +196,16 @@ class WorkflowRunner:
         enable_user_profile: bool = False,
         use_graphrag: bool = False,
         auto_accept_planner_changes: bool = False,
+        context_overrides: dict[str, Any] | None = None,
         tool_registry: ToolRegistry | None = None,
     ) -> None:
         self.workflow_path = Path(workflow_file).expanduser().resolve()
         self.workflow = load_workflow_definition(self.workflow_path)
         self.defaults = self.workflow.get("defaults", {})
         self.metadata = self.workflow.get("metadata", {})
+        self.context_values = dict(self.workflow.get("context", {}))
+        if context_overrides:
+            self.context_values.update(context_overrides)
         self.steps = normalize_workflow_steps(self.workflow.get("steps", []))
         self.device_type = device_type or self.defaults.get("device", "Android")
         self.use_qwen3 = use_qwen3
@@ -229,7 +233,7 @@ class WorkflowRunner:
         self.context = WorkflowContext(
             workflow_path=self.workflow_path,
             run_dir=self.run_dir,
-            initial_context=self.workflow.get("context", {}),
+            initial_context=self.context_values,
         )
 
         mobiagent.init(

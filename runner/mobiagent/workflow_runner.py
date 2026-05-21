@@ -7,6 +7,19 @@ import logging
 from runner.mobiagent.workflow import WorkflowRunner
 
 
+def parse_context_overrides(raw_items: list[str] | None) -> dict[str, str]:
+    overrides: dict[str, str] = {}
+    for item in raw_items or []:
+        if "=" not in item:
+            raise ValueError(f"Invalid --context value '{item}'. Expected key=value")
+        key, value = item.split("=", 1)
+        key = key.strip()
+        if not key:
+            raise ValueError(f"Invalid --context value '{item}'. Key cannot be empty")
+        overrides[key] = value
+    return overrides
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="MobiAgent Workflow Runner")
     parser.add_argument("--workflow_file", required=True, help="Path to the workflow JSON file")
@@ -21,6 +34,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--e2e", action="store_true", default=True, help="Enable e2e mode for GUI task steps")
     parser.add_argument("--output_dir", type=str, default=None, help="Directory for workflow run outputs")
     parser.add_argument(
+        "--context",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="Override workflow context values, for example --context contact_name=小赵",
+    )
+    parser.add_argument(
         "--accept_planner_changes",
         choices=["on", "off"],
         default="off",
@@ -32,6 +52,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
+    context_overrides = parse_context_overrides(args.context)
     runner = WorkflowRunner(
         workflow_file=args.workflow_file,
         service_ip=args.service_ip,
@@ -45,6 +66,7 @@ def main() -> int:
         enable_user_profile=(args.user_profile == "on"),
         use_graphrag=(args.use_graphrag == "on"),
         auto_accept_planner_changes=(args.accept_planner_changes == "on"),
+        context_overrides=context_overrides,
     )
     summary = runner.run()
     logging.info("Workflow finished with status: %s", summary["status"])

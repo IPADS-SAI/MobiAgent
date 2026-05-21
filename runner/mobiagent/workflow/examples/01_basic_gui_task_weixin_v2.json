@@ -1,7 +1,7 @@
 {
   "metadata": {
     "name": "basic-gui-task",
-    "description": "收集指定微信用户的聊天记录"
+    "description": "收集指定微信用户的今天聊天记录"
   },
   "defaults": {
     "device": "Harmony",

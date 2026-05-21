@@ -39,7 +39,35 @@ python -m runner.mobiagent.workflow_runner --workflow_file ./runner/mobiagent/wo
 - `--use_qwen3 on|off`：默认是否在 `gui_task` 节点使用 Qwen3。
 - `--e2e`：默认是否在 `gui_task` 节点使用 e2e 模式。
 - `--output_dir`：workflow 运行产物目录。
+- `--context KEY=VALUE`：覆盖 workflow JSON 顶层 `context` 中的变量，可重复传多次。
 - `--accept_planner_changes on|off`：默认是否自动接受 `gui_task` 中 planner 改写的任务描述。
+
+例如，原始 workflow 里写的是：
+
+```json
+"context": {
+  "contact_name": "小赵"
+}
+```
+
+执行时可以不改 JSON，直接在命令行覆盖：
+
+```bash
+python -m runner.mobiagent.workflow_runner \
+  --workflow_file runner/mobiagent/workflow/examples/01_basic_gui_task_weixin.json \
+  --service_ip xxx \
+  --decider_port 7003 \
+  --grounder_port 7003 \
+  --planner_port 7002 \
+  --device Harmony \
+  --context contact_name=张三
+```
+
+这样 workflow 中的 `${context.contact_name}` 会在本次运行时解析成 `张三`，无需把 `contact_name` 写死在 JSON 里。多个变量可以重复传入，例如：
+
+```bash
+--context contact_name=张三 --context city=北京
+```
 
 ## 3. 输入格式
 

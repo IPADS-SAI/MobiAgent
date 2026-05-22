@@ -26,9 +26,13 @@
 
 输出目录默认是 `runner/mobiagent/workflow/profile-consolidation/outputs/`。
 
-每个输出文件仍然按原始文件名命名，例如：
+脚本会按 `YYYY-MM` 自动创建月度子目录，例如：
 
-- `com.tencent.wechat__01_basic_gui_task_weixin__任姚丹珺.md`
+- `runner/mobiagent/workflow/profile-consolidation/outputs/2026-05/`
+
+每个输出文件仍然按原始文件名命名，但会放在对应月份目录下面，例如：
+
+- `2026-05/com.tencent.wechat__01_basic_gui_task_weixin__任姚丹珺.md`
 
 输出现在拆成两个文件：
 
@@ -78,7 +82,14 @@
 
 ### 阶段二：近邻去重判断
 
-对每条候选事实，脚本只取目标文件最近若干条已记录事实，默认是最近 5 条，把它们发给模型做判断。
+对每条候选事实，脚本不会扫描整个月的全部记录，而是先把候选范围限制在：
+
+- 近 7 天内的记录
+- 或最近 100 条记录
+
+两者中条数更小的那一组。
+
+然后才会从这组记录里进一步挑出最多 `dedup_window` 条最相关候选，发给模型做判断。默认 `dedup_window = 5`。
 
 模型返回以下四种决策之一：
 
@@ -89,7 +100,7 @@
 
 脚本只负责读取已有文件、组织上下文、接收模型决策、并以稳定格式写入最终结果。
 
-去重的基准不只是本次输入的原始 daily-log，还包括已经存在于 `profile-consolidation/outputs/` 里的历史聚合结果。每次运行时，脚本都会先读取目标聚合 Markdown 对应的 sidecar 状态文件，再决定是新增、合并还是跳过。
+去重的基准不只是本次输入的原始 daily-log，还包括已经存在于 `profile-consolidation/outputs/YYYY-MM/` 里的当月历史聚合结果。每次运行时，脚本都会先读取目标月份目录下、同名 Markdown 对应的 sidecar 状态文件，再决定是新增、合并还是跳过。
 
 也就是说：
 
@@ -188,10 +199,11 @@ python -m runner.mobiagent.workflow.consolidate_daily_logs \
 当前版本采用以下规则：
 
 1. 聚合顺序固定为日期升序、文件内 entry 编号升序。
-2. 去重只看目标文件最近 `N` 条记录，默认 `N=5`。
-3. 去重会同时参考当前日期范围内的原始 daily-log 和已经存在的聚合文件。
-4. 如果模型认为是 `duplicate` 或 `merge_with_existing`，脚本会更新已有记录的来源引用和补充信息，而不是重复新增。
-5. 如果模型无法稳定判断，则跳过该事实，并在日志中记录。
+2. 输出按月写入 `outputs/YYYY-MM/`，每次读取、去重、更新都只作用在对应月份目录下的文件中。
+3. 去重候选范围先限制为“近 7 天 / 最近 100 条”中较小的集合，而不是整个月全部记录。
+4. 在这个近窗范围里，再选最多 `dedup_window` 条最相关记录送给模型判断，默认 `dedup_window=5`。
+5. 如果模型认为是 `duplicate` 或 `merge_with_existing`，脚本会更新已有记录的来源引用和补充信息，而不是重复新增。
+6. 如果模型无法稳定判断，则跳过该事实，并在日志中记录。
 
 ## 建议的使用方式
 

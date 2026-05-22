@@ -24,6 +24,8 @@ DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parent / "profile-consolidation" /
 DEFAULT_INPUT_ROOT = Path(__file__).resolve().parent / "test-runs" / "daily-log"
 DEFAULT_API_KEY = os.getenv("MOBIAGENT_API_KEY", "mobiagent-key")
 STATE_FILE_SUFFIX = ".state.json"
+RECENT_MATCH_DAYS = 7
+RECENT_MATCH_MAX_RECORDS = 100
 
 FACT_SPLIT_SYSTEM_PROMPT = textwrap.dedent(
     """
@@ -224,6 +226,19 @@ def collect_source_entries(
                 if max_entries is not None and processed >= max_entries:
                     return grouped_entries
     return grouped_entries
+
+
+def group_entries_by_month(
+    grouped_entries: dict[str, list[SourceEntry]],
+) -> dict[tuple[str, str], list[SourceEntry]]:
+    grouped_by_month: dict[tuple[str, str], list[SourceEntry]] = {}
+    for file_name, entries in grouped_entries.items():
+        for entry in entries:
+            month_key = entry.source_date[:7]
+            grouped_by_month.setdefault((month_key, file_name), []).append(entry)
+    for key in grouped_by_month:
+        grouped_by_month[key].sort(key=lambda item: (item.source_date, item.entry_index, item.source_ref))
+    return grouped_by_month
 
 
 def build_client(service_ip: str, model_port: int, api_key: str) -> OpenAI:
@@ -480,6 +495,38 @@ def normalized_transaction_signature(value: str) -> str:
     normalized = re.sub(r"(收益发放|发放|交通出行|投资理财|支出|消费|买入)", "", normalized)
     normalized = re.sub(r"\d+(?:\.\d+)?元", "", normalized)
     return normalized_similarity_key(normalized)
+
+
+def parse_record_date(raw_value: str) -> date:
+    return datetime.strptime(raw_value, "%Y-%m-%d").date()
+
+
+def select_recent_scope_records(records: list[AggregatedRecord], fact: CandidateFact) -> list[AggregatedRecord]:
+    if not records:
+        return []
+
+    fact_date = parse_record_date(fact.source_date)
+    lower_bound = fact_date - timedelta(days=RECENT_MATCH_DAYS - 1)
+    recent_by_days = [
+        record
+        for record in records
+        if lower_bound <= parse_record_date(record.last_seen_date) <= fact_date
+    ]
+
+    sorted_records = sorted(
+        records,
+        key=lambda record: (record.last_seen_date, record.record_id),
+        reverse=True,
+    )
+    recent_by_count = list(reversed(sorted_records[:RECENT_MATCH_MAX_RECORDS]))
+
+    if not recent_by_days:
+        return recent_by_count
+    if not recent_by_count:
+        return recent_by_days
+    if len(recent_by_days) <= len(recent_by_count):
+        return recent_by_days
+    return recent_by_count
 
 
 def select_candidate_records(records: list[AggregatedRecord], fact: CandidateFact, limit: int) -> list[AggregatedRecord]:
@@ -759,6 +806,7 @@ def create_new_record(next_record_id: int, fact: CandidateFact, decision_payload
 
 
 def consolidate_group(
+    month_key: str,
     file_name: str,
     entries: list[SourceEntry],
     output_path: Path,
@@ -779,7 +827,8 @@ def consolidate_group(
     for entry in entries:
         facts = split_entry_into_facts(entry, client, model_name, disable_model)
         for fact in facts:
-            exact_match = find_exact_existing_match(records, fact)
+            scoped_records = select_recent_scope_records(records, fact)
+            exact_match = find_exact_existing_match(scoped_records, fact)
             if exact_match is not None:
                 update_existing_record(
                     exact_match,
@@ -793,7 +842,11 @@ def consolidate_group(
                 merged_records += 1
                 continue
 
-            candidate_records = select_candidate_records(records, fact, dedup_window) if dedup_window > 0 else records
+            candidate_records = (
+                select_candidate_records(scoped_records, fact, dedup_window)
+                if dedup_window > 0
+                else scoped_records
+            )
             decision_payload = decide_dedup(fact, candidate_records, client, model_name, disable_model)
             decision = decision_payload.get("decision", "new")
 
@@ -821,10 +874,13 @@ def consolidate_group(
 
     metadata.update(
         {
+            "month": month_key,
             "source_date_range": {"start_date": start_date, "end_date": end_date},
             "source_files": sorted(set(metadata.get("source_files", [])) | {file_name}),
             "latest_record_index": max([record.record_id for record in records], default=0),
             "dedup_window_size": dedup_window,
+            "recent_match_days": RECENT_MATCH_DAYS,
+            "recent_match_max_records": RECENT_MATCH_MAX_RECORDS,
             "updated_at": datetime.now().isoformat(timespec="seconds"),
             "total_records": len(records),
         }
@@ -876,10 +932,12 @@ def main() -> int:
         return 1
 
     client = None if args.disable_model else build_client(args.service_ip, args.model_port, args.api_key)
+    grouped_entries_by_month = group_entries_by_month(grouped_entries)
     summaries = []
-    for file_name, entries in sorted(grouped_entries.items()):
-        output_path = output_dir / file_name
+    for (month_key, file_name), entries in sorted(grouped_entries_by_month.items()):
+        output_path = output_dir / month_key / file_name
         result = consolidate_group(
+            month_key=month_key,
             file_name=file_name,
             entries=entries,
             output_path=output_path,

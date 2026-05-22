@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import base64
 import json
 import re
@@ -36,6 +37,21 @@ class ToolRegistry:
 JSON_BLOCK_PATTERN = re.compile(r"```json\s*(.*?)\s*```", re.DOTALL | re.IGNORECASE)
 
 
+def _extract_object_candidates(text: str) -> list[str]:
+    candidates: list[str] = []
+    start_indices = [index for index, char in enumerate(text) if char == "{"]
+    end_indices = [index for index, char in enumerate(text) if char == "}"]
+    for start in start_indices:
+        for end in reversed(end_indices):
+            if end <= start:
+                continue
+            candidate = text[start : end + 1].strip()
+            if candidate and candidate not in candidates:
+                candidates.append(candidate)
+                break
+    return candidates
+
+
 def _load_json_from_text(raw_text: str) -> dict[str, Any]:
     text = (raw_text or "").strip()
     if not text:
@@ -45,11 +61,21 @@ def _load_json_from_text(raw_text: str) -> dict[str, Any]:
     match = JSON_BLOCK_PATTERN.search(text)
     if match:
         candidates.insert(0, match.group(1).strip())
+    for candidate in _extract_object_candidates(text):
+        if candidate not in candidates:
+            candidates.append(candidate)
 
     for candidate in candidates:
         try:
             loaded = json.loads(candidate)
         except json.JSONDecodeError:
+            loaded = None
+        if isinstance(loaded, dict):
+            return loaded
+
+        try:
+            loaded = ast.literal_eval(candidate)
+        except (SyntaxError, ValueError):
             continue
         if isinstance(loaded, dict):
             return loaded

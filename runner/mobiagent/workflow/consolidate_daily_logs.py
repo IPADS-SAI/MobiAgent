@@ -47,6 +47,7 @@ FACT_SPLIT_SYSTEM_PROMPT = textwrap.dedent(
     1. 一条原始记录中如果包含多件不同事情，拆成多条 facts。
     2. 如果原文只是同一事件的重复表述，不要重复拆分。
     3. event_date 如果无法明确判断，就使用空字符串。
+    4. 如果是订单、账单、交易、消费记录，normalized_fact 必须尽量保留关键细节，例如商家、商品/服务、金额、时间、状态；不要压缩成只有“实付25.8元”这种只剩金额的信息。
     4. 不要输出 markdown，不要解释，只输出 JSON。
     """
 ).strip()
@@ -328,7 +329,11 @@ def split_entry_into_facts(entry: SourceEntry, client: OpenAI | None, model_name
         {entry.entry_text}
         """
     ).strip()
-    payload = call_json_model(client, model_name, FACT_SPLIT_SYSTEM_PROMPT, prompt)
+    try:
+        payload = call_json_model(client, model_name, FACT_SPLIT_SYSTEM_PROMPT, prompt)
+    except Exception as exc:
+        logging.warning("Falling back to heuristic fact split for %s due to model parse failure: %s", entry.source_ref, exc)
+        return heuristic_split(entry)
     facts_payload = payload.get("facts", [])
     if not isinstance(facts_payload, list) or not facts_payload:
         return heuristic_split(entry)
@@ -398,10 +403,38 @@ def summarize_text(value: str, max_length: int = 80) -> str:
     return normalized[:max_length] + "..."
 
 
+def detail_score(value: str) -> int:
+    normalized = normalize_free_text(value)
+    score = len(normalized)
+    if "下单时间" in normalized:
+        score += 40
+    if "订单" in normalized:
+        score += 20
+    if re.search(r"[“\"'].+?[”\"']", normalized):
+        score += 20
+    if re.search(r"\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}", normalized):
+        score += 20
+    return score
+
+
+def prefer_richer_fact(current_fact: str, candidate_fact: str) -> bool:
+    current = normalize_free_text(current_fact)
+    candidate = normalize_free_text(candidate_fact)
+    if not candidate:
+        return False
+    if not current:
+        return True
+    return detail_score(candidate) > detail_score(current)
+
+
 def extract_atomic_clauses(text: str) -> list[str]:
     normalized = normalize_free_text(text)
     if not normalized:
         return []
+
+    transaction_clauses = extract_transaction_clauses(normalized)
+    if transaction_clauses:
+        return transaction_clauses
 
     segments: list[str] = []
     marker_pattern = re.compile(r"(?:账单列表显示了|具体记录有[:：]|记录有[:：]|账单如下[:：])(.*?)(?:。|$)")
@@ -430,6 +463,49 @@ def extract_atomic_clauses(text: str) -> list[str]:
             if clause_key and clause_key not in seen:
                 seen.add(clause_key)
                 clauses.append(clause)
+    return clauses
+
+
+def extract_transaction_clauses(text: str) -> list[str]:
+    if len(re.findall(r"\d+(?:\.\d+)?元", text)) <= 1:
+        return []
+
+    cleaned = re.sub(
+        r"^当前页面显示了.*?(?:订单记录|消费记录|账单记录)[，,:：\s]*",
+        "",
+        text,
+    )
+    cleaned = re.sub(
+        r"^近期在\d+家店(?:有)?消费(?:过|记录)?[，,:：\s]*",
+        "",
+        cleaned,
+    )
+
+    order_marker = r"(?:其中最近一单是|其中有一单是|最近一单是|第一单(?:同样是|是)?|第二单(?:同样是|是)?|第三单(?:同样是|是)?|第[一二三四五六七八九十\d]+单(?:同样是|是)?|接着是|随后是)"
+    sentence_chunks = re.split(r"(?<=。)", cleaned)
+    clauses: list[str] = []
+    seen: set[str] = set()
+
+    for chunk in sentence_chunks:
+        chunk = normalize_free_text(chunk.strip("。；; "))
+        if not chunk or not re.search(r"\d+(?:\.\d+)?元", chunk):
+            continue
+
+        parts = re.split(f"(?={order_marker})", chunk)
+        for part in parts:
+            clause = normalize_free_text(part.strip("，。；; "))
+            if not clause or not re.search(r"\d+(?:\.\d+)?元", clause):
+                continue
+            clause = re.sub(rf"^(?:{order_marker})", "", clause)
+            clause = re.sub(r"^(同样是|还有一单是|还有|一单是)", "", clause)
+            clause = normalize_free_text(clause.strip("，。；; "))
+            if not clause:
+                continue
+            clause_key = normalize_dedup_text(clause)
+            if clause_key and clause_key not in seen:
+                seen.add(clause_key)
+                clauses.append(clause)
+
     return clauses
 
 
@@ -558,10 +634,15 @@ def select_candidate_records(records: list[AggregatedRecord], fact: CandidateFac
 
 def find_exact_existing_match(records: list[AggregatedRecord], fact: CandidateFact) -> AggregatedRecord | None:
     fact_key = normalized_similarity_key(fact.dedup_text)
+    fact_amounts = extract_amount_tokens(fact.dedup_text)
     for record in records:
         record_key = normalized_similarity_key(record.dedup_text)
         if fact.source_ref in record.source_refs and fact_key and fact_key == record_key:
             return record
+        if fact.source_ref in record.source_refs:
+            record_amounts = extract_amount_tokens(record.dedup_text)
+            if fact_amounts and fact_amounts == record_amounts:
+                return record
     for record in records:
         record_key = normalized_similarity_key(record.dedup_text)
         if fact_key and fact_key == record_key:
@@ -625,7 +706,11 @@ def decide_dedup(
         {json.dumps(recent_payload, ensure_ascii=False, indent=2)}
         """
     ).strip()
-    payload = call_json_model(client, model_name, DEDUP_SYSTEM_PROMPT, prompt)
+    try:
+        payload = call_json_model(client, model_name, DEDUP_SYSTEM_PROMPT, prompt)
+    except Exception as exc:
+        logging.warning("Falling back to heuristic dedup for %s due to model parse failure: %s", fact.source_ref, exc)
+        return decide_dedup(fact, candidate_records, client, model_name, disable_model=True)
     decision = str(payload.get("decision", "new")).strip() or "new"
     matched_record_ids = payload.get("matched_record_ids", [])
     if not isinstance(matched_record_ids, list):
@@ -773,6 +858,10 @@ def update_existing_record(record: AggregatedRecord, fact: CandidateFact, decisi
         record.summary = summarize_text(merged_summary)
     if merged_fact:
         record.normalized_fact = normalize_free_text(merged_fact)
+        record.dedup_text = normalize_dedup_text(record.normalized_fact)
+    elif prefer_richer_fact(record.normalized_fact, fact.normalized_fact):
+        record.normalized_fact = normalize_free_text(fact.normalized_fact)
+        record.summary = summarize_text(fact.summary or fact.normalized_fact)
         record.dedup_text = normalize_dedup_text(record.normalized_fact)
     for tag in merged_tags:
         if tag not in record.tags:

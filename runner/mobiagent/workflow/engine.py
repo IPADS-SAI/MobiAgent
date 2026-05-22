@@ -197,6 +197,7 @@ class WorkflowRunner:
         use_graphrag: bool = False,
         auto_accept_planner_changes: bool = False,
         context_overrides: dict[str, Any] | None = None,
+        decider_protocol: str = mobiagent.DECIDER_PROTOCOL_QWEN_JSON,
         tool_registry: ToolRegistry | None = None,
     ) -> None:
         self.workflow_path = Path(workflow_file).expanduser().resolve()
@@ -213,6 +214,7 @@ class WorkflowRunner:
         self.enable_user_profile = enable_user_profile
         self.use_graphrag = use_graphrag
         self.auto_accept_planner_changes = auto_accept_planner_changes
+        self.decider_protocol = decider_protocol
         self.tool_registry = tool_registry or create_default_tool_registry()
         self._devices: dict[str, Any] = {}
         self.current_app_name: str | None = None
@@ -427,6 +429,9 @@ class WorkflowRunner:
         use_e2e = bool(step.get("use_e2e", self.defaults.get("use_e2e", self.use_e2e)))
         use_qwen3 = bool(step.get("use_qwen3", self.defaults.get("use_qwen3", self.use_qwen3)))
         use_graphrag = bool(step.get("use_graphrag", self.defaults.get("use_graphrag", self.use_graphrag)))
+        decider_protocol = str(
+            step.get("decider_protocol", self.defaults.get("decider_protocol", self.decider_protocol))
+        )
         auto_accept = bool(
             step.get(
                 "accept_planner_changes",
@@ -484,6 +489,7 @@ class WorkflowRunner:
             use_qwen3,
             current_device_type,
             use_e2e,
+            decider_protocol=decider_protocol,
         )
         return {
             "step_dir": str(step_dir),
@@ -495,6 +501,7 @@ class WorkflowRunner:
             "use_experience": use_experience,
             "use_e2e": use_e2e,
             "accept_planner_changes": auto_accept,
+            "decider_protocol": decider_protocol,
         }
 
     def _run_gui_action(self, step: dict[str, Any], actual_step_id: str) -> dict[str, Any]:

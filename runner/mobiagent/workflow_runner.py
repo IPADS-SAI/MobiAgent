@@ -4,6 +4,7 @@ import argparse
 import json
 import logging
 
+from runner.mobiagent.decider_adapters import SUPPORTED_DECIDER_PROTOCOLS
 from runner.mobiagent.workflow import WorkflowRunner
 
 
@@ -33,6 +34,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--use_qwen3", choices=["on", "off"], default="on", help="Use Qwen3 for GUI execution steps")
     parser.add_argument("--e2e", action="store_true", default=True, help="Enable e2e mode for GUI task steps")
     parser.add_argument("--output_dir", type=str, default=None, help="Directory for workflow run outputs")
+    parser.add_argument(
+        "--decider_protocol",
+        choices=SUPPORTED_DECIDER_PROTOCOLS,
+        default=SUPPORTED_DECIDER_PROTOCOLS[0],
+        help="Decider output protocol for gui_task steps",
+    )
     parser.add_argument(
         "--context",
         action="append",
@@ -66,6 +73,7 @@ def main() -> int:
         enable_user_profile=(args.user_profile == "on"),
         use_graphrag=(args.use_graphrag == "on"),
         auto_accept_planner_changes=(args.accept_planner_changes == "on"),
+        decider_protocol=args.decider_protocol,
         context_overrides=context_overrides,
     )
     summary = runner.run()

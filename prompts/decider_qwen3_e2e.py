@@ -1,3 +1,5 @@
+# Original Qwen decider prompt path. This protocol emits canonical runtime
+# actions directly as JSON, so it does not need the StepFun normalization layer.
 DECIDER_SYSTEM_PROMPT = """You are a phone-use AI agent. 
 
 ### Action Space

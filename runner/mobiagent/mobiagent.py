@@ -22,6 +22,14 @@ from hmdriver2.driver import Driver
 from hmdriver2.proto import KeyCode
 from utils.load_md_prompt import load_prompt
 from dotenv import load_dotenv
+from .decider_adapters import (
+    DECIDER_PROTOCOL_QWEN_JSON,
+    DECIDER_PROTOCOL_STEPFUN_TSV,
+    SUPPORTED_DECIDER_PROTOCOLS,
+    get_decider_adapter,
+)
+from .json_utils import load_json_from_text as _load_json_from_text
+from .json_utils import robust_json_loads
 from .user_preference_extractor import (
     PreferenceExtractor, 
     retrieve_user_preferences, 
@@ -93,6 +101,10 @@ class Device(ABC):
 
     @abstractmethod
     def swipe_with_coords(self, start_x, start_y, end_x, end_y):
+        pass
+
+    @abstractmethod
+    def long_press(self, x, y, duration=1.0):
         pass
 
     @abstractmethod
@@ -199,6 +211,13 @@ class AndroidDevice(Device):
         """Swipe from (start_x, start_y) to (end_x, end_y)"""
         self.d.swipe(start_x, start_y, end_x, end_y, duration=0.2)
 
+    def long_press(self, x, y, duration=1.0):
+        if hasattr(self.d, "long_click"):
+            self.d.long_click(x, y, duration=duration)
+        else:
+            self.d.swipe(x, y, x, y, duration=max(duration, 0.5))
+        time.sleep(DEVICE_WAIT_TIME)
+
     def keyevent(self, key):
         self.d.keyevent(key)
 
@@ -301,6 +320,15 @@ class HarmonyDevice(Device):
         # For Harmony Device, swipe expects coordinates in format (x, y, x, y)
         self.d.swipe(start_x, start_y, end_x, end_y, speed=1000)
 
+    def long_press(self, x, y, duration=1.0):
+        if hasattr(self.d, "long_click"):
+            self.d.long_click(x, y)
+        elif hasattr(self.d, "long_press"):
+            self.d.long_press(x, y)
+        else:
+            self.d.swipe(x, y, x, y, speed=max(200, int(1000 / max(duration, 0.2))))
+        time.sleep(DEVICE_WAIT_TIME)
+
     def keyevent(self, key):
         self.d.press_key(key)
 
@@ -318,8 +346,16 @@ grounder_model = ""
 
 # 全局偏好提取器
 preference_extractor = None
-def init(service_ip, decider_port, grounder_port, planner_port, enable_user_profile=False, use_graphrag=False):
+def init(
+    service_ip,
+    decider_port,
+    grounder_port,
+    planner_port,
+    enable_user_profile=False,
+    use_graphrag=False,
+):
     global decider_client, grounder_client, planner_client, general_client, general_model, apps, preference_extractor
+    global decider_model, grounder_model, planner_model
     
     # 加载环境变量
     env_path = Path(__file__).parent / ".env"
@@ -337,6 +373,12 @@ def init(service_ip, decider_port, grounder_port, planner_port, enable_user_prof
         api_key = api_key,
         base_url = f"http://{service_ip}:{planner_port}/v1",
     )
+
+    # Model routing stays internal to the service or environment. The CLI only
+    # selects ports and protocol, which keeps the public entrypoints simpler.
+    decider_model = os.getenv("MOBIAGENT_DECIDER_MODEL", decider_model)
+    grounder_model = os.getenv("MOBIAGENT_GROUNDER_MODEL", grounder_model)
+    planner_model = os.getenv("MOBIAGENT_PLANNER_MODEL", planner_model)
     
     # 初始化偏好提取器（可由命令行开关控制）
     if enable_user_profile:
@@ -380,7 +422,7 @@ def format_model_response_for_log(context, response_str):
 
 # ============ 工具函数 ============
 
-def call_model_with_validation_retry(client, model, messages, validator_func, max_retries=MAX_RETRIES, max_tokens=256, context="Model"):
+def call_model_with_validation_retry(client, model, messages, validator_func, max_retries=MAX_RETRIES, max_tokens=256, context="Model", parser_func=None):
     """
     通用模型API调用函数：支持JSON解析 + 自定义校验 + 校验失败自动重试和温度递增
     
@@ -415,7 +457,8 @@ def call_model_with_validation_retry(client, model, messages, validator_func, ma
             logging.info(f"{context} response: \n{format_model_response_for_log(context, response_str)}")
             
             # 尝试解析 JSON
-            parsed_response = robust_json_loads(response_str)
+            parser = parser_func or robust_json_loads
+            parsed_response = parser(response_str)
             
             # 执行校验函数
             validator_func(parsed_response)
@@ -431,60 +474,6 @@ def call_model_with_validation_retry(client, model, messages, validator_func, ma
                 raise
     
     raise RuntimeError(f"{context} API calls exhausted after {max_retries} attempts")
-
-
-def _load_json_from_text(raw_text):
-    """尝试从混杂文本中提取 JSON；失败返回 None。"""
-    if raw_text is None:
-        return None
-    if not isinstance(raw_text, str):
-        raw_text = str(raw_text)
-
-    text = raw_text.strip()
-
-    def _try_load(candidate):
-        try:
-            return json.loads(candidate)
-        except json.JSONDecodeError:
-            return None
-
-    # 直接解析
-    parsed = _try_load(text)
-    if parsed is not None:
-        return parsed
-
-    # ```json ... ``` 或 ``` ... ``` 代码块
-    for pattern in [r"```json\s*([\s\S]*?)\s*```", r"```\s*([\s\S]*?)\s*```"]:
-        match = re.search(pattern, text, re.MULTILINE)
-        if match:
-            parsed = _try_load(match.group(1).strip())
-            if parsed is not None:
-                return parsed
-
-    # 中文省略号替换
-    normalized = text.replace("…", "...")
-    if normalized != text:
-        parsed = _try_load(normalized)
-        if parsed is not None:
-            return parsed
-        text = normalized
-
-    # 从最外层花括号截取
-    start_idx = text.find('{')
-    if start_idx != -1:
-        brace_count = 0
-        for i in range(start_idx, len(text)):
-            if text[i] == '{':
-                brace_count += 1
-            elif text[i] == '}':
-                brace_count -= 1
-                if brace_count == 0:
-                    candidate = text[start_idx:i+1]
-                    parsed = _try_load(candidate)
-                    if parsed is not None:
-                        return parsed
-
-    return None
 
 
 def parse_json_response(response_str: str, is_guided_decoding: bool = True) -> dict:
@@ -563,9 +552,164 @@ def convert_qwen3_coordinates_to_absolute(bbox_or_coords, img_width, img_height,
         y = int(y / 1000 * img_height)
         return [x, y]
 
+
+def _normalize_non_empty_string(value, field_name):
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"Missing required parameter: '{field_name}'")
+    return value.strip()
+
+
+def _normalize_point(value, field_name):
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        raise ValueError(f"Invalid parameter '{field_name}': expected [x, y]")
+    try:
+        return [int(value[0]), int(value[1])]
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Invalid parameter '{field_name}': expected numeric coordinates") from exc
+
+
+def _normalize_bbox(value, field_name="bbox"):
+    if not isinstance(value, (list, tuple)) or len(value) != 4:
+        raise ValueError(f"Invalid parameter '{field_name}': expected [x1, y1, x2, y2]")
+    try:
+        return [int(value[0]), int(value[1]), int(value[2]), int(value[3])]
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Invalid parameter '{field_name}': expected numeric bbox values") from exc
+
+
+def _normalize_optional_seconds(value):
+    if value is None:
+        return DEVICE_WAIT_TIME * 2
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Invalid parameter 'seconds': expected a numeric value") from exc
+    if seconds < 0:
+        raise ValueError("Invalid parameter 'seconds': must be >= 0")
+    return seconds
+
+
+def _infer_swipe_direction_from_points(start_coords, end_coords):
+    delta_x = end_coords[0] - start_coords[0]
+    delta_y = end_coords[1] - start_coords[1]
+    if abs(delta_x) >= abs(delta_y):
+        return "RIGHT" if delta_x >= 0 else "LEFT"
+    return "DOWN" if delta_y >= 0 else "UP"
+
+
+def _canonicalize_runtime_parameters(action, parameters):
+    if parameters is None:
+        parameters = {}
+    if not isinstance(parameters, dict):
+        raise ValueError("Field 'parameters' must be an object")
+
+    bbox = parameters.get("bbox")
+    coords = parameters.get("coords")
+    target_element = parameters.get("target_element")
+    start_coords = parameters.get("start_coords")
+    end_coords = parameters.get("end_coords")
+    direction = parameters.get("direction")
+
+    if action == "click":
+        if bbox is not None:
+            return {"bbox": _normalize_bbox(bbox)}
+        if coords is not None:
+            return {"coords": _normalize_point(coords, "coords")}
+        return {"target_element": _normalize_non_empty_string(target_element, "target_element")}
+
+    if action == "click_input":
+        text = parameters.get("text")
+        if not isinstance(text, str):
+            raise ValueError("Click_input action missing required parameter: 'text'")
+        canonical = {"text": text}
+        if bbox is not None:
+            canonical["bbox"] = _normalize_bbox(bbox)
+            return canonical
+        if coords is not None:
+            canonical["coords"] = _normalize_point(coords, "coords")
+            return canonical
+        raise ValueError("Click_input action missing required parameter: 'bbox' or 'coords'")
+
+    if action == "input":
+        text = parameters.get("text")
+        if not isinstance(text, str):
+            raise ValueError("Input action missing required parameter: 'text'")
+        return {"text": text}
+
+    if action == "swipe":
+        canonical = {}
+        normalized_direction = None
+        if direction is not None:
+            normalized_direction = _normalize_non_empty_string(direction, "direction").upper()
+            if normalized_direction not in ["UP", "DOWN", "LEFT", "RIGHT"]:
+                raise ValueError(
+                    f"Invalid swipe direction: '{direction}'. Must be one of: UP, DOWN, LEFT, RIGHT"
+                )
+            canonical["direction"] = normalized_direction
+
+        if (start_coords is None) != (end_coords is None):
+            raise ValueError("Swipe action requires both 'start_coords' and 'end_coords'")
+
+        if start_coords is not None:
+            normalized_start = _normalize_point(start_coords, "start_coords")
+            normalized_end = _normalize_point(end_coords, "end_coords")
+            canonical["start_coords"] = normalized_start
+            canonical["end_coords"] = normalized_end
+            canonical.setdefault(
+                "direction",
+                _infer_swipe_direction_from_points(normalized_start, normalized_end),
+            )
+
+        if "direction" not in canonical:
+            raise ValueError("Swipe action missing required parameter: 'direction'")
+
+        return canonical
+
+    if action == "done":
+        canonical = {"status": _normalize_non_empty_string(parameters.get("status"), "status")}
+        message = parameters.get("message")
+        if message is not None:
+            canonical["message"] = str(message)
+        return canonical
+
+    if action == "long_press":
+        if bbox is not None:
+            return {"bbox": _normalize_bbox(bbox)}
+        if coords is not None:
+            return {"coords": _normalize_point(coords, "coords")}
+        raise ValueError("Long_press action missing required parameter: 'bbox' or 'coords'")
+
+    if action == "open_app":
+        return {"app_name": _normalize_non_empty_string(parameters.get("app_name"), "app_name")}
+
+    if action in {"press_home", "press_back"}:
+        return {}
+
+    if action == "wait":
+        return {"seconds": _normalize_optional_seconds(parameters.get("seconds"))}
+
+    if action == "info":
+        return {"question": _normalize_non_empty_string(parameters.get("question"), "question")}
+
+    if action == "call_user":
+        canonical = {"message": _normalize_non_empty_string(parameters.get("message"), "message")}
+        tag = parameters.get("tag")
+        if tag is not None:
+            canonical["tag"] = _normalize_non_empty_string(tag, "tag")
+        return canonical
+
+    if action == "abort":
+        return {"reason": _normalize_non_empty_string(parameters.get("reason"), "reason")}
+
+    raise ValueError(f"Unknown action: '{action}'")
+
 def validate_action_parameters(decider_response):
     """
-    校验不同动作的字段完整性
+    校验并规范化共享 runtime action schema。
+
+    这里不关心当前是 Qwen 还是 StepFun，只负责把 adapter 输出收敛成
+    runtime 能直接消费的一份 canonical schema。协议专属的 prompt / parser /
+    protocol-field 校验由 decider adapter 负责。
     
     Args:
         decider_response: 解析后的 JSON 响应字典
@@ -574,68 +718,21 @@ def validate_action_parameters(decider_response):
         ValueError: 当必需字段缺失时
     """
     action = decider_response.get("action")
-    parameters = decider_response.get("parameters", {})
-    
-    if not action:
+    if not isinstance(action, str) or not action.strip():
         raise ValueError("Missing required field: 'action'")
-    
-    if not decider_response.get("reasoning"):
+
+    reasoning = decider_response.get("reasoning")
+    if not isinstance(reasoning, str) or not reasoning.strip():
         raise ValueError("Missing required field: 'reasoning'")
-    
-    # 根据不同动作类型校验必需参数
-    if action == "click":
-        if not parameters.get("target_element"):
-            raise ValueError("Click action missing required parameter: 'target_element'")
-        # e2e模式下需要校验bbox
-        # 注意：这里不直接检查bbox，因为可能在非e2e模式下不需要
-    elif action == "click_input":
-        if not parameters.get("target_element"):
-            raise ValueError("Click_input action missing required parameter: 'target_element'")
-        if not parameters.get("bbox"):
-            raise ValueError("Click_input action missing required parameter: 'bbox'")
-        if not parameters.get("text"):
-            raise ValueError("Click_input action missing required parameter: 'text'")
-        
-    elif action == "input":
-        if "text" not in parameters:
-            raise ValueError("Input action missing required parameter: 'text'")
-        # text可以为空字符串，所以只检查是否存在该字段
-    
-    elif action == "swipe":
-        direction = parameters.get("direction")
-        if not direction:
-            raise ValueError("Swipe action missing required parameter: 'direction'")
-        if direction.upper() not in ["UP", "DOWN", "LEFT", "RIGHT"]:
-            raise ValueError(f"Invalid swipe direction: '{direction}'. Must be one of: UP, DOWN, LEFT, RIGHT")
-    
-    elif action == "done":
-        status = parameters.get("status")
-        if not status:
-            raise ValueError("Done action missing required parameter: 'status'")
-    
-    elif action == "long_press":
-        if not parameters.get("target_element"):
-            raise ValueError("Long_press action missing required parameter: 'target_element'")
-    
-    elif action == "open_app":
-        if not parameters.get("app_name"):
-            raise ValueError("Open_app action missing required parameter: 'app_name'")
 
-    elif action == "press_home":
-        # press_home动作不需要额外参数
-        pass
+    normalized_action = action.strip().lower()
+    decider_response["action"] = normalized_action
+    decider_response["reasoning"] = reasoning.strip()
+    decider_response["parameters"] = _canonicalize_runtime_parameters(
+        normalized_action,
+        decider_response.get("parameters", {}),
+    )
 
-    elif action == "press_back":
-        # press_back动作不需要额外参数
-        pass
-    
-    elif action == "wait":
-        # wait动作通常不需要额外参数
-        pass
-    
-    else:
-        raise ValueError(f"Unknown action: '{action}'")
-    
     return True
 def create_swipe_visualization(data_dir, image_index, direction, start_x=None, start_y=None, end_x=None, end_y=None):
     """为滑动动作创建可视化图像"""
@@ -693,15 +790,8 @@ def create_swipe_visualization(data_dir, image_index, direction, start_x=None, s
     except Exception as e:
         logging.warning(f"Failed to create swipe visualization: {e}")
 
-# 预处理 response_str，增强健壮性
-def robust_json_loads(s):
-    """健壮解析 response_str，使用统一解析逻辑。"""
-    parsed = _load_json_from_text(s)
-    if parsed is None:
-        logging.error(f"解析 response_str 失败")
-        logging.error(f"原始内容: {str(s)[:300]}...")
-        raise ValueError(f"无法解析 JSON 响应: 响应格式不正确")
-    return parsed
+def get_decider_parser(decider_protocol: str):
+    return get_decider_adapter(decider_protocol).parse_response
 
 
 def get_device_paths(device_type, image_index=None):
@@ -725,9 +815,9 @@ def get_device_paths(device_type, image_index=None):
     }
 
 
-def validate_decider_response(response_dict, use_e2e=False):
+def validate_decider_response(response_dict, use_e2e=False, decider_protocol=DECIDER_PROTOCOL_QWEN_JSON):
     """
-    校验 Decider 模型响应，包括基础参数校验和e2e模式特殊校验
+    校验 Decider 模型响应，包括 runtime canonical schema 和 e2e 模式特殊校验。
     
     Args:
         response_dict: 解析后的JSON响应对象
@@ -738,22 +828,10 @@ def validate_decider_response(response_dict, use_e2e=False):
     """
     # 基础参数校验
     validate_action_parameters(response_dict)
-    
-    # e2e模式的特殊校验
-    if use_e2e:
-        action_name = response_dict["action"]
-        parameters = response_dict["parameters"]
-        
-        if action_name == "click":
-            # e2e模式下click动作需要bbox
-            if "bbox" not in parameters or parameters["bbox"] is None:
-                raise ValueError("E2E mode: click action missing required parameter: 'bbox'")
-        
-        elif action_name == "swipe":
-            # e2e模式下swipe动作可能需要起始和结束坐标
-            if "start_coords" in parameters and "end_coords" in parameters:
-                if parameters["start_coords"] is None or parameters["end_coords"] is None:
-                    logging.warning("E2E mode: swipe action has null start_coords or end_coords, will fall back to direction-based swipe")
+
+    # Protocol-specific rules are delegated to the selected adapter. This keeps
+    # model-specific prompt and schema validation outside the shared runtime.
+    get_decider_adapter(decider_protocol).validate_response(response_dict, use_e2e)
 
 
 def validate_grounder_response(response_dict):
@@ -806,53 +884,9 @@ def compute_swipe_positions(direction, img_width, img_height):
     raise ValueError(f"Unknown swipe direction: {direction}")
 
 
-def build_decider_messages(task, history, screenshot, e2e):
-    from prompts.decider_qwen3_e2e import DECIDER_SYSTEM_PROMPT, DECIDER_USER_PROMPT, DECIDER_CURRENT_STEP_PROMPT
-    
-    # 1. 处理历史记录字符串
-    if len(history) == 0:
-        history_str = "(No history)"
-    else:
-        history_str = "\n".join(f"{idx}. {h}" for idx, h in enumerate(history, 1))
-
-    # 2. 准备前半部分文本（对应训练数据中 <image> 之前的内容）
-    # 包含：Task, History, Constraints
-    context_text = DECIDER_USER_PROMPT.format(task=task, history=history_str)
-    
-    # 3. 准备后半部分文本（对应训练数据中 <image> 之后的内容）
-    # 包含：Instruction (Please provide the next action...)
-    instruction_text = DECIDER_CURRENT_STEP_PROMPT
-
-    # 4. 构建单一的 User Message
-    # 结构严格遵循：[前半段文本] -> [图片] -> [后半段指令]
-    # 这样模型看到的输入序列就是：Text(Context) + ImageToken + Text(Instruction)
-    messages = [
-        {
-            "role": "system",
-            "content": DECIDER_SYSTEM_PROMPT
-        },
-        {
-            "role": "user",
-            "content": [
-                {
-                    "type": "text",
-                    "text": context_text  # 对应 <image> 上方的文本
-                },
-                {
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:image/jpeg;base64,{screenshot}"
-                    }
-                },
-                {
-                    "type": "text",
-                    "text": instruction_text  # 对应 <image> 下方的文本
-                }
-            ]
-        }
-    ]
-
-    return messages
+def build_decider_messages(task, history, screenshot, e2e, decider_protocol=DECIDER_PROTOCOL_QWEN_JSON, device_type="Android"):
+    adapter = get_decider_adapter(decider_protocol)
+    return adapter.build_messages(task, history, screenshot, e2e, device_type)
 
 
 def append_action_and_history(actions, history, decider_response, action_record):
@@ -863,11 +897,20 @@ def append_action_and_history(actions, history, decider_response, action_record)
 
 def handle_click_input_action(decider_response, device, img, image_index, actions, history):
     text = decider_response["parameters"]["text"]
-    bbox = decider_response["parameters"]["bbox"]
-    bbox = convert_qwen3_coordinates_to_absolute(bbox, img.width, img.height, is_bbox=True)
-    x1, y1, x2, y2 = bbox
-    position_x = (x1 + x2) // 2
-    position_y = (y1 + y2) // 2
+    if decider_response["parameters"].get("coords"):
+        position_x, position_y = convert_qwen3_coordinates_to_absolute(
+            decider_response["parameters"]["coords"], img.width, img.height, is_bbox=False
+        )
+        x1 = x2 = position_x
+        y1 = y2 = position_y
+    elif decider_response["parameters"].get("bbox"):
+        bbox = decider_response["parameters"]["bbox"]
+        bbox = convert_qwen3_coordinates_to_absolute(bbox, img.width, img.height, is_bbox=True)
+        x1, y1, x2, y2 = bbox
+        position_x = (x1 + x2) // 2
+        position_y = (y1 + y2) // 2
+    else:
+        raise ValueError("Click_input requires canonical 'coords' or 'bbox'")
 
     device.click(position_x, position_y)
     device.input(text)
@@ -938,11 +981,95 @@ def handle_press_back_action(decider_response, device, device_type, image_index,
 
 def handle_wait_action(decider_response, image_index, actions, history):
     print("Waiting for a while...")
+    seconds = float(decider_response.get("parameters", {}).get("seconds", DEVICE_WAIT_TIME * 2))
     append_action_and_history(actions, history, decider_response, {
         "type": "wait",
+        "seconds": seconds,
         "action_index": image_index
     })
-    time.sleep(DEVICE_WAIT_TIME * 2)
+    time.sleep(seconds)
+
+
+def handle_long_press_action(decider_response, device, img, image_index, actions, history):
+    if decider_response["parameters"].get("coords"):
+        position_x, position_y = convert_qwen3_coordinates_to_absolute(
+            decider_response["parameters"]["coords"], img.width, img.height, is_bbox=False
+        )
+    elif decider_response["parameters"].get("bbox"):
+        x1, y1, x2, y2 = convert_qwen3_coordinates_to_absolute(
+            decider_response["parameters"]["bbox"], img.width, img.height, is_bbox=True
+        )
+        position_x = (x1 + x2) // 2
+        position_y = (y1 + y2) // 2
+    else:
+        raise ValueError("Long_press requires canonical 'coords' or 'bbox'")
+
+    device.long_press(position_x, position_y)
+    append_action_and_history(actions, history, decider_response, {
+        "type": "long_press",
+        "position_x": position_x,
+        "position_y": position_y,
+        "action_index": image_index
+    })
+
+
+def handle_info_action(decider_response, image_index, actions, history):
+    question = decider_response["parameters"]["question"]
+    print(f"Model asks for more information: {question}")
+    if not sys.stdin.isatty():
+        append_action_and_history(actions, history, decider_response, {
+            "type": "info",
+            "question": question,
+            "response": None,
+            "action_index": image_index
+        })
+        return False
+
+    response = input("Please provide the missing information and press Enter: ").strip()
+    append_action_and_history(actions, history, decider_response, {
+        "type": "info",
+        "question": question,
+        "response": response,
+        "action_index": image_index
+    })
+    history.append(json.dumps({"user_reply": response}, ensure_ascii=False))
+    return True
+
+
+def handle_call_user_action(decider_response, image_index, actions, history):
+    message = decider_response["parameters"]["message"]
+    tag = decider_response["parameters"].get("tag", "confirm_action")
+    print(f"User intervention required ({tag}): {message}")
+    if not sys.stdin.isatty():
+        append_action_and_history(actions, history, decider_response, {
+            "type": "call_user",
+            "tag": tag,
+            "message": message,
+            "handled": False,
+            "action_index": image_index
+        })
+        return False
+
+    input("Handle the requested intervention manually, then press Enter to continue: ")
+    append_action_and_history(actions, history, decider_response, {
+        "type": "call_user",
+        "tag": tag,
+        "message": message,
+        "handled": True,
+        "action_index": image_index
+    })
+    history.append(json.dumps({"call_user": {"tag": tag, "handled": True}}, ensure_ascii=False))
+    return True
+
+
+def handle_abort_action(decider_response, image_index, actions, history):
+    reason = decider_response["parameters"]["reason"]
+    print(f"Task aborted by model: {reason}")
+    append_action_and_history(actions, history, decider_response, {
+        "type": "abort",
+        "reason": reason,
+        "action_index": image_index
+    })
 
 
 def save_hierarchy(device, device_type, data_dir, image_index):
@@ -984,7 +1111,20 @@ def handle_click_action(decider_response, device, img, screenshot_resize, ground
                         grounder_prompt_template_no_bbox, bbox_flag, use_qwen3, use_e2e,
                         data_dir, device_paths, current_image, image_index, actions, history):
     reasoning = decider_response["reasoning"]
-    target_element = decider_response["parameters"]["target_element"]
+    target_element = decider_response["parameters"].get("target_element", "stepfun_click_target")
+
+    if decider_response["parameters"].get("coords"):
+        x, y = convert_qwen3_coordinates_to_absolute(
+            decider_response["parameters"]["coords"], img.width, img.height, is_bbox=False
+        )
+        device.click(x, y)
+        append_action_and_history(actions, history, decider_response, {
+            "type": "click",
+            "position_x": x,
+            "position_y": y,
+            "action_index": image_index
+        })
+        return
 
     if use_e2e:
         bbox = decider_response["parameters"]["bbox"]
@@ -1095,65 +1235,56 @@ def handle_click_action(decider_response, device, img, screenshot_resize, ground
 
 
 def handle_swipe_action(decider_response, device, img, use_e2e, use_qwen3, data_dir, image_index, actions, history):
-    direction = decider_response["parameters"]["direction"].upper()
+    direction = decider_response["parameters"].get("direction", "UP").upper()
 
-    if use_e2e:
-        start_coords = decider_response["parameters"].get("start_coords")
-        end_coords = decider_response["parameters"].get("end_coords")
+    start_coords = decider_response["parameters"].get("start_coords")
+    end_coords = decider_response["parameters"].get("end_coords")
 
-        if start_coords and end_coords:
-            if use_qwen3:
-                start_coords = convert_qwen3_coordinates_to_absolute(start_coords, img.width, img.height, is_bbox=False)
-                end_coords = convert_qwen3_coordinates_to_absolute(end_coords, img.width, img.height, is_bbox=False)
+    if start_coords and end_coords:
+        if use_qwen3:
+            start_coords = convert_qwen3_coordinates_to_absolute(start_coords, img.width, img.height, is_bbox=False)
+            end_coords = convert_qwen3_coordinates_to_absolute(end_coords, img.width, img.height, is_bbox=False)
 
-            start_x, start_y = start_coords
-            end_x, end_y = end_coords
+        start_x, start_y = start_coords
+        end_x, end_y = end_coords
 
-            logging.info(f"E2E mode: swipe from [{start_x}, {start_y}] to [{end_x}, {end_y}]")
-            device.swipe_with_coords(start_x, start_y, end_x, end_y)
+        logging.info(f"Swipe from [{start_x}, {start_y}] to [{end_x}, {end_y}]")
+        device.swipe_with_coords(start_x, start_y, end_x, end_y)
 
-            append_action_and_history(actions, history, decider_response, {
-                "type": "swipe",
-                "press_position_x": start_x,
-                "press_position_y": start_y,
-                "release_position_x": end_x,
-                "release_position_y": end_y,
-                "direction": direction.lower(),
-                "action_index": image_index
-            })
-            create_swipe_visualization(data_dir, image_index, direction.lower(), start_x, start_y, end_x, end_y)
-        else:
-            logging.warning("E2E mode: start_coords or end_coords not found, falling back to direction-based swipe")
-            press_position_x, press_position_y, release_position_x, release_position_y = compute_swipe_positions(direction, img.width, img.height)
-            device.swipe_with_coords(press_position_x, press_position_y, release_position_x, release_position_y,)
-            append_action_and_history(actions, history, decider_response, {
-                "type": "swipe",
-                "press_position_x": press_position_x,
-                "press_position_y": press_position_y,
-                "release_position_x": release_position_x,
-                "release_position_y": release_position_y,
-                "direction": direction.lower(),
-                "action_index": image_index
-            })
-            create_swipe_visualization(data_dir, image_index, direction.lower())
-    else:
-        press_position_x, press_position_y, release_position_x, release_position_y = compute_swipe_positions(direction, img.width, img.height)
-        device.swipe_with_coords(press_position_x, press_position_y, release_position_x, release_position_y,)
         append_action_and_history(actions, history, decider_response, {
             "type": "swipe",
-            "press_position_x": press_position_x,
-            "press_position_y": press_position_y,
-            "release_position_x": release_position_x,
-            "release_position_y": release_position_y,
+            "press_position_x": start_x,
+            "press_position_y": start_y,
+            "release_position_x": end_x,
+            "release_position_y": end_y,
             "direction": direction.lower(),
             "action_index": image_index
         })
-        create_swipe_visualization(data_dir, image_index, direction.lower())
+        create_swipe_visualization(data_dir, image_index, direction.lower(), start_x, start_y, end_x, end_y)
+        return
 
-def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3=True, device_type="Android", use_e2e=False):
+    if use_e2e:
+        logging.warning("E2E mode: start_coords or end_coords not found, falling back to direction-based swipe")
+
+    press_position_x, press_position_y, release_position_x, release_position_y = compute_swipe_positions(direction, img.width, img.height)
+    device.swipe_with_coords(press_position_x, press_position_y, release_position_x, release_position_y,)
+    append_action_and_history(actions, history, decider_response, {
+        "type": "swipe",
+        "press_position_x": press_position_x,
+        "press_position_y": press_position_y,
+        "release_position_x": release_position_x,
+        "release_position_y": release_position_y,
+        "direction": direction.lower(),
+        "action_index": image_index
+    })
+    create_swipe_visualization(data_dir, image_index, direction.lower())
+
+def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3=True, device_type="Android", use_e2e=False, decider_protocol=DECIDER_PROTOCOL_QWEN_JSON):
     history = []
     actions = []
     reacts = []
+    stop_reason = "UNKNOWN"
+    decider_adapter = get_decider_adapter(decider_protocol)
     grounder_prompt_template_bbox = None
     grounder_prompt_template_no_bbox = None
 
@@ -1168,28 +1299,32 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3
     else:
         grounder_prompt_template_bbox = load_prompt("grounder_bbox.md")
         grounder_prompt_template_no_bbox = load_prompt("grounder_coordinates.md")
+
+    logging.info("Using decider adapter: %s (%s)", decider_adapter.display_name, decider_protocol)
     while True:     
         if len(actions) >= MAX_STEPS:
             logging.info("Reached maximum steps, stopping the task.")
+            stop_reason = "MAX_STEPS_REACHED"
             break
 
         screenshot_resize = get_screenshot(device, device_type)
 
         
-        messages = build_decider_messages(task, history, screenshot_resize, use_e2e)
+        messages = decider_adapter.build_messages(task, history, screenshot_resize, use_e2e, device_type)
         logging.info(f"Decider messages[200]: \n{messages[200:]}")
 
         # --- 调用 Decider 模型 ---
         try:
             # 为e2e模式创建特定的校验器
             def decider_validator(response):
-                validate_decider_response(response, use_e2e=use_e2e)
+                validate_decider_response(response, use_e2e=use_e2e, decider_protocol=decider_protocol)
             
             decider_response = call_model_with_validation_retry(
                 decider_client,
                 decider_model,
                 messages,
                 validator_func=decider_validator,
+                parser_func=decider_adapter.parse_response,
                 max_retries=MAX_RETRIES,
                 max_tokens=DECIDER_MAX_TOKENS,
                 context="Decider"
@@ -1202,6 +1337,10 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3
                     "parameters": decider_response["parameters"]
                 }
             }
+            if decider_response.get("raw_protocol"):
+                converted_item["raw_protocol"] = decider_response["raw_protocol"]
+            if decider_response.get("stepfun_fields"):
+                converted_item["stepfun_fields"] = decider_response["stepfun_fields"]
         except Exception as e:
             logging.error(f"Decider 处理失败: {e}")
             raise
@@ -1233,12 +1372,33 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3
         if action == "done":
             print("Task completed.")
             status = decider_response["parameters"]["status"]
+            stop_reason = f"TASK_COMPLETED_{status.upper()}"
             actions.append({
                 "type": "done",
                 "status": status,
+                "message": decider_response["parameters"].get("message"),
                 "action_index": image_index
             })
             break
+
+        if action == "abort":
+            handle_abort_action(decider_response, image_index, actions, history)
+            stop_reason = "TASK_ABORTED_BY_MODEL"
+            break
+
+        if action == "info":
+            should_continue = handle_info_action(decider_response, image_index, actions, history)
+            if not should_continue:
+                stop_reason = "USER_INPUT_REQUIRED"
+                break
+            continue
+
+        if action == "call_user":
+            should_continue = handle_call_user_action(decider_response, image_index, actions, history)
+            if not should_continue:
+                stop_reason = "USER_INTERVENTION_REQUIRED"
+                break
+            continue
 
         action_handlers = {
             "click": lambda: handle_click_action(
@@ -1257,6 +1417,7 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3
             "press_home": lambda: handle_press_home_action(decider_response, device, device_type, image_index, actions, history),
             "press_back": lambda: handle_press_back_action(decider_response, device, device_type, image_index, actions, history),
             "wait": lambda: handle_wait_action(decider_response, image_index, actions, history),
+            "long_press": lambda: handle_long_press_action(decider_response, device, img, image_index, actions, history),
         }
 
         handler = action_handlers.get(action)
@@ -1282,6 +1443,8 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3
         "old_task_description": old_task,
         "task_description": task,
         "execution_timestamp": execution_timestamp,
+        "decider_protocol": decider_protocol,
+        "stop_reason": stop_reason,
         "action_count": len(actions),
         "actions": actions
     }
@@ -1428,7 +1591,7 @@ def should_use_planner_rewritten_task(use_experience=False):
     return bool(use_experience or (preference_extractor and getattr(preference_extractor, 'mem', None)))
 
 
-def execute_single_task(task_description, device, data_dir, use_experience, use_graphrag, current_device_type, use_qwen3_model, use_e2e=False, auto_accept_planner_changes=False):
+def execute_single_task(task_description, device, data_dir, use_experience, use_graphrag, current_device_type, use_qwen3_model, use_e2e=False, auto_accept_planner_changes=False, decider_protocol=DECIDER_PROTOCOL_QWEN_JSON):
     """
     执行单个任务的通用函数
     
@@ -1461,7 +1624,18 @@ def execute_single_task(task_description, device, data_dir, use_experience, use_
 
     logging.info(f"Starting task in app: {app_name} (package: {package_name})")
     device.app_start(package_name)
-    task_in_app(app_name, task_description, new_task_description, device, data_dir, True, use_qwen3_model, current_device_type, use_e2e)
+    task_in_app(
+        app_name,
+        task_description,
+        new_task_description,
+        device,
+        data_dir,
+        True,
+        use_qwen3_model,
+        current_device_type,
+        use_e2e,
+        decider_protocol=decider_protocol,
+    )
     time.sleep(APP_STOP_WAIT)  # 等待后再停止应用
     logging.info(f"Stopping app: {app_name} (package: {package_name})")
     device.app_stop(package_name)
@@ -1490,13 +1664,25 @@ if __name__ == "__main__":
     parser.add_argument("--data_dir", type=str, default=None, help="Directory to save data (default: ./data relative to script location)")
     parser.add_argument("--task_file", type=str, default=None, help="Path to task.json file (default: ./task.json relative to script location)")
     parser.add_argument("--e2e", action="store_true", default=True, help="Enable e2e mode: use e2e_qwen3.md as decider prompt and return coordinates directly from decider (default: True)")
+    parser.add_argument(
+        "--decider_protocol",
+        choices=SUPPORTED_DECIDER_PROTOCOLS,
+        default=DECIDER_PROTOCOL_QWEN_JSON,
+        help="Decider output protocol to use (default: qwen_json)",
+    )
     args = parser.parse_args()
 
     # 使用命令行参数初始化
     enable_user_profile = (args.user_profile == "on")
     use_graphrag = (args.use_graphrag == "on")
-    init(args.service_ip, args.decider_port, args.grounder_port, args.planner_port,
-        enable_user_profile=enable_user_profile, use_graphrag=use_graphrag)
+    init(
+        args.service_ip,
+        args.decider_port,
+        args.grounder_port,
+        args.planner_port,
+        enable_user_profile=enable_user_profile,
+        use_graphrag=use_graphrag,
+    )
 
     # 如果需要清除记忆，优先执行并退出
     if args.clear_memory:
@@ -1529,6 +1715,7 @@ if __name__ == "__main__":
     logging.info(f"Auto accept planner changes: {auto_accept_planner_changes}")
     logging.info(f"Device type: {current_device_type}")
     logging.info(f"Use E2E mode: {args.e2e}")
+    logging.info(f"Decider protocol: {args.decider_protocol}")
     # 配置数据保存目录
     if args.data_dir:
         data_base_dir = args.data_dir
@@ -1572,7 +1759,18 @@ if __name__ == "__main__":
                 logging.info(f"Processing task {task_index} of {app_name_from_file}/{task_type}: {task_description}")
 
                 
-                execute_single_task(task_description, device, data_dir, use_experience, use_graphrag, current_device_type, use_qwen3_model, args.e2e, auto_accept_planner_changes)
+                execute_single_task(
+                    task_description,
+                    device,
+                    data_dir,
+                    use_experience,
+                    use_graphrag,
+                    current_device_type,
+                    use_qwen3_model,
+                    args.e2e,
+                    auto_accept_planner_changes,
+                    args.decider_protocol,
+                )
         else:
             # 旧格式：简单任务列表
             existing_dirs = [d for d in os.listdir(data_base_dir) if os.path.isdir(os.path.join(data_base_dir, d)) and d.isdigit()]
@@ -1584,7 +1782,18 @@ if __name__ == "__main__":
             os.makedirs(data_dir, exist_ok=True)
             task_description = task_item
             
-            execute_single_task(task_description, device, data_dir, use_experience, use_graphrag, current_device_type, use_qwen3_model, args.e2e, auto_accept_planner_changes)
+            execute_single_task(
+                task_description,
+                device,
+                data_dir,
+                use_experience,
+                use_graphrag,
+                current_device_type,
+                use_qwen3_model,
+                args.e2e,
+                auto_accept_planner_changes,
+                args.decider_protocol,
+            )
     
     # 等待所有偏好提取任务完成
     if preference_extractor and hasattr(preference_extractor, 'executor'):

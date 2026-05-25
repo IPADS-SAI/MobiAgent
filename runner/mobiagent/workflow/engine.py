@@ -663,7 +663,10 @@ class WorkflowRunner:
             local_aliases: dict[str, str] = {}
             with self.context.push_scope(local_aliases, loop_runtime):
                 stopped = self._execute_steps_in_scope(body_steps, iteration_prefix, local_aliases)
-                should_break = self._evaluate_condition(break_if_condition) if break_if_condition is not None else False
+                if stopped:
+                    should_break = False
+                else:
+                    should_break = self._evaluate_condition(break_if_condition) if break_if_condition is not None else False
             executed_iterations.append(
                 {
                     "iteration": iteration_index + 1,

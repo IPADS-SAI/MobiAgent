@@ -6,7 +6,7 @@
   "defaults": {
     "device": "Harmony",
     "use_qwen3": true,
-    "use_e2e": true,
+    "use_e2e": false,
     "use_experience": false,
     "accept_planner_changes": false
   },

@@ -1663,7 +1663,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("--data_dir", type=str, default=None, help="Directory to save data (default: ./data relative to script location)")
     parser.add_argument("--task_file", type=str, default=None, help="Path to task.json file (default: ./task.json relative to script location)")
-    parser.add_argument("--e2e", action="store_true", default=True, help="Enable e2e mode: use e2e_qwen3.md as decider prompt and return coordinates directly from decider (default: True)")
+    parser.add_argument("--e2e", action=argparse.BooleanOptionalAction, default=False, help="Enable or disable e2e mode: use e2e_qwen3.md as decider prompt and return coordinates directly from decider (default: False)")
     parser.add_argument(
         "--decider_protocol",
         choices=SUPPORTED_DECIDER_PROTOCOLS,

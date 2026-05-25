@@ -32,7 +32,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--user_profile", choices=["on", "off"], default="off", help="Enable user profile memory")
     parser.add_argument("--use_graphrag", choices=["on", "off"], default="off", help="Enable GraphRAG for user profile memory")
     parser.add_argument("--use_qwen3", choices=["on", "off"], default="on", help="Use Qwen3 for GUI execution steps")
-    parser.add_argument("--e2e", action="store_true", default=True, help="Enable e2e mode for GUI task steps")
+    parser.add_argument(
+        "--e2e",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Enable or disable e2e mode for GUI task steps",
+    )
     parser.add_argument("--output_dir", type=str, default=None, help="Directory for workflow run outputs")
     parser.add_argument(
         "--decider_protocol",

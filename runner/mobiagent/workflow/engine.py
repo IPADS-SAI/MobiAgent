@@ -192,7 +192,7 @@ class WorkflowRunner:
         device_type: str = "Android",
         output_dir: str | None = None,
         use_qwen3: bool = True,
-        use_e2e: bool = True,
+        use_e2e: bool | None = None,
         enable_user_profile: bool = False,
         use_graphrag: bool = False,
         auto_accept_planner_changes: bool = False,
@@ -426,7 +426,12 @@ class WorkflowRunner:
         current_device_type = step.get("device", self.device_type)
         device = self._get_device(current_device_type)
         use_experience = bool(step.get("use_experience", self.defaults.get("use_experience", False)))
-        use_e2e = bool(step.get("use_e2e", self.defaults.get("use_e2e", self.use_e2e)))
+        if "use_e2e" in step:
+            use_e2e = bool(step["use_e2e"])
+        elif self.use_e2e is not None:
+            use_e2e = bool(self.use_e2e)
+        else:
+            use_e2e = bool(self.defaults.get("use_e2e", False))
         use_qwen3 = bool(step.get("use_qwen3", self.defaults.get("use_qwen3", self.use_qwen3)))
         use_graphrag = bool(step.get("use_graphrag", self.defaults.get("use_graphrag", self.use_graphrag)))
         decider_protocol = str(

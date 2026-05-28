@@ -228,7 +228,10 @@ runner/mobiagent/workflow/profile-consolidation/indexes/
 ├── source/index.json
 ├── temporal/YYYY-MM.json
 ├── domain/index.json
-└── entity/index.json
+├── entity/index.json
+└── profile/
+    ├── profile.md
+    └── state.json
 ```
 
 - `manifest.json` 保存输入 state 文件哈希，用于后续增量更新。
@@ -238,10 +241,11 @@ runner/mobiagent/workflow/profile-consolidation/indexes/
 - `temporal/` 保存基于事件日期的月、周、日摘要树。
 - `domain/` 保存领域到事件的 postings。
 - `entity/` 保存实体标准名、别名以及实体到事件的 postings。
+- `profile/` 保存从事件和索引派生出的用户画像总结；主体是 `profile.md`，`state.json` 用于增量归并和程序化读取。
 
 ### 创建或更新索引
 
-构建阶段可以调用与 consolidation 相同形式的 OpenAI-compatible 模型服务，提取关键词、分类领域、归并实体并生成多级摘要。它也会读取既有 workflow 运行目录下的 `run_summary.json`，通过 daily-log 条目与产生该摘要的 `vlm_qa` 输出建立关系，将对应的原始图片路径附到派生事件索引中；不需要修改 daily-log 或 consolidated profile 的格式：
+构建阶段可以调用与 consolidation 相同形式的 OpenAI-compatible 模型服务，提取关键词、分类领域、归并实体、生成多级摘要，并按领域总结用户画像。它也会读取既有 workflow 运行目录下的 `run_summary.json`，通过 daily-log 条目与产生该摘要的 `vlm_qa` 输出建立关系，将对应的原始图片路径附到派生事件索引中；不需要修改 daily-log 或 consolidated profile 的格式：
 
 ```bash
 python -m runner.mobiagent.workflow.index_consolidated_profiles build \
@@ -250,7 +254,7 @@ python -m runner.mobiagent.workflow.index_consolidated_profiles build \
   --model_port 8000
 ```
 
-重复执行 `build` 会复用未变化的 state 文件，仅重新派生变化事件及受影响的时间摘要。调试或无模型环境下可使用规则降级路径：
+重复执行 `build` 会复用未变化的 state 文件，仅重新派生变化事件、受影响的时间摘要和画像领域。调试或无模型环境下可使用规则降级路径：
 
 ```bash
 python -m runner.mobiagent.workflow.index_consolidated_profiles build \
@@ -278,9 +282,11 @@ LLM 构建会为跨事件出现的同一实体归并标准名和别名，例如�
 
 时间索引统一使用 state 记录中的 `first_seen_date` 作为事件日期；`last_seen_date` 只随事件返回，表示该事实最近一次被来源日志看到的日期。
 
+用户画像按相同领域集合组织。LLM 模式会把上一版画像作为输入并与当前事件证据归并，只保留仍有事件支持的结论；`--disable_model` 模式会保守统计高频实体、来源和关键词，生成证据充分的观察型结论。画像结论会记录证据事件数、时间范围和示例事件，但 Markdown 展示只保留用户可读信息。
+
 ### 查询索引
 
-查询完全读取本地 JSON 索引，不调用模型。`--keyword` 同时查询事件正文和独立的来源名称索引，因此既能查事件内容，也能用群聊名等来源词找出该来源下的事件。命令行默认输出面向用户的终端表格，展示日期（即事件的 `first_seen_date`）、来源、事件摘要、领域和实体；对于能从既有运行产物回溯的事件，还会追加原始图片路径表。需要核查 `last_seen_date` 或供脚本消费原始结构时可显式添加 `--json`。多个 `--keyword` 条件按 AND 组合，多个 `--domain` 或 `--entity` 条件各自按 OR 组合；不同类型条件之间取交集。
+查询完全读取本地 JSON 索引，不调用模型。`--keyword` 同时查询事件正文和独立的来源名称索引，因此既能查事件内容，也能用群聊名等来源词找出该来源下的事件。倒排 postings 只存储相邻双字或双字符片段，以避免大量低信息量单字项；单字查询会直接校验事件和来源文本。命令行默认输出面向用户的终端表格，展示日期（即事件的 `first_seen_date`）、来源、事件摘要、领域和实体；对于能从既有运行产物回溯的事件，还会追加原始图片路径表。需要核查 `last_seen_date` 或供脚本消费原始结构时可显式添加 `--json`。多个 `--keyword` 条件按 AND 组合，多个 `--domain` 或 `--entity` 条件各自按 OR 组合；不同类型条件之间取交集。
 
 ```bash
 # 通过部分关键词取回完整事件
@@ -306,4 +312,13 @@ python -m runner.mobiagent.workflow.index_consolidated_profiles query \
   --end_date 2026-05-31 \
   --domain work \
   --keyword 会议
+
+# 展示用户画像总结
+python -m runner.mobiagent.workflow.index_consolidated_profiles query \
+  --profile
+
+# 只展示某个领域的画像
+python -m runner.mobiagent.workflow.index_consolidated_profiles query \
+  --profile \
+  --domain eat
 ```

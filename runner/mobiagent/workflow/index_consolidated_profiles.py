@@ -8,7 +8,7 @@ import os
 import re
 import textwrap
 import unicodedata
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Iterable
@@ -22,6 +22,10 @@ DEFAULT_RUN_ROOT = Path(__file__).resolve().parent / "test-runs"
 DEFAULT_API_KEY = os.getenv("MOBIAGENT_API_KEY", "")
 DOMAINS = ("eat", "wear", "live", "travel", "work", "other")
 ENTITY_TYPES = ("person", "place", "merchant")
+PROFILE_MODEL_MAX_TOKENS = 3000
+PROFILE_MODEL_PROMPT_CHAR_LIMIT = 12000
+PROFILE_MODEL_MERGE_CHAR_LIMIT = 10000
+PROFILE_MODEL_MERGE_ROUND_LIMIT = 4
 ENTITY_TYPE_DESCRIPTIONS = {
     "person": "现实中的个人或联系人",
     "place": "现实地点、地址、场馆或地理位置",
@@ -54,6 +58,103 @@ DOMAIN_RULES = {
     "live": ("住宿", "酒店", "宾馆", "房租", "住房", "家居", "公寓", "民宿"),
     "travel": ("交通", "出行", "通勤", "乘车", "网约车", "出租车", "打车", "地铁", "公交", "高铁", "火车", "航班", "机票", "旅行", "旅游"),
     "work": ("工作", "上班", "办公", "会议", "汇报", "协作", "加班", "出差"),
+}
+PROFILE_DOMAIN_RULES = {
+    "eat": (
+        "餐饮",
+        "美食",
+        "外卖",
+        "用餐",
+        "餐厅",
+        "早餐",
+        "午餐",
+        "晚餐",
+        "火锅",
+        "牛肉面",
+        "拉面",
+        "烤肉",
+        "汉堡",
+        "奶茶",
+        "咖啡",
+        "饮料",
+    ),
+    "wear": (
+        "服装",
+        "衣服",
+        "裤",
+        "裙",
+        "鞋",
+        "外套",
+        "穿搭",
+        "箱包",
+        "背包",
+        "美妆",
+        "护肤",
+    ),
+    "live": (
+        "住宿",
+        "酒店",
+        "宾馆",
+        "房租",
+        "住房",
+        "家居",
+        "公寓",
+        "民宿",
+        "充电",
+    ),
+    "travel": (
+        "交通",
+        "出行",
+        "通勤",
+        "乘车",
+        "网约车",
+        "出租车",
+        "打车",
+        "地铁",
+        "公交",
+        "高铁",
+        "火车",
+        "航班",
+        "机票",
+        "旅行",
+        "旅游",
+        "邮轮",
+        "潜水",
+        "瀑布",
+        "景区",
+        "攻略",
+    ),
+    "work": (
+        "工作",
+        "上班",
+        "办公",
+        "会议",
+        "汇报",
+        "协作",
+        "加班",
+        "出差",
+        "PR",
+        "GitHub",
+        "GitLab",
+        "代码",
+        "分支",
+        "merge",
+        "rebase",
+        "debug",
+        "OCR",
+        "embedding",
+        "应用开发",
+        "接口",
+        "权限",
+        "Agent",
+    ),
+}
+PROFILE_EXCLUSION_RULES = {
+    "eat": ("基金", "ETF", "股票", "投资", "理财", "收益", "转账", "账单汇总", "衣食住行"),
+    "wear": ("基金", "ETF", "股票", "投资", "理财", "收益", "转账", "账单汇总", "衣食住行"),
+    "live": ("基金", "ETF", "股票", "投资", "理财", "收益", "转账", "账单汇总", "衣食住行"),
+    "travel": ("基金", "ETF", "股票", "投资", "理财", "收益", "转账", "账单汇总", "衣食住行"),
+    "work": ("基金", "ETF", "股票", "投资", "理财", "收益", "转账", "账单汇总", "衣食住行"),
 }
 
 ENRICH_SYSTEM_PROMPT = textwrap.dedent(
@@ -111,6 +212,65 @@ SUMMARY_SYSTEM_PROMPT = textwrap.dedent(
     只返回严格 JSON：{"summary": "摘要文本"}。
     摘要应陈述事实，不猜测，不遗漏主要活动类型，不输出 markdown。
     summary 最多 160 个汉字，只概括主要活动类型和显著事件，不要逐条复述输入。
+    """
+).strip()
+
+PROFILE_SYSTEM_PROMPT = textwrap.dedent(
+    """
+    你是用户画像总结助手。输入是一组同一领域的个人事件，以及上一版该领域画像结论。
+    请归并历史画像并基于当前事件证据生成适合 App 前端展示的凝练用户画像，返回严格 JSON：
+    {
+      "summary": "该领域 1-2 句话的高层画像总结",
+      "claims": [
+        {
+          "statement": "一条短 insight，不要逐条复述事实",
+          "kind": "preference | habit | topic | service | relation | place | observation",
+          "confidence": "high | medium | low",
+          "event_ids": ["支持该结论的输入事件 id"],
+          "example": "一个最能说明该结论的事件摘要"
+        }
+      ]
+    }
+
+    summary 面向用户展示，应像产品中的“个人画像卡片”，概括这个领域的整体倾向，而不是列举订单、聊天或浏览事实。
+    claims 只保留 2-5 条高层 insight，可以描述偏好、习惯、近期关注话题、常用服务/商户、稳定联系人或地点，但必须由至少 2 条输入事件直接支持。
+    不要推断职业、收入、性格、身份等事件没有证明的信息。
+    证据少或只出现一次时，使用“最近出现”“曾记录”等保守表述；只有多条独立事件支持时才使用“经常”“偏好”“常用”等强表述。
+    合并上一版画像时，只保留仍有当前事件证据支持的结论；相近结论应合并，不要重复输出。
+    event_ids 必须来自输入事件，不要编造 id；每条结论至少包含 1 个 event_id。
+    每个领域最多输出 5 条高价值结论；没有足够证据时返回空 summary 和空 claims。
+    不要在 summary 或 statement 中写金额、订单状态、具体日期、证据数量或“事件 id”；这些细节只用于内部证据。
+    不要把单次转账、单次订单、单次 PR、单次浏览记录写成画像；它们只能作为证据，不是画像本身。
+    relation 类 insight 只适合 other 领域；吃、穿、住、行、办公领域不要输出联系人关系画像。
+    不要硬编码任何品牌、应用、群聊、支付、金融或测试数据词；只依据输入事件内容归纳。
+    不输出 markdown 或解释。
+    """
+).strip()
+
+PROFILE_MERGE_SYSTEM_PROMPT = textwrap.dedent(
+    """
+    你是用户画像归并助手。输入是同一领域内多个分块已经生成的候选画像结论，以及上一版该领域画像结论。
+    请去重、合并相近含义，并输出适合 App 前端展示的最终用户画像，返回严格 JSON：
+    {
+      "summary": "该领域 1-2 句话的高层画像总结",
+      "claims": [
+        {
+          "statement": "一条短 insight，不要逐条复述事实",
+          "kind": "preference | habit | topic | service | relation | place | observation",
+          "confidence": "high | medium | low",
+          "event_ids": ["支持该结论的输入事件 id"],
+          "example": "一个最能说明该结论的事件摘要"
+        }
+      ]
+    }
+
+    只能基于 candidate_claims 和 previous_claims 中已有信息归并，不要创造新的品牌、实体、话题或事件 id。
+    claims 只保留 2-5 条高层 insight；相近结论必须合并，单次事件陈述不能作为画像。
+    每条结论必须至少由 2 个 event_ids 支持；event_ids 必须来自输入候选结论。
+    合并上一版画像时，只保留仍被候选结论支持的内容。
+    不要在 summary 或 statement 中写金额、订单状态、具体日期、证据数量或“事件 id”。
+    relation 类 insight 只适合 other 领域；吃、穿、住、行、办公领域不要输出联系人关系画像。
+    不输出 markdown 或解释。
     """
 ).strip()
 
@@ -288,12 +448,29 @@ def write_json_atomic(path: Path, payload: Any) -> None:
     temporary.replace(path)
 
 
+def write_text_atomic(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + ".tmp")
+    temporary.write_text(text, encoding="utf-8")
+    temporary.replace(path)
+
+
 def sync_json_directory(directory: Path, desired: dict[str, Any]) -> None:
     directory.mkdir(parents=True, exist_ok=True)
     for name, payload in desired.items():
         write_json_atomic(directory / name, payload)
     for existing in directory.glob("*.json"):
         if existing.name not in desired:
+            existing.unlink()
+
+
+def sync_profile_directory(directory: Path, profile_state: dict[str, Any], profile_markdown: str) -> None:
+    directory.mkdir(parents=True, exist_ok=True)
+    write_json_atomic(directory / "state.json", profile_state)
+    write_text_atomic(directory / "profile.md", profile_markdown)
+    desired = {"state.json", "profile.md"}
+    for existing in directory.iterdir():
+        if existing.is_file() and existing.name not in desired:
             existing.unlink()
 
 
@@ -362,6 +539,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     query = subparsers.add_parser("query", help="Query existing local indexes without model calls")
     query.add_argument("--index_dir", "--index-dir", default=str(DEFAULT_INDEX_DIR), help="Directory containing derived indexes")
+    query.add_argument("--profile", action="store_true", help="Show the derived user profile summary")
     query.add_argument("--keyword", "--keywords", dest="keywords", action="append", default=[], help="Keyword; repeat for AND matching")
     query.add_argument("--domain", action="append", choices=DOMAINS, default=[], help="Domain; repeat for OR matching")
     query.add_argument("--entity", dest="entities", action="append", default=[], help="Entity selector type:name; repeat for OR matching")
@@ -382,6 +560,16 @@ def configure_logging(level_name: str) -> None:
 
 
 def validate_query_args(args: argparse.Namespace) -> None:
+    if getattr(args, "profile", False) and (
+        args.keywords
+        or getattr(args, "entities", [])
+        or args.event_date
+        or args.month
+        or args.start_date
+        or args.end_date
+        or args.include_events
+    ):
+        raise ValueError("--profile can only be combined with --domain or --json")
     temporal_selectors = int(bool(args.event_date)) + int(bool(args.month)) + int(bool(args.start_date or args.end_date))
     if temporal_selectors > 1:
         raise ValueError("Use only one of --date, --month, or --start_date/--end_date")
@@ -516,6 +704,41 @@ def derive_rule_domains(event: dict[str, Any]) -> list[str]:
     return result or ["other"]
 
 
+def event_profile_text(event: dict[str, Any]) -> str:
+    return " ".join(
+        [
+            event.get("summary", ""),
+            event.get("normalized_fact", ""),
+            " ".join(event.get("tags", [])),
+            " ".join(event.get("keywords", [])),
+            " ".join(event.get("sources", [])),
+            " ".join(event.get("entities", [])),
+        ]
+    )
+
+
+def has_profile_domain_evidence(event: dict[str, Any], domain: str) -> bool:
+    if domain not in PROFILE_DOMAIN_RULES:
+        return False
+    text = event_profile_text(event).lower()
+    if any(term.lower() in text for term in PROFILE_EXCLUSION_RULES.get(domain, ())):
+        return False
+    return any(term.lower() in text for term in PROFILE_DOMAIN_RULES[domain])
+
+
+def derive_profile_domains(event: dict[str, Any]) -> list[str]:
+    candidates = [
+        domain
+        for domain in normalize_domains(event.get("domains", []))
+        if domain != "other" and has_profile_domain_evidence(event, domain)
+    ]
+    if candidates:
+        return candidates
+    if normalize_domains(event.get("domains", [])) == ["other"]:
+        return ["other"]
+    return []
+
+
 def normalize_domains(raw_domains: Any) -> list[str]:
     if not isinstance(raw_domains, list):
         return []
@@ -581,6 +804,7 @@ def enrich_event(event: dict[str, Any], model: ModelContext) -> dict[str, Any]:
     if model.disable_model:
         enriched["keywords"] = rule_keywords
         enriched["domains"] = rule_domains
+        enriched["profile_domains"] = derive_profile_domains(enriched)
         enriched["entity_mentions"] = rule_entities
         enriched["enrichment_method"] = "heuristic"
         return enriched
@@ -604,6 +828,7 @@ def enrich_event(event: dict[str, Any], model: ModelContext) -> dict[str, Any]:
         model_entities = normalize_entity_mentions(payload.get("entities", [])) if isinstance(payload, dict) else []
         enriched["keywords"] = keywords
         enriched["domains"] = domains
+        enriched["profile_domains"] = derive_profile_domains(enriched)
         enriched["entity_mentions"] = normalize_entity_mentions([*model_entities, *rule_entities])
         enriched["enrichment_method"] = "model"
     except Exception as exc:
@@ -611,6 +836,7 @@ def enrich_event(event: dict[str, Any], model: ModelContext) -> dict[str, Any]:
         model.model_fallbacks += 1
         enriched["keywords"] = rule_keywords
         enriched["domains"] = rule_domains
+        enriched["profile_domains"] = derive_profile_domains(enriched)
         enriched["entity_mentions"] = rule_entities
         enriched["enrichment_method"] = "heuristic_fallback"
     return enriched
@@ -620,10 +846,8 @@ def index_terms(value: Any) -> set[str]:
     compact = normalize_lookup_text(value)
     terms: set[str] = set()
     for run in re.findall(r"[\u4e00-\u9fff]+", compact):
-        terms.update(run)
         terms.update(run[index : index + 2] for index in range(len(run) - 1))
     for token in re.findall(r"[a-z0-9_]+", compact):
-        terms.update(token)
         terms.update(token[index : index + 2] for index in range(len(token) - 1))
     return {term for term in terms if term}
 
@@ -644,7 +868,7 @@ def build_inverted_document(events: dict[str, dict[str, Any]]) -> dict[str, Any]
         for term in index_terms(event_search_text(event)):
             postings[term].add(event_id)
     return {
-        "normalization": "lowercase compact text with CJK character/bigram and alphanumeric character/bigram postings",
+        "normalization": "lowercase compact text with adjacent CJK/alphanumeric bigram postings; one-character queries scan searchable text",
         "postings": {term: sorted(event_ids) for term, event_ids in sorted(postings.items())},
     }
 
@@ -662,7 +886,7 @@ def build_source_document(events: dict[str, dict[str, Any]]) -> dict[str, Any]:
         for term in index_terms(source_search_text(event)):
             postings[term].add(event_id)
     return {
-        "normalization": "lowercase compact text with CJK character/bigram and alphanumeric character/bigram postings",
+        "normalization": "lowercase compact text with adjacent CJK/alphanumeric bigram postings; one-character queries scan searchable text",
         "sources": {name: sorted(event_ids) for name, event_ids in sorted(sources.items())},
         "postings": {term: sorted(event_ids) for term, event_ids in sorted(postings.items())},
     }
@@ -961,6 +1185,682 @@ def build_temporal_documents(
     return documents, rebuilt_summaries
 
 
+def load_profile_state(index_dir: Path) -> dict[str, Any]:
+    payload = read_json(index_dir / "profile" / "state.json", {})
+    return payload if isinstance(payload, dict) else {}
+
+
+def event_date_range(events: Iterable[dict[str, Any]]) -> dict[str, str]:
+    dates = sorted(
+        event.get("event_date", "")
+        for event in events
+        if isinstance(event.get("event_date"), str) and event.get("event_date")
+    )
+    return {"start_date": dates[0], "end_date": dates[-1]} if dates else {"start_date": "", "end_date": ""}
+
+
+def truncate_list_items(values: Any, limit: int, text_limit: int) -> list[str]:
+    if not isinstance(values, list):
+        return []
+    return [
+        truncate_text(value, text_limit)
+        for value in values[:limit]
+        if normalize_free_text(value)
+    ]
+
+
+def profile_event_payload(event: dict[str, Any], compact: bool = False) -> dict[str, Any]:
+    summary_limit = 110 if compact else 220
+    fact_limit = 0 if compact else 260
+    keyword_limit = 6 if compact else 12
+    payload = {
+        "event_id": event.get("event_id", ""),
+        "date": event.get("event_date", ""),
+        "summary": truncate_text(event.get("summary", ""), summary_limit),
+        "sources": truncate_list_items(event.get("sources", []), 3, 80),
+        "entities": truncate_list_items(event.get("entities", []), 8, 80),
+        "keywords": truncate_list_items(event.get("keywords", []), keyword_limit, 40),
+    }
+    if not compact:
+        payload["normalized_fact"] = truncate_text(event.get("normalized_fact", ""), fact_limit)
+        payload["domains"] = event.get("domains", [])
+    return payload
+
+
+def compact_previous_profile_claims(previous_claims: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    for claim in previous_claims[:8]:
+        if not isinstance(claim, dict):
+            continue
+        result.append(
+            {
+                "statement": truncate_text(claim.get("statement", ""), 120),
+                "kind": claim.get("kind", "observation"),
+                "confidence": claim.get("confidence", "low"),
+                "event_ids": claim.get("event_ids", [])[:6],
+            }
+        )
+    return result
+
+
+def profile_prompt_text(payload: dict[str, Any]) -> str:
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+
+def profile_prompt_char_count(payload: dict[str, Any]) -> int:
+    return len(profile_prompt_text(payload))
+
+
+def profile_payload_from_event_payloads(
+    domain: str,
+    event_count: int,
+    event_payloads: list[dict[str, Any]],
+    previous_claims: list[dict[str, Any]],
+    chunk_index: int | None = None,
+    chunk_count: int | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "domain": domain,
+        "domain_description": DOMAIN_DESCRIPTIONS[domain],
+        "event_count": event_count,
+        "included_event_count": len(event_payloads),
+        "events": event_payloads,
+        "previous_claims": compact_previous_profile_claims(previous_claims),
+    }
+    if chunk_index is None or chunk_count is None:
+        payload["selection_note"] = "all compact events are included because this domain fits the prompt budget"
+    else:
+        payload["chunk"] = {
+            "index": chunk_index,
+            "count": chunk_count,
+        }
+        payload["selection_note"] = (
+            "this is one prompt-budgeted chunk of the domain; generate only conclusions directly supported "
+            "by events in this chunk"
+        )
+    return payload
+
+
+def profile_model_prompt_payload(
+    domain: str,
+    domain_events: list[dict[str, Any]],
+    previous_claims: list[dict[str, Any]],
+) -> dict[str, Any]:
+    return profile_payload_from_event_payloads(
+        domain,
+        len(domain_events),
+        [profile_event_payload(event, compact=True) for event in domain_events],
+        previous_claims,
+    )
+
+
+def profile_model_prompt_chunks(
+    domain: str,
+    domain_events: list[dict[str, Any]],
+    previous_claims: list[dict[str, Any]],
+    char_limit: int | None = None,
+) -> list[dict[str, Any]]:
+    if char_limit is None:
+        char_limit = PROFILE_MODEL_PROMPT_CHAR_LIMIT
+    full_payload = profile_model_prompt_payload(domain, domain_events, previous_claims)
+    if profile_prompt_char_count(full_payload) <= char_limit:
+        return [full_payload]
+
+    event_payloads = [profile_event_payload(event, compact=True) for event in domain_events]
+    batches: list[list[dict[str, Any]]] = []
+    current: list[dict[str, Any]] = []
+    budget = max(1, int(char_limit * 0.95))
+
+    def chunk_payload(items: list[dict[str, Any]]) -> dict[str, Any]:
+        return profile_payload_from_event_payloads(domain, len(domain_events), items, [], 1, 1)
+
+    for event_payload in event_payloads:
+        candidate = [*current, event_payload]
+        if current and profile_prompt_char_count(chunk_payload(candidate)) > budget:
+            batches.append(current)
+            current = [event_payload]
+        else:
+            current = candidate
+    if current:
+        batches.append(current)
+
+    chunk_count = len(batches)
+    return [
+        profile_payload_from_event_payloads(domain, len(domain_events), batch, [], index, chunk_count)
+        for index, batch in enumerate(batches, start=1)
+    ]
+
+
+def profile_claim_payload(claim: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "statement": truncate_text(claim.get("statement", ""), 140),
+        "kind": claim.get("kind", "observation"),
+        "confidence": claim.get("confidence", "low"),
+        "event_ids": claim.get("event_ids", [])[:10],
+        "evidence_count": int(claim.get("evidence_count") or len(claim.get("event_ids", []))),
+    }
+
+
+def profile_merge_payload_from_claims(
+    domain: str,
+    candidate_claims: list[dict[str, Any]],
+    previous_claims: list[dict[str, Any]],
+    round_index: int,
+    batch_index: int | None = None,
+    batch_count: int | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "domain": domain,
+        "domain_description": DOMAIN_DESCRIPTIONS[domain],
+        "round": round_index,
+        "candidate_claims": [profile_claim_payload(claim) for claim in candidate_claims],
+        "previous_claims": compact_previous_profile_claims(previous_claims),
+    }
+    if batch_index is not None and batch_count is not None:
+        payload["batch"] = {"index": batch_index, "count": batch_count}
+    return payload
+
+
+def profile_model_merge_payloads(
+    domain: str,
+    candidate_claims: list[dict[str, Any]],
+    previous_claims: list[dict[str, Any]],
+    round_index: int,
+    char_limit: int | None = None,
+) -> list[dict[str, Any]]:
+    if char_limit is None:
+        char_limit = PROFILE_MODEL_MERGE_CHAR_LIMIT
+    full_payload = profile_merge_payload_from_claims(domain, candidate_claims, previous_claims, round_index)
+    if profile_prompt_char_count(full_payload) <= char_limit:
+        return [full_payload]
+
+    batches: list[list[dict[str, Any]]] = []
+    current: list[dict[str, Any]] = []
+    budget = max(1, int(char_limit * 0.95))
+
+    def batch_payload(items: list[dict[str, Any]]) -> dict[str, Any]:
+        return profile_merge_payload_from_claims(domain, items, [], round_index, 1, 1)
+
+    for claim in candidate_claims:
+        candidate = [*current, claim]
+        if current and profile_prompt_char_count(batch_payload(candidate)) > budget:
+            batches.append(current)
+            current = [claim]
+        else:
+            current = candidate
+    if current:
+        batches.append(current)
+
+    batch_count = len(batches)
+    return [
+        profile_merge_payload_from_claims(domain, batch, [], round_index, index, batch_count)
+        for index, batch in enumerate(batches, start=1)
+    ]
+
+
+def profile_domain_input_hash(domain: str, domain_events: list[dict[str, Any]], model: ModelContext) -> str:
+    return hash_json(
+        {
+            "domain": domain,
+            "mode": "heuristic" if model.disable_model else "model",
+            "model_max_tokens": PROFILE_MODEL_MAX_TOKENS if not model.disable_model else 0,
+            "model_prompt_char_limit": PROFILE_MODEL_PROMPT_CHAR_LIMIT if not model.disable_model else 0,
+            "model_merge_char_limit": PROFILE_MODEL_MERGE_CHAR_LIMIT if not model.disable_model else 0,
+            "events": [profile_event_payload(event) for event in domain_events],
+        }
+    )
+
+
+def sorted_event_ids_for_profile(event_ids: Iterable[str], events: dict[str, dict[str, Any]]) -> list[str]:
+    return sorted(
+        stable_unique(str(event_id) for event_id in event_ids if str(event_id) in events),
+        key=lambda event_id: (events[event_id].get("event_date", ""), event_id),
+    )
+
+
+def profile_claim_from_event_ids(
+    statement: str,
+    kind: str,
+    confidence: str,
+    event_ids: Iterable[str],
+    events: dict[str, dict[str, Any]],
+    example: str = "",
+) -> dict[str, Any] | None:
+    normalized_statement = normalize_free_text(statement)
+    evidence_ids = sorted_event_ids_for_profile(event_ids, events)
+    if not normalized_statement or not evidence_ids:
+        return None
+    evidence_events = [events[event_id] for event_id in evidence_ids]
+    bounds = event_date_range(evidence_events)
+    selected_example = normalize_free_text(example) or evidence_events[-1].get("summary", "")
+    return {
+        "statement": normalized_statement,
+        "kind": kind if kind in {"preference", "habit", "topic", "service", "relation", "place", "observation"} else "observation",
+        "confidence": confidence if confidence in {"high", "medium", "low"} else "low",
+        "event_ids": evidence_ids,
+        "evidence_count": len(evidence_ids),
+        "start_date": bounds["start_date"],
+        "end_date": bounds["end_date"],
+        "example": truncate_text(selected_example, 120),
+    }
+
+
+def looks_like_event_detail(text: str) -> bool:
+    return bool(
+        re.search(r"\d{4}年|\d{4}-\d{2}-\d{2}|\d{1,2}月\d{1,2}日|\d+(?:\.\d+)?元|¥\s*\d", text)
+        or any(term in text for term in ("订单状态", "实付", "下单时间", "当前页面", "记录显示", "分别为", "之前", "正在尝试", "这块"))
+    )
+
+
+def is_profile_claim_worthy(claim: dict[str, Any], domain: str) -> bool:
+    statement = normalize_free_text(claim.get("statement"))
+    evidence_count = int(claim.get("evidence_count") or len(claim.get("event_ids", [])))
+    if not statement or evidence_count < 2:
+        return False
+    if looks_like_event_detail(statement):
+        return False
+    if domain != "other" and claim.get("kind") == "relation":
+        return False
+    return True
+
+
+def normalize_profile_claims(raw_claims: Any, events: dict[str, dict[str, Any]], domain: str, limit: int = 8) -> list[dict[str, Any]]:
+    if not isinstance(raw_claims, list):
+        return []
+    claims: list[dict[str, Any]] = []
+    seen_statements: set[str] = set()
+    for raw_claim in raw_claims:
+        if not isinstance(raw_claim, dict):
+            continue
+        statement = normalize_free_text(
+            raw_claim.get("statement") or raw_claim.get("claim") or raw_claim.get("summary")
+        )
+        event_ids = raw_claim.get("event_ids")
+        if not isinstance(event_ids, list):
+            event_ids = raw_claim.get("evidence_event_ids")
+        if not isinstance(event_ids, list):
+            event_ids = raw_claim.get("evidence")
+        if not isinstance(event_ids, list):
+            event_ids = []
+        claim = profile_claim_from_event_ids(
+            statement,
+            normalize_free_text(raw_claim.get("kind")) or "observation",
+            normalize_free_text(raw_claim.get("confidence")) or "low",
+            [str(event_id) for event_id in event_ids],
+            events,
+            normalize_free_text(raw_claim.get("example")),
+        )
+        statement_key = normalize_lookup_text(statement)
+        if claim is not None and is_profile_claim_worthy(claim, domain) and statement_key not in seen_statements:
+            seen_statements.add(statement_key)
+            claims.append(claim)
+        if len(claims) >= limit:
+            break
+    return claims
+
+
+def entity_label(entity_key: str) -> tuple[str, str] | None:
+    entity_type, separator, name = str(entity_key).partition(":")
+    if not separator or entity_type not in ENTITY_TYPES or not name:
+        return None
+    return entity_type, name
+
+
+def add_counter_claim(
+    claims: list[dict[str, Any]],
+    statement: str,
+    kind: str,
+    confidence: str,
+    event_ids: Iterable[str],
+    events: dict[str, dict[str, Any]],
+) -> None:
+    claim = profile_claim_from_event_ids(statement, kind, confidence, event_ids, events)
+    if claim is not None:
+        claims.append(claim)
+
+
+def profile_keyword_candidates(event: dict[str, Any], domain: str) -> list[str]:
+    blocked_substrings = ("当前页面", "这张截图", "记录", "查看", "支出", "收入", "消费", "订单")
+    blocked = {
+        *[term for terms in DOMAIN_RULES.values() for term in terms],
+    }
+    other_domain_terms = [
+        term
+        for other_domain, terms in DOMAIN_RULES.items()
+        if other_domain != domain
+        for term in terms
+    ]
+    candidates = [
+        str(item)
+        for item in [*event.get("keywords", []), *event.get("tags", [])]
+        if isinstance(item, str)
+    ]
+    result: list[str] = []
+    for candidate in candidates:
+        text = normalize_free_text(candidate).strip(" ，。；、:：")
+        if not (2 <= len(text) <= 16):
+            continue
+        if text in blocked or any(fragment in text for fragment in blocked_substrings):
+            continue
+        if any(term in text for term in other_domain_terms):
+            continue
+        if re.fullmatch(r"[\d.,]+元?", text):
+            continue
+        result.append(text)
+    return stable_unique(result)
+
+
+def profile_source_candidate(value: Any) -> str:
+    source = normalize_free_text(value)
+    if not source or not re.search(r"[\u4e00-\u9fff]", source):
+        return ""
+    return source
+
+
+def build_heuristic_profile_claims(
+    domain: str,
+    domain_events: list[dict[str, Any]],
+    events_by_id: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    claims: list[dict[str, Any]] = []
+    entity_events: dict[str, dict[str, list[str]]] = {entity_type: defaultdict(list) for entity_type in ENTITY_TYPES}
+    keyword_events: dict[str, list[str]] = defaultdict(list)
+
+    for event in domain_events:
+        event_id = event["event_id"]
+        for entity_key in event.get("entities", []):
+            parsed = entity_label(entity_key)
+            if parsed is not None:
+                entity_type, name = parsed
+                entity_events[entity_type][name].append(event_id)
+        for keyword in profile_keyword_candidates(event, domain):
+            keyword_events[keyword].append(event_id)
+
+    for entity_type, kind, label in (
+        ("merchant", "service", "商户或服务"),
+        ("person", "relation", "联系人"),
+        ("place", "place", "地点"),
+    ):
+        if entity_type == "person" and domain != "other":
+            continue
+        for name, event_ids in Counter({name: len(ids) for name, ids in entity_events[entity_type].items()}).most_common(3):
+            ids = entity_events[entity_type][name]
+            if len(set(ids)) < 2:
+                continue
+            confidence = "high" if len(set(ids)) >= 4 else "medium"
+            add_counter_claim(
+                claims,
+                f"{DOMAIN_DISPLAY_NAMES[domain]}领域多次出现{label}「{name}」。",
+                kind,
+                confidence,
+                ids,
+                events_by_id,
+            )
+
+    frequent_keywords = [
+        keyword
+        for keyword, _count in Counter({keyword: len(set(ids)) for keyword, ids in keyword_events.items()}).most_common(5)
+        if len(set(keyword_events[keyword])) >= 2
+    ]
+    if frequent_keywords:
+        covered_ids = [
+            event_id
+            for keyword in frequent_keywords[:3]
+            for event_id in keyword_events[keyword]
+        ]
+        add_counter_claim(
+            claims,
+            f"{DOMAIN_DISPLAY_NAMES[domain]}领域近期反复出现「{'、'.join(frequent_keywords[:3])}」等话题或关键词。",
+            "topic",
+            "medium" if len(set(covered_ids)) >= 3 else "low",
+            covered_ids,
+            events_by_id,
+        )
+
+    return [claim for claim in claims if is_profile_claim_worthy(claim, domain)][:8]
+
+
+def profile_summary_from_claims(domain: str, claims: list[dict[str, Any]], event_count: int) -> str:
+    if claims:
+        statements = [normalize_free_text(claim.get("statement")) for claim in claims if isinstance(claim, dict)]
+        statements = [statement.rstrip("。") for statement in statements if statement]
+        if statements:
+            return truncate_text(
+                f"{DOMAIN_DISPLAY_NAMES[domain]}领域呈现出这些倾向：" + "；".join(statements[:3]) + "。",
+                180,
+            )
+    return ""
+
+
+def merge_profile_claims_with_model(
+    domain: str,
+    candidate_claims: list[dict[str, Any]],
+    previous_claims: list[dict[str, Any]],
+    events_by_id: dict[str, dict[str, Any]],
+    model: ModelContext,
+) -> list[dict[str, Any]]:
+    pending = normalize_profile_claims(candidate_claims, events_by_id, domain, limit=80)
+    if not pending:
+        return []
+
+    for round_index in range(1, PROFILE_MODEL_MERGE_ROUND_LIMIT + 1):
+        payloads = profile_model_merge_payloads(domain, pending, previous_claims, round_index)
+        merged: list[dict[str, Any]] = []
+        for payload in payloads:
+            raw = model.call_json(
+                PROFILE_MERGE_SYSTEM_PROMPT,
+                profile_prompt_text(payload),
+                max_tokens=PROFILE_MODEL_MAX_TOKENS,
+            )
+            merged.extend(
+                normalize_profile_claims(
+                    raw.get("claims", []) if isinstance(raw, dict) else [],
+                    events_by_id,
+                    domain,
+                    limit=16,
+                )
+            )
+        merged = normalize_profile_claims(merged, events_by_id, domain, limit=80)
+        if not merged:
+            return pending[:8]
+        if len(payloads) == 1:
+            return merged[:8]
+        if len(merged) >= len(pending):
+            return merged[:8]
+        pending = merged
+        previous_claims = []
+
+    return pending[:8]
+
+
+def generate_profile_claims(
+    domain: str,
+    domain_events: list[dict[str, Any]],
+    previous_claims: list[dict[str, Any]],
+    model: ModelContext,
+) -> tuple[str, list[dict[str, Any]], str]:
+    events_by_id = {event["event_id"]: event for event in domain_events}
+    if model.disable_model:
+        claims = build_heuristic_profile_claims(domain, domain_events, events_by_id)
+        return profile_summary_from_claims(domain, claims, len(domain_events)), claims, "heuristic"
+    try:
+        prompt_payloads = profile_model_prompt_chunks(domain, domain_events, previous_claims)
+        if len(prompt_payloads) == 1:
+            payload = model.call_json(
+                PROFILE_SYSTEM_PROMPT,
+                profile_prompt_text(prompt_payloads[0]),
+                max_tokens=PROFILE_MODEL_MAX_TOKENS,
+            )
+            claims = normalize_profile_claims(
+                payload.get("claims", []) if isinstance(payload, dict) else [],
+                events_by_id,
+                domain,
+            )
+            if not claims:
+                claims = build_heuristic_profile_claims(domain, domain_events, events_by_id)
+            return profile_summary_from_claims(domain, claims, len(domain_events)), claims, "model"
+
+        candidate_claims: list[dict[str, Any]] = []
+        for prompt_payload in prompt_payloads:
+            payload = model.call_json(
+                PROFILE_SYSTEM_PROMPT,
+                profile_prompt_text(prompt_payload),
+                max_tokens=PROFILE_MODEL_MAX_TOKENS,
+            )
+            candidate_claims.extend(
+                normalize_profile_claims(
+                    payload.get("claims", []) if isinstance(payload, dict) else [],
+                    events_by_id,
+                    domain,
+                    limit=8,
+                )
+            )
+        claims = merge_profile_claims_with_model(
+            domain,
+            candidate_claims,
+            previous_claims,
+            events_by_id,
+            model,
+        )
+        if not claims:
+            claims = build_heuristic_profile_claims(domain, domain_events, events_by_id)
+        return profile_summary_from_claims(domain, claims, len(domain_events)), claims, "model"
+    except Exception as exc:
+        logging.warning("Falling back to heuristic profile summary for %s: %s", domain, exc)
+        model.model_fallbacks += 1
+        claims = build_heuristic_profile_claims(domain, domain_events, events_by_id)
+        return profile_summary_from_claims(domain, claims, len(domain_events)), claims, "heuristic_fallback"
+
+
+def profile_claim_count(profile_state: dict[str, Any]) -> int:
+    domains = profile_state.get("domains", {}) if isinstance(profile_state, dict) else {}
+    return sum(
+        len(domain_doc.get("claims", []))
+        for domain_doc in domains.values()
+        if isinstance(domain_doc, dict)
+    )
+
+
+def build_profile_document(
+    events: dict[str, dict[str, Any]],
+    previous_state: dict[str, Any],
+    reuse_allowed: bool,
+    model: ModelContext,
+) -> tuple[dict[str, Any], str, int]:
+    previous_domains = previous_state.get("domains", {}) if isinstance(previous_state, dict) else {}
+    events_by_domain: dict[str, list[dict[str, Any]]] = {domain: [] for domain in DOMAINS}
+    for event in sorted(events.values(), key=lambda item: (item["event_date"], item["event_id"])):
+        event["profile_domains"] = derive_profile_domains(event)
+        domains = normalize_domains(event.get("profile_domains", []))
+        for domain in domains:
+            events_by_domain[domain].append(event)
+
+    rebuilt_domains = 0
+    domain_documents: dict[str, dict[str, Any]] = {}
+    for domain in DOMAINS:
+        domain_events = events_by_domain[domain]
+        event_ids = [event["event_id"] for event in domain_events]
+        input_hash = profile_domain_input_hash(domain, domain_events, model)
+        previous_domain = previous_domains.get(domain, {}) if isinstance(previous_domains, dict) else {}
+        if not isinstance(previous_domain, dict):
+            previous_domain = {}
+        if (
+            reuse_allowed
+            and isinstance(previous_domain, dict)
+            and previous_domain.get("input_hash") == input_hash
+            and isinstance(previous_domain.get("claims"), list)
+        ):
+            domain_doc = dict(previous_domain)
+            domain_doc["event_ids"] = event_ids
+            domain_doc["event_count"] = len(event_ids)
+        elif not domain_events:
+            previous_had_claims = bool(previous_domain.get("claims")) if isinstance(previous_domain, dict) else False
+            rebuilt_domains += int(previous_had_claims or (bool(previous_domain) and previous_domain.get("input_hash") != input_hash))
+            domain_doc = {
+                "domain": domain,
+                "display_name": DOMAIN_DISPLAY_NAMES[domain],
+                "input_hash": input_hash,
+                "event_ids": [],
+                "event_count": 0,
+                "summary": "",
+                "claims": [],
+                "generation": "empty",
+            }
+        else:
+            previous_claims = previous_domain.get("claims", []) if isinstance(previous_domain, dict) else []
+            summary, claims, generation = generate_profile_claims(domain, domain_events, previous_claims, model)
+            rebuilt_domains += 1
+            domain_doc = {
+                "domain": domain,
+                "display_name": DOMAIN_DISPLAY_NAMES[domain],
+                "input_hash": input_hash,
+                "event_ids": event_ids,
+                "event_count": len(event_ids),
+                "date_range": event_date_range(domain_events),
+                "summary": summary,
+                "claims": claims,
+                "generation": generation,
+            }
+        domain_doc.setdefault("domain", domain)
+        domain_doc.setdefault("display_name", DOMAIN_DISPLAY_NAMES[domain])
+        domain_doc.setdefault("date_range", event_date_range(domain_events))
+        domain_doc.setdefault("summary", profile_summary_from_claims(domain, domain_doc.get("claims", []), len(domain_events)))
+        domain_documents[domain] = domain_doc
+
+    profile_state = {
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "event_count": len(events),
+        "event_date_range": event_date_range(events.values()),
+        "domains": domain_documents,
+    }
+    profile_state["claim_count"] = profile_claim_count(profile_state)
+    return profile_state, render_profile_markdown(profile_state), rebuilt_domains
+
+
+def render_profile_markdown(profile_state: dict[str, Any]) -> str:
+    generated_at = normalize_free_text(profile_state.get("generated_at")) or "-"
+    total_events = profile_state.get("event_count", 0)
+    total_claims = profile_state.get("claim_count", 0)
+    date_range = profile_state.get("event_date_range", {}) if isinstance(profile_state.get("event_date_range"), dict) else {}
+    start_date = normalize_free_text(date_range.get("start_date")) or "-"
+    end_date = normalize_free_text(date_range.get("end_date")) or "-"
+    lines = [
+        "# 用户画像",
+        "",
+        f"- 生成时间：{generated_at}",
+        f"- 覆盖事件：{total_events} 条",
+        f"- 时间范围：{start_date} ~ {end_date}",
+        f"- 画像条目：{total_claims} 条",
+        "",
+    ]
+    domains = profile_state.get("domains", {}) if isinstance(profile_state, dict) else {}
+    for domain in DOMAINS:
+        if not isinstance(domains, dict) or domain not in domains:
+            continue
+        domain_doc = domains.get(domain, {}) if isinstance(domains, dict) else {}
+        if not isinstance(domain_doc, dict):
+            continue
+        claims = domain_doc.get("claims", [])
+        event_count = domain_doc.get("event_count", 0)
+        lines.extend([f"## {DOMAIN_DISPLAY_NAMES[domain]}", ""])
+        summary = normalize_free_text(domain_doc.get("summary"))
+        if summary:
+            lines.extend([summary, ""])
+        if not claims:
+            if not summary:
+                lines.extend([f"当前记录还不足以形成稳定的{DOMAIN_DISPLAY_NAMES[domain]}领域画像。", ""])
+            continue
+        for claim in claims:
+            if not isinstance(claim, dict):
+                continue
+            statement = normalize_free_text(claim.get("statement"))
+            if not statement:
+                continue
+            lines.append(f"- {statement}")
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def event_partitions(events: dict[str, dict[str, Any]]) -> dict[str, Any]:
     partitions: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for event in events.values():
@@ -1023,6 +1923,7 @@ def run_build(args: argparse.Namespace) -> dict[str, Any]:
                     for source_ref in event.get("source_refs", [])
                     for image_path in image_references.get(source_ref, [])
                 )
+                event["profile_domains"] = derive_profile_domains(event)
                 events[event_id] = event
             reused_events += len(source_event_ids)
         else:
@@ -1048,6 +1949,13 @@ def run_build(args: argparse.Namespace) -> dict[str, Any]:
         entity_document = build_entity_document(events, model)
     previous_temporal = load_temporal_documents(index_dir) if reuse_allowed else {}
     temporal_documents, rebuilt_summaries = build_temporal_documents(events, previous_temporal, model)
+    previous_profile = load_profile_state(index_dir)
+    profile_document, profile_markdown, rebuilt_profile_domains = build_profile_document(
+        events,
+        previous_profile,
+        reuse_allowed,
+        model,
+    )
     changed_ids = {
         event_id for event_id in current_ids & previous_ids if hash_json(events[event_id]) != hash_json(previous_events[event_id])
     }
@@ -1062,6 +1970,7 @@ def run_build(args: argparse.Namespace) -> dict[str, Any]:
         index_dir / "temporal",
         {f"{month}.json": payload for month, payload in temporal_documents.items()},
     )
+    sync_profile_directory(index_dir / "profile", profile_document, profile_markdown)
     manifest = {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "input_root": str(input_root),
@@ -1072,6 +1981,12 @@ def run_build(args: argparse.Namespace) -> dict[str, Any]:
         "entity_types": list(ENTITY_TYPES),
         "sources": sources,
         "event_count": len(events),
+        "profile_generated_at": profile_document.get("generated_at"),
+        "profile_claim_count": profile_document.get("claim_count", 0),
+        "profile_domains": {
+            domain: len(profile_document.get("domains", {}).get(domain, {}).get("claims", []))
+            for domain in DOMAINS
+        },
     }
     write_json_atomic(index_dir / "manifest.json", manifest)
     return {
@@ -1086,6 +2001,8 @@ def run_build(args: argparse.Namespace) -> dict[str, Any]:
         "reused_events": reused_events,
         "enriched_events": enriched_events,
         "rebuilt_summary_nodes": rebuilt_summaries,
+        "rebuilt_profile_domains": rebuilt_profile_domains,
+        "profile_claims": profile_document.get("claim_count", 0),
         "total_entities": len(entity_document.get("entities", {})),
         "total_sources": len(source_document.get("sources", {})),
         "events_with_images": sum(bool(event.get("image_paths")) for event in events.values()),
@@ -1126,7 +2043,11 @@ def indexed_text_match_ids(
         return set(events)
     terms = index_terms(compact_keyword)
     if not terms:
-        return set()
+        return {
+            event_id
+            for event_id, event in events.items()
+            if compact_keyword in normalize_lookup_text(text_getter(event))
+        }
     matching: set[str] | None = None
     for term in terms:
         term_ids = set(postings.get(term, []))
@@ -1315,13 +2236,68 @@ def query_temporal_summary(
     return None
 
 
+def filter_profile_state(profile_state: dict[str, Any], selected_domains: list[str]) -> dict[str, Any]:
+    domains = profile_state.get("domains", {}) if isinstance(profile_state, dict) else {}
+    selected = selected_domains or list(DOMAINS)
+    filtered_domains = {
+        domain: json.loads(json.dumps(domains.get(domain, {}), ensure_ascii=False))
+        for domain in selected
+        if domain in DOMAINS and isinstance(domains.get(domain, {}), dict)
+    }
+    ranges = [
+        domain_doc.get("date_range", {})
+        for domain_doc in filtered_domains.values()
+        if isinstance(domain_doc.get("date_range"), dict) and domain_doc.get("event_count", 0)
+    ]
+    dates = sorted(
+        value
+        for date_range in ranges
+        for value in (date_range.get("start_date", ""), date_range.get("end_date", ""))
+        if value
+    )
+    unique_event_ids = {
+        event_id
+        for domain_doc in filtered_domains.values()
+        for event_id in domain_doc.get("event_ids", [])
+        if isinstance(event_id, str)
+    }
+    filtered = {
+        "generated_at": profile_state.get("generated_at", ""),
+        "event_count": len(unique_event_ids) or profile_state.get("event_count", 0),
+        "event_date_range": {"start_date": dates[0], "end_date": dates[-1]} if dates else {"start_date": "", "end_date": ""},
+        "domains": filtered_domains,
+    }
+    filtered["claim_count"] = profile_claim_count(filtered)
+    return filtered
+
+
+def query_profile(args: argparse.Namespace, index_dir: Path) -> dict[str, Any]:
+    profile_state = load_profile_state(index_dir)
+    if not isinstance(profile_state.get("domains"), dict):
+        raise ValueError(f"No built profile summary found at: {index_dir / 'profile'}")
+    selected_domains = [domain for domain in args.domain if domain in DOMAINS]
+    profile = filter_profile_state(profile_state, selected_domains)
+    return {
+        "command": "query",
+        "query": {
+            "profile": True,
+            "domains": selected_domains,
+        },
+        "result_type": "profile",
+        "profile": profile,
+    }
+
+
 def run_query(args: argparse.Namespace) -> dict[str, Any]:
     validate_query_args(args)
     index_dir = Path(args.index_dir).expanduser().resolve()
     manifest = read_json(index_dir / "manifest.json", None)
     if not isinstance(manifest, dict):
         raise ValueError(f"No built index found at: {index_dir}")
+    if getattr(args, "profile", False):
+        return query_profile(args, index_dir)
     query_description = {
+        "profile": False,
         "keywords": args.keywords,
         "domains": args.domain,
         "entities": getattr(args, "entities", []),
@@ -1515,6 +2491,8 @@ def format_temporal_result(result: dict[str, Any]) -> str:
 
 
 def format_query_result(result: dict[str, Any]) -> str:
+    if result.get("result_type") == "profile":
+        return render_profile_markdown(result.get("profile", {}))
     if result.get("result_type") != "events":
         return format_temporal_result(result)
     events = result.get("events", [])

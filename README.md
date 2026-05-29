@@ -161,7 +161,7 @@ download urls:
 
 ```bash
 vllm serve MobiMind-Reasoning-4B --port <decider/grounder port>
-vllm serve Qwen/Qwen3-4B-Instruct --port <planner port>
+vllm serve Qwen/Qwen3-VL-4B-Instruct --port <planner port>
 ```
 
 #### 4. Agent Memory Setup (Optional)

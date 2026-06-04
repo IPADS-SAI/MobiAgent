@@ -23,13 +23,13 @@
     {
       "id": 2,
       "type": "gui_task",
-      "task_description": "搜索${context.contact_name}，进入聊天界面",
+      "task_description": "打开微信，搜索${context.contact_name}，进入聊天界面",
       "on_error": "stop"
     },
     {
       "id": 3,
       "type": "loop",
-      "times": 3,
+      "times": 5,
       "steps": [
         {
           "id": 1,

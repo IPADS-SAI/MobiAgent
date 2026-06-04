@@ -113,6 +113,69 @@ def _build_json_schema_instruction(json_schema: dict[str, dict[str, Any]]) -> st
     return "\n".join(lines)
 
 
+def _coerce_structured_value(value: Any, expected_type: str) -> Any:
+    if expected_type == "boolean":
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)) and value in {0, 1}:
+            return bool(value)
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"true", "1", "yes", "y", "on", "是"}:
+                return True
+            if normalized in {"false", "0", "no", "n", "off", "否"}:
+                return False
+        return value
+
+    if expected_type == "number":
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return value
+        if isinstance(value, str):
+            normalized = value.strip()
+            try:
+                return float(normalized)
+            except ValueError:
+                return value
+        return value
+
+    if expected_type == "integer":
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float) and value.is_integer():
+            return int(value)
+        if isinstance(value, str):
+            normalized = value.strip()
+            try:
+                return int(normalized)
+            except ValueError:
+                try:
+                    float_value = float(normalized)
+                except ValueError:
+                    return value
+                if float_value.is_integer():
+                    return int(float_value)
+        return value
+
+    if expected_type in {"object", "array"} and isinstance(value, str):
+        normalized = value.strip()
+        if not normalized:
+            return value
+        try:
+            parsed = json.loads(normalized)
+        except json.JSONDecodeError:
+            try:
+                parsed = ast.literal_eval(normalized)
+            except (SyntaxError, ValueError):
+                return value
+        return parsed
+
+    return value
+
+
 def _validate_structured_output(parsed_output: dict[str, Any], json_schema: dict[str, dict[str, Any]]) -> None:
     type_mapping = {
         "string": str,
@@ -132,7 +195,8 @@ def _validate_structured_output(parsed_output: dict[str, Any], json_schema: dict
         if python_type is None:
             raise ValueError(f"Unsupported json_schema type: {field_spec['type']}")
 
-        value = parsed_output[field_name]
+        value = _coerce_structured_value(parsed_output[field_name], expected_type)
+        parsed_output[field_name] = value
         if expected_type == "number" and isinstance(value, bool):
             raise ValueError(f"Field '{field_name}' expected number but got boolean")
         if expected_type == "integer" and isinstance(value, bool):

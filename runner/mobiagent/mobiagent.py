@@ -420,6 +420,35 @@ def format_model_response_for_log(context, response_str):
     )
 
 
+def format_messages_for_log(messages):
+    """Pretty-print chat messages while truncating inline image payloads."""
+    def sanitize(value):
+        if isinstance(value, dict):
+            sanitized = {}
+            for key, nested_value in value.items():
+                if key == "image_url" and isinstance(nested_value, dict):
+                    image_url = nested_value.get("url")
+                    if isinstance(image_url, str) and image_url.startswith("data:image"):
+                        prefix, separator, payload = image_url.partition(",")
+                        sanitized[key] = {
+                            **nested_value,
+                            "url": f"{prefix}{separator}<base64:{len(payload)} chars>" if separator else "<inline image omitted>",
+                        }
+                    else:
+                        sanitized[key] = sanitize(nested_value)
+                else:
+                    sanitized[key] = sanitize(nested_value)
+            return sanitized
+        if isinstance(value, list):
+            return [sanitize(item) for item in value]
+        return value
+
+    try:
+        return json.dumps(sanitize(messages), ensure_ascii=False, indent=2)
+    except (TypeError, ValueError):
+        return str(messages)
+
+
 # ============ 工具函数 ============
 
 def call_model_with_validation_retry(client, model, messages, validator_func, max_retries=MAX_RETRIES, max_tokens=256, context="Model", parser_func=None):
@@ -1279,7 +1308,7 @@ def handle_swipe_action(decider_response, device, img, use_e2e, use_qwen3, data_
     })
     create_swipe_visualization(data_dir, image_index, direction.lower())
 
-def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3=True, device_type="Android", use_e2e=False, decider_protocol=DECIDER_PROTOCOL_QWEN_JSON):
+def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3=True, device_type="Android", use_e2e=False, decider_protocol=DECIDER_PROTOCOL_QWEN_JSON, log_decider_prompt=False):
     history = []
     actions = []
     reacts = []
@@ -1311,7 +1340,8 @@ def task_in_app(app, old_task, task, device, data_dir, bbox_flag=True, use_qwen3
 
         
         messages = decider_adapter.build_messages(task, history, screenshot_resize, use_e2e, device_type)
-        logging.info(f"Decider messages[200]: \n{messages[200:]}")
+        if log_decider_prompt:
+            logging.info(f"Decider prompt: \n{format_messages_for_log(messages)}")
 
         # --- 调用 Decider 模型 ---
         try:
@@ -1591,7 +1621,7 @@ def should_use_planner_rewritten_task(use_experience=False):
     return bool(use_experience or (preference_extractor and getattr(preference_extractor, 'mem', None)))
 
 
-def execute_single_task(task_description, device, data_dir, use_experience, use_graphrag, current_device_type, use_qwen3_model, use_e2e=False, auto_accept_planner_changes=False, decider_protocol=DECIDER_PROTOCOL_QWEN_JSON):
+def execute_single_task(task_description, device, data_dir, use_experience, use_graphrag, current_device_type, use_qwen3_model, use_e2e=False, auto_accept_planner_changes=False, decider_protocol=DECIDER_PROTOCOL_QWEN_JSON, log_decider_prompt=False):
     """
     执行单个任务的通用函数
     
@@ -1635,6 +1665,7 @@ def execute_single_task(task_description, device, data_dir, use_experience, use_
         current_device_type,
         use_e2e,
         decider_protocol=decider_protocol,
+        log_decider_prompt=log_decider_prompt,
     )
     time.sleep(APP_STOP_WAIT)  # 等待后再停止应用
     logging.info(f"Stopping app: {app_name} (package: {package_name})")
@@ -1669,6 +1700,12 @@ if __name__ == "__main__":
         choices=SUPPORTED_DECIDER_PROTOCOLS,
         default=DECIDER_PROTOCOL_QWEN_JSON,
         help="Decider output protocol to use (default: qwen_json)",
+    )
+    parser.add_argument(
+        "--log_decider_prompt",
+        choices=["on", "off"],
+        default="off",
+        help="Whether to log the full decider prompt before each call (default: off)",
     )
     args = parser.parse_args()
 
@@ -1709,10 +1746,12 @@ if __name__ == "__main__":
     use_qwen3_model = (args.use_qwen3 == "on")
     use_experience = (args.use_experience == "on")
     auto_accept_planner_changes = (args.accept_planner_changes == "on")
+    log_decider_prompt = (args.log_decider_prompt == "on")
     current_device_type = args.device  # 保存设备类型用于后续使用
     logging.info(f"Use Qwen3 model: {use_qwen3_model}")
     logging.info(f"Use experience (planner task rewriting): {use_experience}")
     logging.info(f"Auto accept planner changes: {auto_accept_planner_changes}")
+    logging.info(f"Log decider prompt: {log_decider_prompt}")
     logging.info(f"Device type: {current_device_type}")
     logging.info(f"Use E2E mode: {args.e2e}")
     logging.info(f"Decider protocol: {args.decider_protocol}")
@@ -1770,6 +1809,7 @@ if __name__ == "__main__":
                     args.e2e,
                     auto_accept_planner_changes,
                     args.decider_protocol,
+                    log_decider_prompt,
                 )
         else:
             # 旧格式：简单任务列表
@@ -1793,6 +1833,7 @@ if __name__ == "__main__":
                 args.e2e,
                 auto_accept_planner_changes,
                 args.decider_protocol,
+                log_decider_prompt,
             )
     
     # 等待所有偏好提取任务完成

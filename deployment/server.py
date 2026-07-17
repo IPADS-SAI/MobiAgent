@@ -145,6 +145,7 @@ supported_apps = {
     "番茄畅听": "com.xs.fm",
     "转转": "com.wuba.zhuanzhuan",
     "西瓜视频": "com.ss.android.article.video",
+    "SkillHub": "com.skillhub",
 }
 
 def should_terminate(reasoning: str):

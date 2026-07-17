@@ -12,6 +12,7 @@ import argparse
 import textwrap
 import cv2
 import sys
+import requests
 from abc import ABC, abstractmethod
 from PIL import Image, ImageDraw, ImageFont
 
@@ -344,6 +345,82 @@ decider_model = ""
 grounder_model = ""
 
 
+def _env_first(*names, default=None):
+    for name in names:
+        value = os.getenv(name)
+        if value:
+            return value
+    return default
+
+
+def _openai_client_for_role(role, service_ip, port, api_key):
+    role = role.upper()
+    base_url = _env_first(
+        f"MOBIAGENT_{role}_BASE_URL",
+        "MOBIAGENT_BASE_URL",
+    )
+    if not base_url:
+        base_url = f"http://{service_ip}:{port}/v1"
+    logging.info("%s client base_url=%s", role.title(), base_url)
+    return OpenAI(api_key=api_key, base_url=base_url)
+
+
+def _base_url_for_role(role):
+    role = role.upper()
+    return _env_first(
+        f"MOBIAGENT_{role}_BASE_URL",
+        "MOBIAGENT_BASE_URL",
+    )
+
+
+def _api_key_for_requests():
+    return _env_first("MOBIAGENT_API_KEY", default="mobiagent-key")
+
+
+def _use_raw_http_transport():
+    transport = os.getenv("MOBIAGENT_LLM_TRANSPORT", "").strip().lower()
+    return transport in {"raw_http", "requests", "http"}
+
+
+def _requests_chat_completion(role, model, messages, temperature, timeout, max_tokens):
+    if not _use_raw_http_transport():
+        return None
+
+    base_url = _base_url_for_role(role)
+    if not base_url:
+        return None
+
+    endpoint = base_url.rstrip("/") + "/chat/completions"
+    payload = {
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+    response = requests.post(
+        endpoint,
+        headers={
+            "Authorization": f"Bearer {_api_key_for_requests()}",
+            "Content-Type": "application/json",
+        },
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        timeout=timeout,
+    )
+    if response.status_code >= 400:
+        raise RuntimeError(f"HTTP {response.status_code}: {response.text[:500]}")
+    body = response.json()
+    return body["choices"][0]["message"]["content"]
+
+
+def _model_for_role(role, current_model):
+    role = role.upper()
+    return _env_first(
+        f"MOBIAGENT_{role}_MODEL",
+        "MOBIAGENT_MODEL",
+        default=current_model,
+    )
+
+
 # 全局偏好提取器
 preference_extractor = None
 def init(
@@ -360,25 +437,19 @@ def init(
     # 加载环境变量
     env_path = Path(__file__).parent / ".env"
     load_dotenv(env_path)
-    api_key = os.getenv("MOBIAGENT_API_KEY", "mobiagent-key")
-    decider_client = OpenAI(
-        api_key = api_key,
-        base_url = f"http://{service_ip}:{decider_port}/v1",
-    )
-    grounder_client = OpenAI(
-        api_key = api_key,
-        base_url = f"http://{service_ip}:{grounder_port}/v1",
-    )
-    planner_client = OpenAI(
-        api_key = api_key,
-        base_url = f"http://{service_ip}:{planner_port}/v1",
-    )
+    api_key = _env_first("MOBIAGENT_API_KEY", default="mobiagent-key")
+    decider_client = _openai_client_for_role("decider", service_ip, decider_port, api_key)
+    grounder_client = _openai_client_for_role("grounder", service_ip, grounder_port, api_key)
+    planner_client = _openai_client_for_role("planner", service_ip, planner_port, api_key)
 
     # Model routing stays internal to the service or environment. The CLI only
     # selects ports and protocol, which keeps the public entrypoints simpler.
-    decider_model = os.getenv("MOBIAGENT_DECIDER_MODEL", decider_model)
-    grounder_model = os.getenv("MOBIAGENT_GROUNDER_MODEL", grounder_model)
-    planner_model = os.getenv("MOBIAGENT_PLANNER_MODEL", planner_model)
+    decider_model = _model_for_role("decider", decider_model)
+    grounder_model = _model_for_role("grounder", grounder_model)
+    planner_model = _model_for_role("planner", planner_model)
+    logging.info("Decider model=%s", decider_model or "<empty>")
+    logging.info("Grounder model=%s", grounder_model or "<empty>")
+    logging.info("Planner model=%s", planner_model or "<empty>")
     
     # 初始化偏好提取器（可由命令行开关控制）
     if enable_user_profile:
@@ -474,13 +545,29 @@ def call_model_with_validation_retry(client, model, messages, validator_func, ma
     for attempt in range(max_retries):
         try:
             start_time = time.time()
-            response_str = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                temperature=temperature,
-                timeout=API_TIMEOUT,
-                max_tokens=max_tokens,
-            ).choices[0].message.content
+            logging.info(
+                "%s request: model=%s max_tokens=%s temperature=%.1f",
+                context,
+                model or "<empty>",
+                max_tokens,
+                temperature,
+            )
+            response_str = _requests_chat_completion(
+                context,
+                model,
+                messages,
+                temperature,
+                API_TIMEOUT,
+                max_tokens,
+            )
+            if response_str is None:
+                response_str = client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    temperature=temperature,
+                    timeout=API_TIMEOUT,
+                    max_tokens=max_tokens,
+                ).choices[0].message.content
             end_time = time.time()
             logging.info(f"[evaluation] {context} time taken: {end_time - start_time:.2f} seconds")
             logging.info(f"{context} response: \n{format_model_response_for_log(context, response_str)}")
@@ -1558,15 +1645,25 @@ def get_app_package_name(task_description, use_graphrag=False, device_type="Andr
         experience_content=experience_content,
         user_profile_content=user_profile_content
     )
-    response_str = planner_client.chat.completions.create(
-        model = planner_model,
-        messages=[
-            {
-                "role": "user",
-                "content": [{"type": "text", "text": prompt}],
-            }
-        ],
-    ).choices[0].message.content
+    messages = [
+        {
+            "role": "user",
+            "content": [{"type": "text", "text": prompt}],
+        }
+    ]
+    response_str = _requests_chat_completion(
+        "Planner",
+        planner_model,
+        messages,
+        INITIAL_TEMP,
+        API_TIMEOUT,
+        256,
+    )
+    if response_str is None:
+        response_str = planner_client.chat.completions.create(
+            model=planner_model,
+            messages=messages,
+        ).choices[0].message.content
     logging.info(f"Planner 响应: \n{response_str}")
     response_json = parse_planner_response(response_str)
     if response_json is None:

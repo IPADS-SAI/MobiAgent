@@ -67,6 +67,32 @@ python -m runner.mobiagent.mobiagent \
   --planner_port <Planner Service Port>
 ```
 
+OpenAI-compatible endpoint configuration:
+
+By default, the runner connects to `http://<service_ip>:<role_port>/v1` for the
+decider, grounder, and planner services. You can override these endpoints with
+environment variables when using an OpenAI-compatible gateway:
+
+```bash
+export MOBIAGENT_BASE_URL="https://example.com/v1"
+export MOBIAGENT_API_KEY="your-api-key"
+export MOBIAGENT_MODEL="your-model-name"
+```
+
+Role-specific settings override the shared values:
+
+```bash
+export MOBIAGENT_DECIDER_BASE_URL="https://example.com/v1"
+export MOBIAGENT_GROUNDER_BASE_URL="https://example.com/v1"
+export MOBIAGENT_PLANNER_BASE_URL="https://example.com/v1"
+export MOBIAGENT_DECIDER_MODEL="decider-model"
+export MOBIAGENT_GROUNDER_MODEL="grounder-model"
+export MOBIAGENT_PLANNER_MODEL="planner-model"
+```
+
+The runner uses the OpenAI SDK by default. If a compatible gateway requires raw
+HTTP requests, set `MOBIAGENT_LLM_TRANSPORT=raw_http`.
+
 Parameters：
 
 - `--service_ip <str>`: Service IP, default `localhost`. Used to connect to decider/grounder/planner services.

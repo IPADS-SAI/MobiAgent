@@ -35,10 +35,11 @@ MobiAgent: A Systematic Framework for Customizable Mobile Agents
 </div>
 
 ## 新闻
-
-- [2026.3.14] 🔥 我们发布了首个能够GUI操控手机的小龙虾 [MobiClaw](https://github.com/IPADS-SAI/MobiClaw) 和端到端GUI模型[MobiMind-1.5-4B](https://www.modelscope.cn/models/fengerhu1/MobiMind-1.5-4B-0313)。
+- [2026.7.17] 🔥 我们发布首个主动式端侧智能体系统 [ClawMate](https://github.com/IPADS-SAI/ClawMate) ，鸿蒙+安卓双平台的端侧推理框架[MobiInfer](https://github.com/doulujiyao12/mobiinfer)，以及对应的量化模型[MobiMind-1.5-2B-W8A8](https://www.modelscope.cn/models/fengerhu1/MobiMind-1.5-2B-W8A8-0717)。
+- [2026.7.17] 🔥 添加了自定义workflow的支持[`workerflow/README_zh.md`](runner/mobiagent/workflow/README_zh.md)，以及对应的原始数据清洗流水线。
+- [2026.3.14] 🛠️ 我们发布了首个能够GUI操控手机的小龙虾 [MobiClaw](https://github.com/IPADS-SAI/MobiClaw) 和端到端GUI模型[MobiMind-1.5-4B](https://www.modelscope.cn/models/fengerhu1/MobiMind-1.5-4B-0313)。
 - [2025.12.26] 📱 **支持手机端纯本地推理！** 详见 [`phone_runner/README.md`](phone_runner/README.md)。
-- [2025.12.25] 🛠️ 我们发布了**统一GUIAgent执行框架**，支持一键配置运行各GUIAgent模型（Mobiagent、UI-TARS、AutoGLM、Qwen-VL、Gemini等）。详见[Unify Runner README](https://github.com/IPADS-SAI/MobiAgent/blob/unify-runner/runner/RUNNER_README.md)。
+- [2025.12.25] 我们发布了**统一GUIAgent执行框架**，支持一键配置运行各GUIAgent模型（Mobiagent、UI-TARS、AutoGLM、Qwen-VL、Gemini等）。详见[Unify Runner README](https://github.com/IPADS-SAI/MobiAgent/blob/unify-runner/runner/RUNNER_README.md)。
 - [2025.12.08] 我们发布了 [MobiMind-Reasoning-4B](https://huggingface.co/IPADS-SAI/MobiMind-Reasoning-4B-1208) 及其量化版本 [MobiMind-Reasoning-4B-AWQ](https://huggingface.co/IPADS-SAI/MobiMind-Reasoning-4B-1208-AWQ)。
 - [2025.11.03] 新增多任务执行支持。详见 [多任务 README](runner/mobiagent/multi_task/README.md)。
 - [2025.11.03] 引入用户画像记忆系统，通过`--user_profile on`启用。详见 [用户画像 README](runner/README.md#用户画像与偏好记忆)。

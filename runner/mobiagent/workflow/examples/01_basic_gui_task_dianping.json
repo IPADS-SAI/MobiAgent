@@ -1,0 +1,43 @@
+{
+  "metadata": {
+    "name": "basic-gui-task",
+    "description": "查看大众点评上的用户订单记录"
+  },
+  "defaults": {
+    "device": "Harmony",
+    "use_qwen3": true,
+    "use_e2e": true,
+    "use_experience": false,
+    "accept_planner_changes": false
+  },
+  "steps": [
+    {
+      "id": 1,
+      "type": "gui_task",
+      "task_description": "打开大众点评",
+      "on_error": "stop"
+    },
+    {
+      "id": 2,
+      "type": "gui_task",
+      "task_description": "点击“我的”图标，进入我的订单页面，查看订单记录",
+      "on_error": "stop"
+    },
+    {
+      "id": 3,
+      "type": "gui_action",
+      "action": "screenshot",
+      "file_name": "dianping_order.jpg"
+    },
+    {
+      "id": 4,
+      "type": "tool",
+      "tool_name": "vlm_qa",
+      "inputs": {
+        "mode": "summary",
+        "image": "${steps.3.output.image_path}",
+        "question": "帮我用一段话简要总结当前页面上的大众点评订单记录（不要使用markdown格式，也不要分点，尽量按照订单出现顺序描述每一单的店铺、消费内容、金额和订单状态）"
+      }
+    }
+  ]
+}

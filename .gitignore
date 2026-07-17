@@ -29,4 +29,16 @@ tasks/
 utils/experience/templates-new-bak.json
 .vscode/
 collect/auto/ui-semantic-output/
+profile-mem/*
+!profile-mem/local_openai_llm_server.py
+!profile-mem/verify_mem0_pipeline.py
+!profile-mem/manage_openai_llm_service.sh
+!profile-mem/manage_profile_memory.py
+!profile-mem/model_utils.py
+!profile-mem/README_zh.md
+!profile-mem/standalone_embed.sh
+runner/mobiagent/workflow/__pycache__/
+runner/mobiagent/workflow/test-runs/
+runner/mobiagent/.env
+collect-apps-info.sh
 

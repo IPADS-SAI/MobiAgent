@@ -35,10 +35,11 @@ MobiAgent: A Systematic Framework for Customizable Mobile Agents
 </div>
 
 ## 新闻
-
-- [2026.3.14] 🔥 我们发布了首个能够GUI操控手机的小龙虾 [MobiClaw](https://github.com/IPADS-SAI/MobiClaw) 和端到端GUI模型[MobiMind-1.5-4B](https://www.modelscope.cn/models/fengerhu1/MobiMind-1.5-4B-0313)。
+- [2026.7.17] 🔥 我们发布首个主动式端侧智能体系统 [ClawMate](https://github.com/IPADS-SAI/ClawMate) ，鸿蒙+安卓双平台的端侧推理框架[MobiInfer](https://github.com/doulujiyao12/mobiinfer)，以及对应的量化模型[MobiMind-1.5-2B-W8A8](https://www.modelscope.cn/models/fengerhu1/MobiMind-1.5-2B-W8A8-0717)。
+- [2026.7.17] 🔥 添加了自定义workflow的支持[`workerflow/README_zh.md`](runner/mobiagent/workflow/README_zh.md)，以及对应的原始数据清洗流水线。
+- [2026.3.14] 🛠️ 我们发布了首个能够GUI操控手机的小龙虾 [MobiClaw](https://github.com/IPADS-SAI/MobiClaw) 和端到端GUI模型[MobiMind-1.5-4B](https://www.modelscope.cn/models/fengerhu1/MobiMind-1.5-4B-0313)。
 - [2025.12.26] 📱 **支持手机端纯本地推理！** 详见 [`phone_runner/README.md`](phone_runner/README.md)。
-- [2025.12.25] 🛠️ 我们发布了**统一GUIAgent执行框架**，支持一键配置运行各GUIAgent模型（Mobiagent、UI-TARS、AutoGLM、Qwen-VL、Gemini等）。详见[Unify Runner README](https://github.com/IPADS-SAI/MobiAgent/blob/unify-runner/runner/RUNNER_README.md)。
+- [2025.12.25] 我们发布了**统一GUIAgent执行框架**，支持一键配置运行各GUIAgent模型（Mobiagent、UI-TARS、AutoGLM、Qwen-VL、Gemini等）。详见[Unify Runner README](https://github.com/IPADS-SAI/MobiAgent/blob/unify-runner/runner/RUNNER_README.md)。
 - [2025.12.08] 我们发布了 [MobiMind-Reasoning-4B](https://huggingface.co/IPADS-SAI/MobiMind-Reasoning-4B-1208) 及其量化版本 [MobiMind-Reasoning-4B-AWQ](https://huggingface.co/IPADS-SAI/MobiMind-Reasoning-4B-1208-AWQ)。
 - [2025.11.03] 新增多任务执行支持。详见 [多任务 README](runner/mobiagent/multi_task/README.md)。
 - [2025.11.03] 引入用户画像记忆系统，通过`--user_profile on`启用。详见 [用户画像 README](runner/README.md#用户画像与偏好记忆)。
@@ -185,11 +186,38 @@ bash standalone_embed.sh start
 在 `.env` 文件中添加：
 ```bash
 MILVUS_URL=http://localhost:19530
-EMBEDDING_MODEL=BAAI/bge-small-zh
-EMBEDDING_MODEL_DIMS=384
+EMBEDDING_MODEL=/absolute/path/to/local/embedding/model
+EMBEDDING_MODEL_DIMS=512
+MEM0_COLLECTION_NAME=mobiagent_local
 OPENAI_API_KEY=your_key_here
 OPENAI_BASE_URL=your_llm_endpoint_here
 ```
+
+本地部署的最小示例如下：
+
+```bash
+# 1. 先启动 Milvus
+bash profile-mem/standalone_embed.sh start
+
+# 2. 启动本地 OpenAI 兼容 LLM 服务，供 Mem0 使用
+bash profile-mem/manage_openai_llm_service.sh start
+
+# 3. 在 runner/mobiagent/.env 中使用本地 embedding 模型和本地 LLM 端点
+MILVUS_URL=http://127.0.0.1:19530
+EMBEDDING_MODEL=/home/yourname/MobiAgent/profile-mem/models/embeddings/BAAI/bge-small-zh
+EMBEDDING_MODEL_DIMS=512
+MEM0_COLLECTION_NAME=mobiagent_local
+OPENAI_API_KEY=local-openai-key
+OPENAI_BASE_URL=http://127.0.0.1:18001/v1
+MOBIAGENT_API_KEY=mobiagent-key
+```
+
+说明：
+- `EMBEDDING_MODEL` 可以直接填写本地模型目录。在本仓库中，验证脚本会把 `BAAI/bge-small-zh` 下载到 `profile-mem/models/embeddings/BAAI/bge-small-zh`。
+- `EMBEDDING_MODEL_DIMS` 必须与本地 embedding 模型的真实维度一致。当前这套本地下载的 `BAAI/bge-small-zh` 在本环境中的维度是 `512`。
+- 如果你已有旧的 Milvus collection 且向量维度不同，建议通过 `MEM0_COLLECTION_NAME` 使用新的 collection 名称。
+- 本地 LLM 服务可以用 `bash profile-mem/manage_openai_llm_service.sh start|stop|status` 管理。
+- 可以用 `/home/reck/Utils/anaconda3/envs/MobiMind/bin/python profile-mem/verify_mem0_pipeline.py` 验证整套本地链路。
 
 Neo4j（GraphRAG）- 图检索可选：
 

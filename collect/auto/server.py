@@ -150,7 +150,8 @@ def get_app_package_name(task_description):
     # 构建Prompt
     app_selection_prompt = app_selection_prompt_template.format(
         task_description=task_description,
-        experience_content=experience_content
+        experience_content=experience_content,
+        user_profile_content="无"
     )
     
     # 调用模型

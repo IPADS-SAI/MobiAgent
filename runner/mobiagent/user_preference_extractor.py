@@ -11,6 +11,10 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 
+os.environ.setdefault("TRANSFORMERS_NO_TF", "1")
+os.environ.setdefault("USE_TF", "0")
+os.environ.setdefault("PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION", "python")
+
 try:
     from mem0 import MemoryClient, Memory
 except ImportError:
@@ -76,7 +80,7 @@ class PreferenceExtractor:
             "vector_store": {
                 "provider": "milvus",
                 "config": {
-                    "collection_name": "mobiagent",
+                    "collection_name": os.getenv('MEM0_COLLECTION_NAME', 'mobiagent'),
                     "embedding_model_dims": os.getenv('EMBEDDING_MODEL_DIMS'),
                     "url": os.getenv('MILVUS_URL'),
                     "db_name": "default",
@@ -209,6 +213,7 @@ class PreferenceExtractor:
                         result = self.mem.add(
                             preference_text, 
                             user_id=USER_ID,
+                            infer=False,
                             metadata={
                                 "type": "preference",
                                 "task_type": task_type,
@@ -222,12 +227,17 @@ class PreferenceExtractor:
                     else:
                         # 使用普通Mem0存储
                         logging.info(f"Storing with vector search: {preference_text}")
-                        result = self.mem.add(preference_text, metadata={
-                            "type": "preference",
-                            "task_type": task_type,
-                            "user_id": USER_ID,
-                            "timestamp": time.time()
-                        })
+                        result = self.mem.add(
+                            preference_text,
+                            user_id=USER_ID,
+                            infer=False,
+                            metadata={
+                                "type": "preference",
+                                "task_type": task_type,
+                                "user_id": USER_ID,
+                                "timestamp": time.time()
+                            }
+                        )
                         logging.info(f"Vector storage result: {result}")
                     
                     logging.info(f"Stored preference: {preference_text}")
@@ -236,6 +246,21 @@ class PreferenceExtractor:
                     
         except Exception as e:
             logging.error(f"Failed to store preferences: {e}")
+
+    def _delete_memory_compatible(self, memory_id: str) -> bool:
+        """Delete one memory record across mem0 signature variants."""
+        delete_func = getattr(self.mem, 'delete', None) or getattr(self.mem, 'remove', None)
+        if delete_func is None or not memory_id:
+            return False
+
+        try:
+            delete_func(memory_id)
+        except TypeError:
+            try:
+                delete_func(memory_id=memory_id)
+            except TypeError:
+                delete_func(id=memory_id, user_id=USER_ID)
+        return True
 
     def clear_all_memories(self) -> int:
         """
@@ -259,11 +284,7 @@ class PreferenceExtractor:
             for r in results_list:
                 mem_id = r.get("id")
                 try:
-                    if hasattr(self.mem, 'delete') and mem_id:
-                        self.mem.delete(id=mem_id, user_id=USER_ID)
-                        deleted += 1
-                    elif hasattr(self.mem, 'remove') and mem_id:
-                        self.mem.remove(id=mem_id, user_id=USER_ID)
+                    if self._delete_memory_compatible(mem_id):
                         deleted += 1
                 except Exception as e:
                     logging.warning(f"Failed to delete memory {mem_id}: {e}")

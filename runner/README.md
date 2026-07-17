@@ -67,6 +67,32 @@ python -m runner.mobiagent.mobiagent \
   --planner_port <Planner Service Port>
 ```
 
+OpenAI-compatible endpoint configuration:
+
+By default, the runner connects to `http://<service_ip>:<role_port>/v1` for the
+decider, grounder, and planner services. You can override these endpoints with
+environment variables when using an OpenAI-compatible gateway:
+
+```bash
+export MOBIAGENT_BASE_URL="https://example.com/v1"
+export MOBIAGENT_API_KEY="your-api-key"
+export MOBIAGENT_MODEL="your-model-name"
+```
+
+Role-specific settings override the shared values:
+
+```bash
+export MOBIAGENT_DECIDER_BASE_URL="https://example.com/v1"
+export MOBIAGENT_GROUNDER_BASE_URL="https://example.com/v1"
+export MOBIAGENT_PLANNER_BASE_URL="https://example.com/v1"
+export MOBIAGENT_DECIDER_MODEL="decider-model"
+export MOBIAGENT_GROUNDER_MODEL="grounder-model"
+export MOBIAGENT_PLANNER_MODEL="planner-model"
+```
+
+The runner uses the OpenAI SDK by default. If a compatible gateway requires raw
+HTTP requests, set `MOBIAGENT_LLM_TRANSPORT=raw_http`.
+
 Parameters：
 
 - `--service_ip <str>`: Service IP, default `localhost`. Used to connect to decider/grounder/planner services.
@@ -130,8 +156,26 @@ bash standalone_embed.sh start
 Required .env:
 ```bash
 MILVUS_URL=http://localhost:19530
-EMBEDDING_MODEL=BAAI/bge-small-zh  # download from Hugging Face
-EMBEDDING_MODEL_DIMS=384           # must match the model
+EMBEDDING_MODEL=/absolute/path/to/local/embedding/model
+EMBEDDING_MODEL_DIMS=512           # must match the model
+MEM0_COLLECTION_NAME=mobiagent_local
+```
+
+Local profile-memory workflow example:
+```bash
+bash profile-mem/standalone_embed.sh start
+bash profile-mem/manage_openai_llm_service.sh start
+```
+
+Example `runner/mobiagent/.env`:
+```bash
+MILVUS_URL=http://127.0.0.1:19530
+EMBEDDING_MODEL=/home/yourname/MobiAgent/profile-mem/models/embeddings/BAAI/bge-small-zh
+EMBEDDING_MODEL_DIMS=512
+MEM0_COLLECTION_NAME=mobiagent_local
+OPENAI_API_KEY=local-openai-key
+OPENAI_BASE_URL=http://127.0.0.1:18001/v1
+MOBIAGENT_API_KEY=mobiagent-key
 ```
 
 #### 2) Neo4j (GraphRAG)

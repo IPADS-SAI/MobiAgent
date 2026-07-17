@@ -1,0 +1,49 @@
+{
+  "metadata": {
+    "name": "basic-gui-task",
+    "description": "执行一个自然语言 GUI 任务，复用 MobiAgent 的 planner/decider/grounder 链路。"
+  },
+  "defaults": {
+    "device": "Harmony",
+    "use_qwen3": true,
+    "use_e2e": true,
+    "use_experience": false,
+    "accept_planner_changes": false
+  },
+  "steps": [
+    {
+      "id": 1,
+      "type": "gui_task",
+      "task_description": "打开微博",
+      "on_error": "stop"
+    },
+    {
+      "id": 2,
+      "type": "gui_task",
+      "task_description": "点击底部的发现按钮，点击更多微博文字即可",
+      "on_error": "stop"
+    },
+    {
+      "id": 3,
+      "type": "gui_task",
+      "task_description": "查看第一条微博热搜，注意不是置顶的那条微博热搜，而是左侧数字是1的那条微博热搜",
+      "on_error": "stop"
+    },
+    {
+      "id": 4,
+      "type": "gui_action",
+      "action": "screenshot",
+      "file_name": "vlm_input.jpg"
+    },
+    {
+      "id": 5,
+      "type": "tool",
+      "tool_name": "vlm_qa",
+      "inputs": {
+        "mode": "summary",
+        "image": "${steps.4.output.image_path}",
+        "question": "帮我总结当前界面上新闻的内容。"
+      }
+    }
+  ]
+}

@@ -36,9 +36,11 @@ MobiAgent: A Systematic Framework for Customizable Mobile Agents
 
 ## News
 
-- [2026.3.14] 🔥 We are excited to announce the release of [MobiClaw](https://github.com/IPADS-SAI/MobiClaw), our first GUI-based mobile "claw", and new GUI model: [MobiMind-1.5-4B](https://www.modelscope.cn/models/fengerhu1/MobiMind-1.5-4B-0313).
+- [2026.7.17] 🔥 We released [ClawMate](https://github.com/IPADS-SAI/ClawMate), our first proactive on-device agent system; [MobiInfer](https://github.com/doulujiyao12/mobiinfer), an on-device inference framework for both HarmonyOS and Android; and the corresponding quantized model, [MobiMind-1.5-2B-W8A8](https://www.modelscope.cn/models/fengerhu1/MobiMind-1.5-2B-W8A8-0717).
+- [2026.7.17] 🔥 Added support for custom workflows and the corresponding raw-data cleaning pipeline. See [Workflow README](runner/mobiagent/workflow/README_zh.md) for details.
+- [2026.3.14] 🛠️ We are excited to announce the release of [MobiClaw](https://github.com/IPADS-SAI/MobiClaw), our first GUI-based mobile "claw", and new GUI model: [MobiMind-1.5-4B](https://www.modelscope.cn/models/fengerhu1/MobiMind-1.5-4B-0313).
 - [2025.12.26] 📱 **Pure on-device inference on smartphones is now supported!** See [`phone_runner/README.md`](phone_runner/README.md) to get started.
-- [2025.12.25] 🛠️ We've released **unified GUI agent runner** supporting one-click config of multiple models (`MobiAgent`, `UI-TARS`, `AutoGLM`, `Qwen-VL`, `Gemini`, etc.). See [Unify Runner README](https://github.com/IPADS-SAI/MobiAgent/blob/unify-runner/runner/RUNNER_README.md) to get started.
+- [2025.12.25] We've released **unified GUI agent runner** supporting one-click config of multiple models (`MobiAgent`, `UI-TARS`, `AutoGLM`, `Qwen-VL`, `Gemini`, etc.). See [Unify Runner README](https://github.com/IPADS-SAI/MobiAgent/blob/unify-runner/runner/RUNNER_README.md) to get started.
 - [2025.12.08] We've released [MobiMind-Reasoning-4B](https://huggingface.co/IPADS-SAI/MobiMind-Reasoning-4B-1208) and its quantized version [MobiMind-Reasoning-4B-AWQ](https://huggingface.co/IPADS-SAI/MobiMind-Reasoning-4B-1208-AWQ). 
 - [2025.11.03] Added multi-task execution support. See [Multi-task README](runner/mobiagent/multi_task/README.md) for details. 
 - [2025.11.03] Introduced a user profile memory system, enabled via `--user_profile on`. See [User Profile README](runner/README.md#user-profile--preference-memory-mem0graphrag) for details.
@@ -161,7 +163,7 @@ download urls:
 
 ```bash
 vllm serve MobiMind-Reasoning-4B --port <decider/grounder port>
-vllm serve Qwen/Qwen3-4B-Instruct --port <planner port>
+vllm serve Qwen/Qwen3-VL-4B-Instruct --port <planner port>
 ```
 
 #### 4. Agent Memory Setup (Optional)
@@ -184,11 +186,38 @@ bash standalone_embed.sh start
 Add to your `.env` file:
 ```bash
 MILVUS_URL=http://localhost:19530
-EMBEDDING_MODEL=BAAI/bge-small-zh
-EMBEDDING_MODEL_DIMS=384
+EMBEDDING_MODEL=/absolute/path/to/local/embedding/model
+EMBEDDING_MODEL_DIMS=512
+MEM0_COLLECTION_NAME=mobiagent_local
 OPENAI_API_KEY=your_key_here
 OPENAI_BASE_URL=your_llm_endpoint_here
 ```
+
+Minimal local-only setup example:
+
+```bash
+# 1. Start Milvus first
+bash profile-mem/standalone_embed.sh start
+
+# 2. Start a local OpenAI-compatible LLM service for Mem0
+bash profile-mem/manage_openai_llm_service.sh start
+
+# 3. Use the local embedding model and local LLM endpoint in runner/mobiagent/.env
+MILVUS_URL=http://127.0.0.1:19530
+EMBEDDING_MODEL=/home/yourname/MobiAgent/profile-mem/models/embeddings/BAAI/bge-small-zh
+EMBEDDING_MODEL_DIMS=512
+MEM0_COLLECTION_NAME=mobiagent_local
+OPENAI_API_KEY=local-openai-key
+OPENAI_BASE_URL=http://127.0.0.1:18001/v1
+MOBIAGENT_API_KEY=mobiagent-key
+```
+
+Notes:
+- `EMBEDDING_MODEL` can be a local model directory. In this repository, the local verification script downloads `BAAI/bge-small-zh` into `profile-mem/models/embeddings/BAAI/bge-small-zh`.
+- `EMBEDDING_MODEL_DIMS` must match the actual embedding dimension of the local model. For the locally downloaded `BAAI/bge-small-zh` in this environment, the dimension is `512`.
+- `MEM0_COLLECTION_NAME` is recommended when you already have an older Milvus collection with a different vector dimension.
+- The local LLM service can be controlled with `bash profile-mem/manage_openai_llm_service.sh start|stop|status`.
+- You can verify the full local pipeline with `/home/reck/Utils/anaconda3/envs/MobiMind/bin/python profile-mem/verify_mem0_pipeline.py`.
 
 Neo4j (GraphRAG) - Optional for graph-based retrieval:
 

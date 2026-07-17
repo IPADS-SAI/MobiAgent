@@ -1,0 +1,37 @@
+{
+  "metadata": {
+    "name": "gui-action-and-command",
+    "description": "组合显式 GUI 操作与外部命令执行。"
+  },
+  "defaults": {
+    "device": "Harmony"
+  },
+  "context": {
+    "note": "workflow action demo"
+  },
+  "steps": [
+    {
+      "id": 1,
+      "type": "gui_action",
+      "action": "sleep",
+      "seconds": 1.5
+    },
+    {
+      "id": 2,
+      "type": "gui_action",
+      "action": "screenshot",
+      "file_name": "current_page.jpg"
+    },
+    {
+      "id": 3,
+      "type": "command",
+      "command": "echo 'screenshot saved at ${steps.2.output.image_path}'"
+    },
+    {
+      "id": 4,
+      "type": "command",
+      "command": "echo 'replace this with: hdc shell uitest dumpLayout'",
+      "on_error": "continue"
+    }
+  ]
+}

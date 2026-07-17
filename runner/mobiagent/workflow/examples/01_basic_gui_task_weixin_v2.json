@@ -1,0 +1,95 @@
+{
+  "metadata": {
+    "name": "basic-gui-task",
+    "description": "收集指定微信用户的今天聊天记录"
+  },
+  "defaults": {
+    "device": "Harmony",
+    "use_qwen3": true,
+    "use_e2e": true,
+    "use_experience": false,
+    "accept_planner_changes": false
+  },
+  "context": {
+    "contact_name": "小赵"
+  },
+  "steps": [
+    {
+      "id": 1,
+      "type": "gui_task",
+      "task_description": "打开微信",
+      "on_error": "stop"
+    },
+    {
+      "id": 2,
+      "type": "gui_task",
+      "task_description": "打开微信，搜索${context.contact_name}，进入聊天界面",
+      "on_error": "stop"
+    },
+    {
+      "id": 3,
+      "type": "loop",
+      "max_times": 5,
+      "break_if": {
+        "left": "${steps.2.output.structured_output.contains_today_chat}",
+        "operator": "==",
+        "right": false
+      },
+      "steps": [
+        {
+          "id": 1,
+          "type": "gui_action",
+          "action": "screenshot",
+          "file_name": "chat_${loop.index}.jpg"
+        },
+        {
+          "id": 2,
+          "type": "tool",
+          "tool_name": "vlm_qa",
+          "inputs": {
+            "mode": "summary",
+            "image": "${steps.1.output.image_path}",
+            "question": "请分析当前微信聊天界面。这是第${loop.index}次截图。请总结当前截图中可见的聊天内容，并判断当前截图中的聊天记录是否仍然属于今天；如果已经出现更早日期的聊天记录，则应判定为 false。",
+            "json_schema": {
+              "summary": {
+                "type": "string",
+                "description": "对当前截图中可见聊天内容的简要总结"
+              },
+              "contains_today_chat": {
+                "type": "boolean",
+                "description": "如果当前截图中的聊天记录仍然属于今天则为 true；如果已经出现更早日期的聊天记录则为 false"
+              }
+            }
+          }
+        },
+        {
+          "id": 3,
+          "type": "if",
+          "condition": {
+            "left": "${steps.2.output.structured_output.contains_today_chat}",
+            "operator": "==",
+            "right": true
+          },
+          "then_steps": [
+            {
+              "id": 1,
+              "type": "gui_action",
+              "action": "swipe_with_coords",
+              "start_x": 540,
+              "start_y": 800,
+              "end_x": 540,
+              "end_y": 2100
+            },
+            {
+              "id": 2,
+              "type": "gui_action",
+              "action": "sleep",
+              "seconds": 1.0
+            }
+          ],
+          "else_steps": []
+        }
+      ]
+    }
+  ]
+}

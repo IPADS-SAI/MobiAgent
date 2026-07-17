@@ -160,7 +160,8 @@ def get_app_package_name(
     # 构建Prompt
     prompt = planner_prompt_template.format(
         task_description=task_description,
-        experience_content=experience_content
+        experience_content=experience_content,
+        user_profile_content="无"
     )
     
     # 调用模型

@@ -180,7 +180,8 @@ class BatchTaskExecutor:
         # 构建Prompt（使用planner_oneshot.md模板）
         app_selection_prompt = self.planner_prompt_template.format(
             task_description=task_description,
-            experience_content=experience_content
+            experience_content=experience_content,
+            user_profile_content="无"
         )
         
         max_retries = 3

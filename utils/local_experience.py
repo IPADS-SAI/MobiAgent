@@ -1,5 +1,11 @@
 import json
 import logging
+import os
+
+os.environ.setdefault("TRANSFORMERS_NO_TF", "1")
+os.environ.setdefault("USE_TF", "0")
+os.environ.setdefault("PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION", "python")
+
 from llama_index.core import (
     VectorStoreIndex, 
     SimpleDirectoryReader, 
@@ -10,7 +16,6 @@ from llama_index.core import (
 )
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from pathlib import Path
-import os
 import re
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

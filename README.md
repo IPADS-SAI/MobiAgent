@@ -338,4 +338,4 @@ We gratefully acknowledge the open-source projects like MobileAgent, UI-TARS, an
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=IPADS-SAI/MobiAgent&type=Date)](https://www.star-history.com/#IPADS-SAI/MobiAgent&Date)
+[![Star History Chart](https://star-history.dera.page/svg?repos=IPADS-SAI/MobiAgent&type=Date)](https://star-history.dera.page/#IPADS-SAI/MobiAgent&type=Date)
